@@ -122,12 +122,13 @@ pub(crate) fn check_coords(
             if c.dims[..i].contains(dim) {
                 return Err(format!("{field} names the dimension {dim} twice"));
             }
-            let axis = sample_dims
+            let size = sample_dims
                 .iter()
                 .position(|d| d == dim)
+                .and_then(|axis| sample_shape.get(axis))
                 .ok_or_else(|| format!("{field} is on {dim}, which is no sample dimension"))?;
             expected = expected
-                .checked_mul(sample_shape[axis])
+                .checked_mul(*size)
                 .ok_or_else(|| format!("{field}: the size of its dimensions overflows"))?;
         }
         check_len(&field, expected, c.values.len())?;
