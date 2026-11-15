@@ -14,6 +14,18 @@ Two contracts connect a host to the core: `batch/1`, the batch of timecourses, a
 
 `check_contract(found, expected)` accepts an exact match and otherwise returns a `ContractError` naming both sides.
 
+## The pint gate
+
+`crates/units/tests/data/pint_gate.json` is pint's answer for every unit string the package can produce: for each of the 135 entries of `PARAMETER_UNITS` it varies only the input units the expression names (`{unit}`, `{time}`, `{dose}`, `{amount}`, `{volume}`) and records the unit, the factor and the short form from `pkpdutils`. The tests in `crates/units/tests/pint_gate.rs` compare `parameter_unit` and `short_unit` against it character for character, so the gate runs in `cargo test` without Python.
+
+Regenerate it with
+
+```bash
+uv run --with pkpdutils python scripts/pint_gate.py -o crates/units/tests/data/pint_gate.json
+```
+
+The script exits non-zero if any combination raises in pint. Never edit the fixture by hand: if Rust disagrees, fix `pkpdutils-units`. Regeneration is needed when `PARAMETER_UNITS` gains an entry or the accepted input units widen.
+
 ## Toolchain
 
 Stable Rust 1.100.0 with `rustfmt` and `clippy`, and the targets `wasm32-unknown-unknown` and `wasm32-wasip1`, pinned in `rust-toolchain.toml`.
