@@ -15,8 +15,19 @@ fn oracle_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/oracles")
 }
 
+/// Read a vendored file as text, after checking it is a regular file and no
+/// symlink: opening a FIFO would block forever instead of failing.
+fn read_text(rel: &str) -> String {
+    let path = oracle_dir().join(rel);
+    let kind = fs::symlink_metadata(&path)
+        .unwrap_or_else(|e| panic!("missing: {rel}: {e}"))
+        .file_type();
+    assert!(kind.is_file(), "not a regular file: {rel}");
+    fs::read_to_string(path).unwrap()
+}
+
 fn json(rel: &str) -> Value {
-    let text = fs::read_to_string(oracle_dir().join(rel)).unwrap();
+    let text = read_text(rel);
     serde_json::from_str(&text).unwrap()
 }
 
@@ -44,7 +55,10 @@ fn walk(dir: &std::path::Path, out: &mut BTreeSet<String>) {
 }
 
 fn file_count(rel: &str) -> usize {
-    fs::read_dir(oracle_dir().join(rel))
+    let dir = oracle_dir().join(rel);
+    let kind = fs::symlink_metadata(&dir).unwrap().file_type();
+    assert!(kind.is_dir(), "not a real directory: {rel}");
+    fs::read_dir(dir)
         .unwrap()
         .filter(|e| e.as_ref().unwrap().file_type().unwrap().is_file())
         .count()
@@ -111,8 +125,7 @@ fn the_reference_cases_are_all_there() {
     assert_eq!(validation["partial_cases"].as_object().unwrap().len(), 1);
     assert_eq!(validation["summary_cases"].as_object().unwrap().len(), 1);
 
-    let scenarios =
-        fs::read_to_string(oracle_dir().join("docs/data/benchmarks/scenarios.csv")).unwrap();
+    let scenarios = read_text("docs/data/benchmarks/scenarios.csv");
     let mut lines = scenarios.lines().filter(|l| !l.is_empty());
     assert!(lines.next().unwrap().starts_with("scenario,dataset"));
     let rows = lines.count();

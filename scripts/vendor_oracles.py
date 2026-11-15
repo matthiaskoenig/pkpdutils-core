@@ -39,6 +39,13 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def read_manifest() -> dict:
+    """Read MANIFEST.json, never opening a symlink or a FIFO (which would block)."""
+    if MANIFEST_PATH.is_symlink() or not MANIFEST_PATH.is_file():
+        sys.exit(f"refusing: {MANIFEST_PATH.name} is not a regular file")
+    return json.loads(MANIFEST_PATH.read_text())
+
+
 def git(source: Path, *args: str, strip: bool = True) -> str:
     result = subprocess.run(
         ["git", "-C", str(source), *args], capture_output=True, text=True, check=True
@@ -92,8 +99,8 @@ def vendored_paths() -> set[str]:
 def vendor(source: Path, accept_changes: bool) -> None:
     commit = source_commit(source)
     paths = relative_paths(source)
-    if MANIFEST_PATH.exists():
-        old = set(json.loads(MANIFEST_PATH.read_text())["files"])
+    if MANIFEST_PATH.exists() or MANIFEST_PATH.is_symlink():
+        old = set(read_manifest()["files"])
         added, removed = sorted(set(paths) - old), sorted(old - set(paths))
         if (added or removed) and not accept_changes:
             lines = [f"  added: {p}" for p in added] + [f"  removed: {p}" for p in removed]
@@ -129,7 +136,7 @@ def vendor(source: Path, accept_changes: bool) -> None:
 
 
 def check(source: Path | None) -> int:
-    manifest = json.loads(MANIFEST_PATH.read_text())
+    manifest = read_manifest()
     recorded = manifest["files"]
     problems = []
     for rel, digest in recorded.items():
