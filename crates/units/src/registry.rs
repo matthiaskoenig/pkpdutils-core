@@ -1,8 +1,8 @@
 //! The curated unit registry and the parser.
 //!
-//! Covers mass, volume (`length ** 3`), time, amount of substance, activity
-//! (`IU`), pressure and the dimensionless `dimensionless`, `count` and `none`.
-//! Temperature is deliberately absent.
+//! Covers mass, length, volume (`length ** 3`), time, amount of substance,
+//! activity (`IU`), pressure and the dimensionless `dimensionless`, `count` and
+//! `none`. Temperature is deliberately absent.
 //!
 //! Of the units it does hold it accepts every spelling pint does, because a host
 //! string comes from code written against pint: a prefix name or symbol with a
@@ -11,13 +11,21 @@
 //! outside [`PREFIXES`] (no `hectoliter`), a prefixed unit which is not
 //! `prefixable` (no `kilohour`), pint's implicit product (`mg l`) and its
 //! fractional exponents (`hr ** 0.5`), all of which are an error here.
+//!
+//! One spelling names the same quantity differently: pint has `fermi`, whose
+//! symbol is `fm` and whose exact match beats the prefix decomposition, so `fm`
+//! is a fermi there and a femtometer here. Same dimension, same factor and the
+//! same short form `fm`, which is also how pint prints a femtometer, so pint's
+//! own name for that spelling does not survive its own round trip. Nothing in
+//! pharmacokinetics spells either.
 
 use std::fmt;
 use std::ops::{Div, Mul};
 
 /// Signed exponents of the base dimensions of the registry.
 ///
-/// Pressure is `mass / (length * time ** 2)` and needs no axis of its own.
+/// Volume is `length ** 3` and pressure is `mass / (length * time ** 2)`, so
+/// neither needs an axis of its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct Dimension {
     /// Exponent of mass.
@@ -165,8 +173,8 @@ pub enum UnitError {
     /// A name which is not a unit of the registry.
     #[error(
         "'{name}' is not a unit of the registry in '{unit}'; the supported dimensions are mass, \
-         volume, time, amount of substance, activity (IU), pressure (mmHg) and dimensionless \
-         (dimensionless, count, none)"
+         length, volume, time, amount of substance, activity (IU), pressure (mmHg) and \
+         dimensionless (dimensionless, count, none)"
     )]
     Unknown {
         /// The unknown name.
@@ -366,8 +374,16 @@ const fn base(
 
 /// The named units. The first symbol is the one the short form writes, the rest
 /// are the other spellings pint accepts (`L`, `litre` and `ℓ` for `liter`).
-const BASES: [Base; 12] = [
+///
+/// `meter` is the SI base of a dimension the registry already covers through
+/// `liter`, not a dimension of its own: a volume of distribution per body weight
+/// is spelled `m**3/kg` in `tests/test_units.py`, and `normalize_volume` turns it
+/// into `liter / kilogram`. Its symbol `m` is also the symbol of the milli
+/// prefix, which the ordering of [`lookup`] resolves: a bare spelling wins, so
+/// `m` is a meter while `mm`, `mg` and `ml` decompose.
+const BASES: [Base; 13] = [
     base("gram", &["g"], Dimension::MASS, 1e-3, true),
+    base("meter", &["m", "metre"], Dimension::LENGTH, 1.0, true),
     base(
         "liter",
         &["l", "L", "litre", "\u{2113}"],

@@ -129,6 +129,30 @@ mod tests {
             ("mcl", "microliter"),
             ("mcmol", "micromole"),
             ("mug", "microgram"),
+            // meter, whose symbol is also the symbol of the milli prefix: a
+            // bare spelling wins, so `m` is a meter and `mm`, `mg` and `ml`
+            // decompose, as they do in pint
+            ("m", "meter"),
+            ("metre", "meter"),
+            ("meters", "meter"),
+            ("metres", "meter"),
+            ("mm", "millimeter"),
+            ("mmeter", "millimeter"),
+            ("mcm", "micrometer"),
+            ("mum", "micrometer"),
+            ("um", "micrometer"),
+            ("nm", "nanometer"),
+            ("km", "kilometer"),
+            ("cm", "centimeter"),
+            ("dm", "decimeter"),
+            ("am", "attometer"),
+            ("Mm", "megameter"),
+            ("mg", "milligram"),
+            ("ml", "milliliter"),
+            ("mmol", "millimole"),
+            ("ms", "millisecond"),
+            ("mol", "mole"),
+            ("mmHg", "millimeter_Hg"),
             // the aliases of liter
             ("litre", "liter"),
             ("\u{2113}", "liter"),
@@ -157,6 +181,49 @@ mod tests {
         assert_eq!(short_unit(&unit_str("litre").unwrap()), "l");
         assert!(check_dose_unit("mmole").is_ok());
         assert!(!is_per_bodyweight("mmole").unwrap());
+    }
+
+    #[test]
+    fn a_volume_per_body_weight_in_cubic_meters_normalizes_as_in_python() {
+        // `tests/test_units.py` asserts
+        // `normalize_volume(Q_(0.5, "m**3/kg")) == 500 liter / kilogram`, which
+        // is why the registry carries `meter`: it is the SI base of a dimension
+        // `liter` already covers, not a dimension of its own
+        let unit = parse_unit("m**3/kg").unwrap();
+        assert_eq!(unit_str("m**3/kg").unwrap(), "meter ** 3 / kilogram");
+        assert_eq!(short_unit("meter ** 3 / kilogram"), "m\u{b3}/kg");
+        let (normalized, factor) = normalize_volume(&unit);
+        assert_eq!(normalized, parse_unit("liter / kilogram").unwrap());
+        assert_eq!(factor, 1000.0);
+        assert_eq!(0.5 * factor, 500.0);
+        // and through a parameter expression, which is how it reaches a result
+        let ctx = UnitContext {
+            unit: "m**3/kg",
+            time: "hr",
+            dose: None,
+            amount: None,
+            volume: None,
+        };
+        assert_eq!(
+            parameter_unit("{unit}", &ctx).unwrap(),
+            ("liter / kilogram".to_string(), 1000.0)
+        );
+        // a length which is no volume is left alone, as in pint
+        assert_eq!(normalize_volume(&parse_unit("cm").unwrap()).1, 1.0);
+    }
+
+    #[test]
+    fn fm_is_a_femtometer_here_and_a_fermi_in_pint() {
+        // the one spelling of a unit the registry holds which pint names
+        // differently, found by probing the whole spelling space against pint.
+        // `fermi` is a unit of its own there, its symbol is `fm` and its exact
+        // match beats the prefix decomposition. Same dimension, same factor and
+        // the same short form, and pint prints a femtometer as `fm` as well, so
+        // its own name does not survive its own round trip. Nothing in
+        // pharmacokinetics spells either; this is a record, not a problem.
+        assert_eq!(unit_str("fm").unwrap(), "femtometer");
+        assert_eq!(short_unit("femtometer"), "fm");
+        assert_eq!(parse_unit("fm").unwrap().factor(), 1e-15);
     }
 
     #[test]

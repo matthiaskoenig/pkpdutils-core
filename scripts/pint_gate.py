@@ -105,7 +105,6 @@ UNIT_FUNCTIONS = frozenset(
 REJECTED = {
     "degC": "the registry has no temperature, `tests/stats/` keeps pint",
     "kelvin": "the registry has no temperature, `tests/stats/` keeps pint",
-    "m**3/kg": "the registry has no meter, its volume unit is liter",
 }
 
 FENCE = re.compile(r"^```python\b(.*?)^```", re.M | re.S)
