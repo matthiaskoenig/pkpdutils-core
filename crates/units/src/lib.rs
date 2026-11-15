@@ -12,7 +12,9 @@ mod registry;
 
 pub use format::{short_unit, unit_str};
 pub use parameter::{UnitContext, normalize_clearance, normalize_volume, parameter_unit};
-pub use registry::{Dimension, MAX_DEPTH, MAX_EXPONENT, Term, Unit, UnitError, parse_unit};
+pub use registry::{
+    Dimension, MAX_DEPTH, MAX_ERROR_TEXT, MAX_EXPONENT, Term, Unit, UnitError, parse_unit,
+};
 
 /// Dimensionalities a dose may have: an amount as mass, as substance or as
 /// activity, or such an amount per body weight.
@@ -51,7 +53,7 @@ pub fn check_dose_unit(s: &str) -> Result<(), UnitError> {
         Ok(())
     } else {
         Err(UnitError::NotADose {
-            unit: s.to_string(),
+            unit: registry::clipped(s),
             dimension: dimension.to_string(),
         })
     }
@@ -291,6 +293,60 @@ mod tests {
         // a dimensionless dose must not come from an overflowing exponent
         assert!(check_dose_unit("mg**200").is_err());
         assert!(is_per_bodyweight("mg**200").is_err());
+    }
+
+    #[test]
+    fn every_error_clips_the_host_string_it_echoes() {
+        // a unit string crosses a host boundary and is unbounded, so no error
+        // message may carry it whole into a console or a traceback
+        let long = "a".repeat(10_000);
+        let digits = "9".repeat(10_000);
+        let errors = [
+            parse_unit(&long).unwrap_err(),
+            parse_unit(&format!("mg/{long}")).unwrap_err(),
+            parse_unit(&digits).unwrap_err(),
+            parse_unit(&format!("mg {long}")).unwrap_err(),
+            parse_unit(&format!("mg**{digits}")).unwrap_err(),
+            parse_unit(&format!("{}mg{}", "(".repeat(5_000), ")".repeat(5_000))).unwrap_err(),
+            check_dose_unit(&format!("mmHg{}", "*1".repeat(5_000))).unwrap_err(),
+            parameter_unit(
+                &format!("{{bogus}}{long}"),
+                &UnitContext {
+                    unit: "mg/l",
+                    time: "hr",
+                    dose: None,
+                    amount: None,
+                    volume: None,
+                },
+            )
+            .unwrap_err(),
+            parameter_unit(
+                &format!("({{dose}}){long}"),
+                &UnitContext {
+                    unit: "mg/l",
+                    time: "hr",
+                    dose: None,
+                    amount: None,
+                    volume: None,
+                },
+            )
+            .unwrap_err(),
+        ];
+        // one input per variant which echoes a host string, so every variant of
+        // `UnitError` but `Empty`, which echoes none
+        for err in &errors {
+            let message = err.to_string();
+            assert!(
+                !message.contains(&long[..MAX_ERROR_TEXT + 1])
+                    && !message.contains(&digits[..MAX_ERROR_TEXT + 1]),
+                "the message carries the host string: {message}"
+            );
+            assert!(
+                message.chars().count() <= 400,
+                "the message is unbounded ({} characters): {message}",
+                message.chars().count()
+            );
+        }
     }
 
     #[test]

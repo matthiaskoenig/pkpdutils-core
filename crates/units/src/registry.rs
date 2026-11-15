@@ -136,7 +136,27 @@ impl fmt::Display for Dimension {
     }
 }
 
+/// The longest a host string is echoed into a [`UnitError`].
+///
+/// A unit string comes from outside the crate and may be arbitrarily long, and
+/// an error message bound for a javascript console or a python traceback must
+/// not carry a multi-megabyte input whole. Every variant of [`UnitError`] holds
+/// its input already clipped, so a message is bounded wherever it is formatted.
+pub const MAX_ERROR_TEXT: usize = 40;
+
+/// `s` for an error message: its first [`MAX_ERROR_TEXT`] characters, with a
+/// trailing `...` when it was cut.
+pub(crate) fn clipped(s: &str) -> String {
+    let mut out: String = s.chars().take(MAX_ERROR_TEXT).collect();
+    if s.chars().nth(MAX_ERROR_TEXT).is_some() {
+        out.push_str("...");
+    }
+    out
+}
+
 /// An error of parsing or checking a unit.
+///
+/// Every string field is clipped to [`MAX_ERROR_TEXT`] characters.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum UnitError {
     /// The string is empty.
@@ -151,13 +171,13 @@ pub enum UnitError {
     Unknown {
         /// The unknown name.
         name: String,
-        /// The whole unit string.
+        /// The unit string.
         unit: String,
     },
     /// The string is not a unit expression.
     #[error("'{unit}' is not a unit expression: {reason}")]
     Syntax {
-        /// The whole unit string.
+        /// The unit string.
         unit: String,
         /// What is wrong with it.
         reason: String,
@@ -165,7 +185,7 @@ pub enum UnitError {
     /// An exponent beyond the supported range.
     #[error("an exponent of '{unit}' is beyond the supported range of +-{max}")]
     Exponent {
-        /// The whole unit string.
+        /// The unit string.
         unit: String,
         /// The largest absolute exponent.
         max: i32,
@@ -173,7 +193,7 @@ pub enum UnitError {
     /// Parentheses nested too deeply.
     #[error("'{unit}' nests parentheses deeper than {max} levels")]
     Nesting {
-        /// The whole unit string, truncated to its first 40 characters.
+        /// The unit string.
         unit: String,
         /// The deepest supported nesting.
         max: usize,
@@ -721,7 +741,8 @@ impl Parser {
                 Ok(Unit::dimensionless())
             }
             Some(Token::Number(n)) => Err(Failure::Syntax(format!(
-                "only a leading 1 is a number of a unit, not '{n}'"
+                "only a leading 1 is a number of a unit, not '{}'",
+                clipped(&n)
             ))),
             Some(Token::Open) => {
                 self.pos += 1;
@@ -740,7 +761,10 @@ impl Parser {
                     ))
                 }
             }
-            Some(t) => Err(Failure::Syntax(format!("unexpected {t:?}"))),
+            Some(t) => Err(Failure::Syntax(format!(
+                "unexpected {}",
+                clipped(&format!("{t:?}"))
+            ))),
             None => Err(Failure::Syntax("the expression ends too early".to_string())),
         }
     }
@@ -759,7 +783,7 @@ pub fn parse_unit(s: &str) -> Result<Unit, UnitError> {
         return Err(UnitError::Empty);
     }
     let syntax = |reason: String| UnitError::Syntax {
-        unit: s.to_string(),
+        unit: clipped(s),
         reason,
     };
     let tokens = tokenize(s).map_err(syntax)?;
@@ -773,8 +797,8 @@ pub fn parse_unit(s: &str) -> Result<Unit, UnitError> {
             Ok(u)
         } else {
             Err(Failure::Syntax(format!(
-                "unexpected {:?}",
-                parser.tokens[parser.pos]
+                "unexpected {}",
+                clipped(&format!("{:?}", parser.tokens[parser.pos]))
             )))
         }
     });
@@ -782,16 +806,16 @@ pub fn parse_unit(s: &str) -> Result<Unit, UnitError> {
         Ok(u) => Ok(u),
         Err(Failure::Syntax(reason)) => Err(syntax(reason)),
         Err(Failure::Exponent) => Err(UnitError::Exponent {
-            unit: s.to_string(),
+            unit: clipped(s),
             max: MAX_EXPONENT,
         }),
         Err(Failure::Nesting) => Err(UnitError::Nesting {
-            unit: s.chars().take(40).collect(),
+            unit: clipped(s),
             max: MAX_DEPTH,
         }),
         Err(Failure::Unknown(name)) => Err(UnitError::Unknown {
-            name,
-            unit: s.to_string(),
+            name: clipped(&name),
+            unit: clipped(s),
         }),
     }
 }

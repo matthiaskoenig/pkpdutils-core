@@ -3,7 +3,7 @@
 
 use std::sync::LazyLock;
 
-use crate::registry::{Dimension, Unit, UnitError, parse_unit};
+use crate::registry::{Dimension, Unit, UnitError, clipped, parse_unit};
 
 /// The units a parameter expression is resolved against.
 #[derive(Clone, Debug)]
@@ -103,7 +103,7 @@ pub fn parameter_unit(expression: &str, ctx: &UnitContext) -> Result<(String, f6
         raw.push_str(&rest[..open]);
         let after = &rest[open + 1..];
         let close = after.find('}').ok_or_else(|| UnitError::Syntax {
-            unit: expression.to_string(),
+            unit: clipped(expression),
             reason: "a '{' without its '}'".to_string(),
         })?;
         let name = &after[..close];
@@ -115,14 +115,14 @@ pub fn parameter_unit(expression: &str, ctx: &UnitContext) -> Result<(String, f6
             "volume" => ctx.volume,
             _ => {
                 return Err(UnitError::UnknownPlaceholder {
-                    expression: expression.to_string(),
-                    placeholder: name.to_string(),
+                    expression: clipped(expression),
+                    placeholder: clipped(name),
                 });
             }
         };
         raw.push_str(value.ok_or_else(|| UnitError::MissingPlaceholder {
-            expression: expression.to_string(),
-            placeholder: name.to_string(),
+            expression: clipped(expression),
+            placeholder: clipped(name),
         })?);
         rest = &after[close + 1..];
     }
