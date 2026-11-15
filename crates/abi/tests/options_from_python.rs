@@ -291,7 +291,7 @@ fn every_field_of_the_all_fields_fixture_parses_to_its_own_value() {
     assert_eq!(t.min_points, 4);
     assert!(!t.exclude_cmax);
     assert_eq!(t.n_points, Some(5));
-    assert_eq!(t.points, Some(vec![1, 2, 3, 4, 5]));
+    assert_eq!(t.points, Some(vec![1_i64, 2, 3, 4, 5]));
     assert_eq!(t.min_adj_r2, Some(0.8));
     assert_eq!(t.tie_tolerance, 1e-3);
     assert_eq!(t.relative_warning, Some(1e-6));
@@ -359,4 +359,18 @@ fn the_effect_fixture_parses_and_both_new_fixtures_round_trip() {
             serde_json::from_str::<serde_json::Value>(json).unwrap()
         );
     }
+}
+
+#[test]
+fn manual_points_keep_negative_indices_in_order() {
+    let json = include_str!("data/options_manual_points.json");
+    let o: NcaOptions = serde_json::from_str(json).unwrap();
+    assert_eq!(o.terminal.method, TerminalMethod::Manual);
+    assert_eq!(o.terminal.points, Some(vec![4, -3, 6, -1]));
+    let back: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&o).unwrap()).unwrap();
+    assert_eq!(
+        back,
+        serde_json::from_str::<serde_json::Value>(json).unwrap()
+    );
 }

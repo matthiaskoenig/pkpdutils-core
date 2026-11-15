@@ -319,8 +319,10 @@ pub struct TerminalPhase {
     pub exclude_cmax: bool,
     /// The number of points of `TerminalMethod::LastN`.
     pub n_points: Option<u32>,
-    /// The point indices of `TerminalMethod::Manual`.
-    pub points: Option<Vec<u32>>,
+    /// The point indices of `TerminalMethod::Manual`: indices into the curve in time order, a
+    /// negative index counts from the end as in numpy; resolved against the row length by the
+    /// kernel, so no range is checked here.
+    pub points: Option<Vec<i64>>,
     /// Minimum adjusted R squared of a candidate window.
     pub min_adj_r2: Option<f64>,
     /// Tolerance below which two adjusted R squared values tie.
@@ -357,7 +359,7 @@ struct TerminalPhaseWire {
     min_points: u32,
     exclude_cmax: bool,
     n_points: Option<u32>,
-    points: Option<Vec<u32>>,
+    points: Option<Vec<i64>>,
     #[serde(with = "nonfinite::option")]
     min_adj_r2: Option<f64>,
     #[serde(with = "nonfinite")]
