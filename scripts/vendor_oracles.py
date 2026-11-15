@@ -84,7 +84,8 @@ def vendored_paths() -> set[str]:
     return {
         p.relative_to(ORACLE_DIR).as_posix()
         for p in ORACLE_DIR.rglob("*")
-        if p.is_file()
+        # a symlink of either kind is a path, a real directory is only traversed
+        if p.is_symlink() or p.is_file()
     }
 
 
