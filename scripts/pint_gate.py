@@ -3,8 +3,14 @@
 For every expression of `PARAMETER_UNITS` the script varies only the axes the
 expression names (`{unit}`, `{time}`, `{dose}`, `{amount}`, `{volume}`), asks
 pint through `pkpdutils` for the unit, the factor and the short form, and
-writes the records as JSON next to a provenance header (the
-version and the source, `checkout` or `release`, of the `pkpdutils` it imported). It exits non-zero if any combination raises.
+writes the records as JSON next to a provenance header (the version and the
+source, `checkout` or `release`, of the `pkpdutils` it imported). It exits
+non-zero if any combination raises.
+
+With `--check` it writes nothing: it recomputes the digest of `PARAMETER_UNITS`,
+the parameter count, the record count and the records from the importable
+`pkpdutils`, compares them with the committed fixture and exits non-zero when
+the fixture is stale.
 """
 
 import argparse
@@ -15,7 +21,6 @@ import sys
 from pathlib import Path
 
 import pkpdutils
-
 from pkpdutils.nca.nca import PARAMETER_UNITS
 from pkpdutils.nca.result import parameter_unit
 from pkpdutils.units import short_unit
@@ -29,10 +34,37 @@ AXES = {
 }
 
 
+def check(path: Path, provenance: dict, records: list[dict]) -> int:
+    """Compare a fresh run with the committed fixture and return the exit code."""
+    committed = json.loads(path.read_text())
+    header = committed["provenance"]
+    differs = [
+        f"{key}: fixture {header.get(key)!r}, fresh {provenance[key]!r}"
+        for key in ("parameter_units_digest", "n_parameters", "n_records")
+        if header.get(key) != provenance[key]
+    ]
+    if committed["records"] != records:
+        differs.append("records: the fixture differs from a fresh run")
+    if differs:
+        print(f"{path} is stale, regenerate it:", file=sys.stderr)
+        print("\n".join(differs), file=sys.stderr)
+        return 1
+    print(
+        f"{path} is up to date ({len(records)} records, "
+        f"digest {provenance['parameter_units_digest']})"
+    )
+    return 0
+
+
 def main() -> int:
     """Write the fixture and return the process exit code."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-o", "--output", required=True)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="compare the fixture at OUTPUT with a fresh run instead of writing it",
+    )
     args = parser.parse_args()
 
     records = []
@@ -84,6 +116,8 @@ def main() -> int:
         print(f"{len(failures)} combinations raised:", file=sys.stderr)
         print("\n".join(failures[:20]), file=sys.stderr)
         return 1
+    if args.check:
+        return check(Path(args.output), provenance, records)
     with open(args.output, "w") as f:
         json.dump({"provenance": provenance, "records": records}, f, indent=0)
         f.write("\n")

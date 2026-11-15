@@ -24,7 +24,7 @@ The fixture has a `provenance` header with the `pkpdutils` version and its sourc
 uv run --with-editable path/to/pkpdutils python scripts/pint_gate.py -o crates/units/tests/data/pint_gate.json
 ```
 
-Without a checkout, the release is the fallback, `uv run --with pkpdutils python scripts/pint_gate.py -o crates/units/tests/data/pint_gate.json`. The script prints the provenance and the record count and exits non-zero if any combination raises in pint. Never edit the fixture by hand: if Rust disagrees, fix `pkpdutils-units`. Regeneration is needed when `PARAMETER_UNITS` gains an entry or the accepted input units widen, and whenever the checkout moves ahead of the version recorded in the fixture.
+Without a checkout, the release is the fallback, `uv run --with pkpdutils python scripts/pint_gate.py -o crates/units/tests/data/pint_gate.json`. `--check` (same command with `--check` added) writes nothing and compares the digest of `PARAMETER_UNITS`, the parameter and record counts and the records with the committed fixture; a non-zero exit means the fixture is stale and must be regenerated. The script prints the provenance and the record count and exits non-zero if any combination raises in pint. Never edit the fixture by hand: if Rust disagrees, fix `pkpdutils-units`. Regeneration is needed when `PARAMETER_UNITS` gains an entry or the accepted input units widen, and whenever the checkout moves ahead of the version recorded in the fixture.
 
 ## Toolchain
 
