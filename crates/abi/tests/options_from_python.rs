@@ -392,3 +392,37 @@ fn a_nan_effect_threshold_equals_itself_and_survives_a_round_trip() {
     };
     assert_ne!(other, options);
 }
+
+fn nan_blq() -> Blq {
+    Blq::Rules(BlqRules {
+        first: Some(BlqSetting::Value(f64::NAN)),
+        ..BlqRules::default()
+    })
+}
+
+#[test]
+fn a_nan_blq_value_equals_itself_and_survives_a_round_trip() {
+    // Python's `BLQAction | float | None` has no numeric constraint
+    let blq = nan_blq();
+    assert_eq!(blq, blq.clone());
+    let back: Blq = serde_json::from_str(&serde_json::to_string(&blq).unwrap()).unwrap();
+    assert_eq!(back, blq);
+    assert_ne!(
+        blq,
+        Blq::Rules(BlqRules {
+            first: Some(BlqSetting::Value(1.0)),
+            ..BlqRules::default()
+        })
+    );
+}
+
+#[test]
+fn options_with_a_nan_blq_value_equal_themselves_and_round_trip() {
+    let options = NcaOptions {
+        blq: nan_blq(),
+        ..NcaOptions::default()
+    };
+    assert_eq!(options, options.clone());
+    let back: NcaOptions = serde_json::from_str(&serde_json::to_string(&options).unwrap()).unwrap();
+    assert_eq!(back, options);
+}

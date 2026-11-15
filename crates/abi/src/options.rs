@@ -16,13 +16,26 @@ use crate::window::WindowLabel;
 use crate::{OPTIONS_VERSION, nonfinite};
 
 /// A rule for the values below the limit of quantification: an action or a number imputed as is.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 #[serde(untagged)]
 pub enum BlqSetting {
     /// One of the named actions.
     Action(BlqAction),
     /// A value imputed as it is.
     Value(#[serde(with = "nonfinite")] f64),
+}
+
+/// Equality which holds on a round trip: the imputed value compares by its bits, so a NaN
+/// value, which Python accepts (`BLQAction | float | None` has no numeric constraint), equals
+/// itself. `BlqRules` and `Blq` derive their equality from this one.
+impl PartialEq for BlqSetting {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Action(a), Self::Action(b)) => a == b,
+            (Self::Value(a), Self::Value(b)) => a.to_bits() == b.to_bits(),
+            _ => false,
+        }
+    }
 }
 
 /// Rules for the values below the limit of quantification, by position or by tmax.
@@ -540,9 +553,13 @@ fn opt_f64_eq(a: Option<f64>, b: Option<f64>) -> bool {
 }
 
 /// Equality which holds on a round trip: every number the options hold directly compares by its
-/// bits, so an unconstrained `effect_threshold` of NaN (legal in Python) equals itself. The
-/// parts (`terminal`, `blq`, `acceptance`) are range validated, which rejects NaN, and keep
-/// their derived equality. The destructuring is exhaustive, so a new field breaks the build.
+/// bits, so an unconstrained `effect_threshold` of NaN (legal in Python) equals itself.
+///
+/// The parts differ. `terminal` and `acceptance` are range validated, which rejects NaN (and
+/// `WindowLabel::Float` has its own bit equality), so they keep their derived equality. `blq`
+/// is the exception: a NaN imputation value is legal, so `BlqSetting` carries its own bit
+/// equality, which `BlqRules` and `Blq` inherit. The destructuring below is exhaustive, so a new
+/// field breaks the build.
 impl PartialEq for NcaOptions {
     fn eq(&self, o: &Self) -> bool {
         let Self {
