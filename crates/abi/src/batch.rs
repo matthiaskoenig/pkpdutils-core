@@ -52,6 +52,9 @@ fn opt_bits_eq(a: &Option<Vec<f64>>, b: &Option<Vec<f64>>) -> bool {
 }
 
 /// The dosing protocol of one row, the doses without the `NaN` padding.
+///
+/// Mirrors `pkpdutils.timecourse.Dosing`: one unit and one route for every dose. The unit and
+/// the route are `None` only when the batch does not state them, never a default.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct Dosing {
@@ -61,16 +64,24 @@ pub struct Dosing {
     /// The dose times.
     #[serde(with = "nonfinite::vec")]
     pub times: Vec<f64>,
-    /// The infusion durations, `NaN` for a dose which is no infusion.
-    #[serde(with = "nonfinite::vec")]
-    pub durations: Vec<f64>,
+    /// The infusion durations, `Some` only for the route `iv_infusion`, as in Python.
+    #[serde(with = "nonfinite::option_vec", default)]
+    pub durations: Option<Vec<f64>>,
+    /// The unit of the doses, `None` when the batch has no `dose_unit`.
+    #[serde(default)]
+    pub unit: Option<String>,
+    /// The route of the row, `None` when the batch states neither `routes` nor `route`.
+    #[serde(default)]
+    pub route: Option<Route>,
 }
 
 impl PartialEq for Dosing {
     fn eq(&self, other: &Self) -> bool {
         bits_eq(&self.amounts, &other.amounts)
             && bits_eq(&self.times, &other.times)
-            && bits_eq(&self.durations, &other.durations)
+            && opt_bits_eq(&self.durations, &other.durations)
+            && self.unit == other.unit
+            && self.route == other.route
     }
 }
 
@@ -167,14 +178,28 @@ impl Batch {
         slice.iter().take_while(|x| !x.is_nan()).count()
     }
 
-    /// The dosing protocol of a row, without the padding.
+    /// The route of a row: `routes[row]` when the batch carries per-sample routes, otherwise
+    /// the batch-level `route`, `None` when the batch states neither.
+    pub fn route_of_row(&self, row: usize) -> Option<Route> {
+        match &self.routes {
+            Some(routes) => routes.get(row).copied(),
+            None => self.route,
+        }
+    }
+
+    /// The dosing protocol of a row, without the padding, the analogue of
+    /// `Timecourses.dosing_of()`.
     pub fn dosing_of_row(&self, row: usize) -> Dosing {
         let n = self.n_doses_of_row(row);
         let start = row * self.max_doses;
+        let route = self.route_of_row(row);
         Dosing {
             amounts: self.dose_amount[start..start + n].to_vec(),
             times: self.dose_time[start..start + n].to_vec(),
-            durations: self.dose_duration[start..start + n].to_vec(),
+            durations: (route == Some(Route::IvInfusion))
+                .then(|| self.dose_duration[start..start + n].to_vec()),
+            unit: self.dose_unit.clone(),
+            route,
         }
     }
 
@@ -378,8 +403,35 @@ mod tests {
         let dosing = batch.dosing_of_row(1);
         assert_eq!(dosing.amounts, vec![100.0]);
         assert_eq!(dosing.times, vec![0.0]);
-        assert!(batch.dosing_of_row(0).amounts.is_empty());
+        assert_eq!(dosing.unit.as_deref(), Some("mg"));
+        assert_eq!(dosing.route, Some(Route::Oral));
+        assert_eq!(dosing.durations, None);
+        let undosed = batch.dosing_of_row(0);
+        assert!(undosed.amounts.is_empty() && undosed.times.is_empty());
         assert_eq!(batch.n_samples(), 2);
+    }
+
+    #[test]
+    fn the_dosing_takes_the_route_of_the_row_and_durations_only_for_an_infusion() {
+        let mut batch = Batch::example_with_undosed_row();
+        batch.dose_duration = vec![f64::NAN, f64::NAN, 0.5, f64::NAN];
+        batch.routes = Some(vec![Route::Oral, Route::IvInfusion]);
+        assert_eq!(batch.dosing_of_row(0).route, Some(Route::Oral));
+        let infusion = batch.dosing_of_row(1);
+        assert_eq!(infusion.route, Some(Route::IvInfusion));
+        assert_eq!(infusion.durations, Some(vec![0.5]));
+        assert_eq!(batch.dosing_of_row(0).durations, None);
+        // the batch-level route is not used when a row has its own
+        assert_ne!(batch.route, infusion.route);
+    }
+
+    #[test]
+    fn the_dosing_invents_neither_unit_nor_route() {
+        let mut batch = Batch::example_with_undosed_row();
+        batch.route = None;
+        batch.dose_unit = None;
+        let dosing = batch.dosing_of_row(1);
+        assert_eq!((dosing.unit, dosing.route), (None, None));
     }
 
     #[test]
