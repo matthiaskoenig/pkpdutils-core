@@ -302,9 +302,62 @@ impl PartialEq for Batch {
 }
 
 impl Batch {
+    /// Check every array against the sample shape, so that no row of the batch can index out
+    /// of range.
+    ///
+    /// A batch read from the wire is validated on the way in. A host which builds the struct
+    /// directly - the path the design mandates where the layouts already agree, with the numpy
+    /// buffers or a `SimulationResult` passed through and no JSON - must call this before
+    /// reading a row, since [`Batch::n_doses_of_row`] and [`Batch::dosing_of_row`] panic on a
+    /// batch whose arrays do not fit its shape, and a panic is a trap which kills a wasm
+    /// instance.
+    ///
+    /// # Errors
+    ///
+    /// The field, the expected length and the length found, or the overflow of a shape.
+    pub fn validate(&self) -> Result<(), String> {
+        check_len(
+            "sample_shape",
+            self.sample_dims.len(),
+            self.sample_shape.len(),
+        )?;
+        let n = checked_product(&self.sample_shape)
+            .ok_or_else(|| "sample_shape: the number of samples overflows".to_string())?;
+        let points = expected_len("times", n, self.n_time)?;
+        check_len("times", points, self.times.len())?;
+        check_len("values", points, self.values.len())?;
+        for (name, v) in [
+            ("sd", &self.sd),
+            ("se", &self.se),
+            ("n", &self.n),
+            ("nominal_time", &self.nominal_time),
+        ] {
+            if let Some(v) = v {
+                check_len(name, points, v.len())?;
+            }
+        }
+        if let Some(v) = &self.lloq {
+            check_len("lloq", n, v.len())?;
+        }
+        if let Some(v) = &self.substances {
+            check_len("substances", n, v.len())?;
+        }
+        if let Some(v) = &self.routes {
+            check_len("routes", n, v.len())?;
+        }
+        let doses = expected_len("dose_amount", n, self.max_doses)?;
+        check_len("dose_amount", doses, self.dose_amount.len())?;
+        check_len("dose_time", doses, self.dose_time.len())?;
+        check_len("dose_duration", doses, self.dose_duration.len())?;
+        check_coords(&self.coords, &self.sample_dims, &self.sample_shape)
+    }
+
     /// The number of samples, the product of the sample shape.
+    ///
+    /// `0` when that product overflows, which [`Batch::validate`] rejects, so that a row of
+    /// such a batch is out of range rather than wrapped into it.
     pub fn n_samples(&self) -> usize {
-        self.sample_shape.iter().product()
+        checked_product(&self.sample_shape).unwrap_or(0)
     }
 
     /// The number of doses of a row: the leading entries of its dose slice which are not `NaN`.
@@ -315,8 +368,9 @@ impl Batch {
     ///
     /// # Panics
     ///
-    /// When `row` is not a sample of the batch, a caller bug: a batch read from the wire has
-    /// validated lengths, so no host input panics here.
+    /// When `row` is not a sample of the batch, or when the dose arrays do not fit the shape,
+    /// a caller bug: a batch read from the wire is validated, and one built directly must pass
+    /// [`Batch::validate`] first.
     pub fn n_doses_of_row(&self, row: usize) -> usize {
         assert!(
             row < self.n_samples(),
@@ -440,46 +494,6 @@ struct BatchWire {
     coords: Vec<SampleCoordinate>,
 }
 
-impl BatchWire {
-    /// Check every array against the sample shape, so no host input can index out of range.
-    fn check_lengths(&self) -> Result<(), String> {
-        check_len(
-            "sample_shape",
-            self.sample_dims.len(),
-            self.sample_shape.len(),
-        )?;
-        let n = checked_product(&self.sample_shape)
-            .ok_or_else(|| "sample_shape: the number of samples overflows".to_string())?;
-        let points = expected_len("times", n, self.n_time)?;
-        check_len("times", points, self.times.len())?;
-        check_len("values", points, self.values.len())?;
-        for (name, v) in [
-            ("sd", &self.sd),
-            ("se", &self.se),
-            ("n", &self.n),
-            ("nominal_time", &self.nominal_time),
-        ] {
-            if let Some(v) = v {
-                check_len(name, points, v.len())?;
-            }
-        }
-        if let Some(v) = &self.lloq {
-            check_len("lloq", n, v.len())?;
-        }
-        if let Some(v) = &self.substances {
-            check_len("substances", n, v.len())?;
-        }
-        if let Some(v) = &self.routes {
-            check_len("routes", n, v.len())?;
-        }
-        let doses = expected_len("dose_amount", n, self.max_doses)?;
-        check_len("dose_amount", doses, self.dose_amount.len())?;
-        check_len("dose_time", doses, self.dose_time.len())?;
-        check_len("dose_duration", doses, self.dose_duration.len())?;
-        check_coords(&self.coords, &self.sample_dims, &self.sample_shape)
-    }
-}
-
 impl From<Batch> for BatchWire {
     fn from(b: Batch) -> Self {
         Self {
@@ -516,8 +530,7 @@ impl TryFrom<BatchWire> for Batch {
 
     fn try_from(w: BatchWire) -> Result<Self, String> {
         check_contract(&w.contract, BATCH_CONTRACT).map_err(|e| e.to_string())?;
-        w.check_lengths()?;
-        Ok(Self {
+        let batch = Self {
             contract: w.contract,
             sample_dims: w.sample_dims,
             sample_shape: w.sample_shape,
@@ -542,7 +555,9 @@ impl TryFrom<BatchWire> for Batch {
             routes: w.routes,
             tissue: w.tissue,
             coords: w.coords,
-        })
+        };
+        batch.validate()?;
+        Ok(batch)
     }
 }
 
@@ -635,6 +650,28 @@ mod tests {
     #[should_panic(expected = "row 2 out of range")]
     fn a_row_outside_the_batch_is_a_caller_bug() {
         Batch::example_with_undosed_row().n_doses_of_row(2);
+    }
+
+    #[test]
+    fn a_batch_built_without_the_wire_is_validated_by_hand() {
+        // the design's bypass of JSON: a host builds the struct from the numpy
+        // buffers or from a `SimulationResult`, and `n_doses_of_row` panics on a
+        // batch whose dose arrays do not fit its shape, which in wasm is a trap
+        let mut batch = Batch::example_with_undosed_row();
+        assert!(batch.validate().is_ok());
+        batch.max_doses = 3;
+        let err = batch.validate().unwrap_err();
+        assert!(
+            err.contains("dose_amount has length 4, expected 6"),
+            "{err}"
+        );
+        // an overflowing shape is no number of samples, so every row of such a
+        // batch is out of range instead of wrapping into it
+        let mut batch = Batch::example_with_undosed_row();
+        batch.sample_dims = vec!["a".to_string(), "b".to_string()];
+        batch.sample_shape = vec![usize::MAX, 2];
+        assert!(batch.validate().unwrap_err().contains("overflows"));
+        assert_eq!(batch.n_samples(), 0);
     }
 
     #[test]

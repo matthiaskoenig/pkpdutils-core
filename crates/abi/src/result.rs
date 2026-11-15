@@ -241,6 +241,43 @@ impl AnalysisResult {
     ///     ..AnalysisResult::new(sample_dims, sample_shape, attributes)
     /// }
     /// ```
+    /// Check every section against the sample shape, so that no column of the
+    /// result is read out of range.
+    ///
+    /// A result read from the wire is validated on the way in. The kernel, which
+    /// builds the struct, calls this before handing it to a host.
+    ///
+    /// # Errors
+    ///
+    /// The field, the expected length and the length found, or the overflow of a
+    /// shape.
+    pub fn validate(&self) -> Result<(), String> {
+        check_len(
+            "sample_shape",
+            self.sample_dims.len(),
+            self.sample_shape.len(),
+        )?;
+        let n = checked_product(&self.sample_shape)
+            .ok_or_else(|| "sample_shape: the number of samples overflows".to_string())?;
+        for p in &self.parameters {
+            check_len(&format!("parameters[{}].values", p.name), n, p.values.len())?;
+        }
+        for p in &self.point_variables {
+            let field = format!("point_variables[{}].values", p.name);
+            check_len(&field, expected_len(&field, n, p.size)?, p.values.len())?;
+        }
+        for b in &self.boolean_variables {
+            let field = format!("boolean_variables[{}].values", b.name);
+            check_len(&field, n, b.values.len())?;
+        }
+        for x in &self.text_variables {
+            let field = format!("text_variables[{}].values", x.name);
+            check_len(&field, n, x.values.len())?;
+        }
+        check_len("flags", n, self.flags.len())?;
+        check_coords(&self.coords, &self.sample_dims, &self.sample_shape)
+    }
+
     pub fn new(sample_dims: Vec<String>, sample_shape: Vec<usize>, attributes: Attributes) -> Self {
         let n_samples = checked_product(&sample_shape).unwrap_or(0);
         Self {
@@ -281,27 +318,7 @@ impl TryFrom<AnalysisResultWire> for AnalysisResult {
 
     fn try_from(w: AnalysisResultWire) -> Result<Self, String> {
         check_contract(&w.contract, ANALYSIS_CONTRACT).map_err(|e| e.to_string())?;
-        check_len("sample_shape", w.sample_dims.len(), w.sample_shape.len())?;
-        let n = checked_product(&w.sample_shape)
-            .ok_or_else(|| "sample_shape: the number of samples overflows".to_string())?;
-        for p in &w.parameters {
-            check_len(&format!("parameters[{}].values", p.name), n, p.values.len())?;
-        }
-        for p in &w.point_variables {
-            let field = format!("point_variables[{}].values", p.name);
-            check_len(&field, expected_len(&field, n, p.size)?, p.values.len())?;
-        }
-        for b in &w.boolean_variables {
-            let field = format!("boolean_variables[{}].values", b.name);
-            check_len(&field, n, b.values.len())?;
-        }
-        for x in &w.text_variables {
-            let field = format!("text_variables[{}].values", x.name);
-            check_len(&field, n, x.values.len())?;
-        }
-        check_len("flags", n, w.flags.len())?;
-        check_coords(&w.coords, &w.sample_dims, &w.sample_shape)?;
-        Ok(Self {
+        let result = Self {
             contract: w.contract,
             sample_dims: w.sample_dims,
             sample_shape: w.sample_shape,
@@ -312,7 +329,9 @@ impl TryFrom<AnalysisResultWire> for AnalysisResult {
             flags: w.flags,
             coords: w.coords,
             attributes: w.attributes,
-        })
+        };
+        result.validate()?;
+        Ok(result)
     }
 }
 
@@ -530,6 +549,15 @@ mod tests {
             err.contains("analysis/2") && err.contains("analysis/1"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn a_result_built_without_the_wire_is_validated_by_hand() {
+        let mut r = result();
+        assert!(r.validate().is_ok());
+        r.flags.pop();
+        let err = r.validate().unwrap_err();
+        assert!(err.contains("flags has length 1, expected 2"), "{err}");
     }
 
     #[test]
