@@ -94,26 +94,39 @@ pub fn normalize_clearance(unit: &Unit) -> (Unit, f64) {
 /// # Errors
 ///
 /// [`UnitError::MissingPlaceholder`] if the expression uses a placeholder the
-/// context does not provide, other [`UnitError`] if the result is no unit.
+/// context does not provide, [`UnitError::UnknownPlaceholder`] for any other
+/// name in braces, other [`UnitError`] if the result is no unit.
 pub fn parameter_unit(expression: &str, ctx: &UnitContext) -> Result<(String, f64), UnitError> {
-    let mut raw = expression.to_string();
-    for (name, value) in [
-        ("unit", Some(ctx.unit)),
-        ("time", Some(ctx.time)),
-        ("dose", ctx.dose),
-        ("amount", ctx.amount),
-        ("volume", ctx.volume),
-    ] {
-        let placeholder = format!("{{{name}}}");
-        if !raw.contains(&placeholder) {
-            continue;
-        }
-        let value = value.ok_or_else(|| UnitError::MissingPlaceholder {
+    let mut raw = String::with_capacity(expression.len());
+    let mut rest = expression;
+    while let Some(open) = rest.find('{') {
+        raw.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        let close = after.find('}').ok_or_else(|| UnitError::Syntax {
+            unit: expression.to_string(),
+            reason: "a '{' without its '}'".to_string(),
+        })?;
+        let name = &after[..close];
+        let value = match name {
+            "unit" => Some(ctx.unit),
+            "time" => Some(ctx.time),
+            "dose" => ctx.dose,
+            "amount" => ctx.amount,
+            "volume" => ctx.volume,
+            _ => {
+                return Err(UnitError::UnknownPlaceholder {
+                    expression: expression.to_string(),
+                    placeholder: name.to_string(),
+                });
+            }
+        };
+        raw.push_str(value.ok_or_else(|| UnitError::MissingPlaceholder {
             expression: expression.to_string(),
             placeholder: name.to_string(),
-        })?;
-        raw = raw.replace(&placeholder, value);
+        })?);
+        rest = &after[close + 1..];
     }
+    raw.push_str(rest);
     let (unit, f1) = normalize_volume(&parse_unit(&raw)?);
     let (unit, f2) = normalize_clearance(&unit);
     let text = if unit.terms().is_empty() {
@@ -271,5 +284,45 @@ mod tests {
         let (unit, factor) = parameter_unit("({dose}) / (({unit}) * ({time}))", &ctx).unwrap();
         assert_eq!(unit, "liter / hour / kilogram");
         assert!((factor - 60.0).abs() < 1e-9 * 60.0);
+    }
+
+    #[test]
+    fn urine_placeholders_resolve() {
+        // Values from a live run of pkpdutils.nca.result.parameter_unit.
+        let ctx = UnitContext {
+            unit: "mg/l",
+            time: "hr",
+            dose: None,
+            amount: Some("mg"),
+            volume: Some("ml"),
+        };
+        assert_eq!(
+            parameter_unit("({amount}) / ({volume})", &ctx).unwrap(),
+            ("milligram / milliliter".into(), 1.0)
+        );
+    }
+
+    #[test]
+    fn an_unknown_placeholder_is_named_and_substitution_is_single_pass() {
+        let ctx = UnitContext {
+            unit: "mg/l",
+            time: "hr",
+            dose: None,
+            amount: None,
+            volume: None,
+        };
+        let err = parameter_unit("({bogus}) * ({time})", &ctx).unwrap_err();
+        assert!(
+            matches!(&err, UnitError::UnknownPlaceholder { placeholder, .. } if placeholder == "bogus")
+        );
+        assert!(err.to_string().contains("bogus"));
+        // A value which itself holds a placeholder is not expanded again.
+        let ctx = UnitContext {
+            unit: "{time}",
+            ..ctx
+        };
+        // A second expansion would give `hr`; the brace reaches the parser instead.
+        assert!(parameter_unit("{unit}", &ctx).is_err());
+        assert!(parameter_unit("{unit", &ctx).is_err());
     }
 }

@@ -178,6 +178,14 @@ pub enum UnitError {
         /// The name of the placeholder, without braces.
         placeholder: String,
     },
+    /// A placeholder which is none of `unit`, `time`, `dose`, `amount`, `volume`.
+    #[error("'{expression}' uses the unknown placeholder '{placeholder}'")]
+    UnknownPlaceholder {
+        /// The unit expression.
+        expression: String,
+        /// The text between the braces.
+        placeholder: String,
+    },
     /// A unit which is no dose unit.
     #[error(
         "a dose must be a mass, an amount of substance or an activity, or one of them per body \
