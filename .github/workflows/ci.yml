@@ -12,5 +12,22 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      # --locked, so that the committed Cargo.lock is what is checked and a
+      # resolver change is a failure here and not a silent difference
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml pins both wasm targets, which rustup installs with
+      # the toolchain
+      - name: Install the toolchain of rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      # the core is compiled to wasm from plan 7 on, and the libraries compile
+      # for both targets today; checking them from the start names the commit
+      # which adds a dependency that is not wasm safe, instead of leaving it to
+      # be found at the end
+      - run: cargo check --locked --workspace --target wasm32-unknown-unknown
+      - run: cargo check --locked --workspace --target wasm32-wasip1
