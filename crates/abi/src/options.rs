@@ -12,6 +12,7 @@ use crate::enums::{
     AucMethod, BlqAction, BlqHandling, BootstrapDistribution, BootstrapSpread, C0Method, Kind,
     TerminalMethod, UncertaintyMethod,
 };
+use crate::window::WindowLabel;
 use crate::{OPTIONS_VERSION, nonfinite};
 
 /// A rule for the values below the limit of quantification: an action or a number imputed as is.
@@ -327,7 +328,7 @@ pub struct TerminalPhase {
     /// Relative warning threshold of the regression.
     pub relative_warning: Option<f64>,
     /// The window `(t_first, t_last)` of single samples by label, carried separately on the wire.
-    pub windows: Option<BTreeMap<String, (f64, f64)>>,
+    pub windows: Option<BTreeMap<WindowLabel, (f64, f64)>>,
     /// Whether the table of every candidate window is kept.
     pub keep_candidates: bool,
 }
@@ -363,11 +364,8 @@ struct TerminalPhaseWire {
     tie_tolerance: f64,
     #[serde(with = "nonfinite::option")]
     relative_warning: Option<f64>,
-    #[serde(
-        with = "nonfinite::option_pair_map",
-        skip_serializing_if = "Option::is_none"
-    )]
-    windows: Option<BTreeMap<String, (f64, f64)>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    windows: Option<Vec<WindowRecord>>,
     keep_candidates: bool,
 }
 
@@ -388,7 +386,7 @@ impl From<TerminalPhase> for TerminalPhaseWire {
             min_adj_r2: t.min_adj_r2,
             tie_tolerance: t.tie_tolerance,
             relative_warning: t.relative_warning,
-            windows: t.windows,
+            windows: t.windows.map(records_of),
             keep_candidates: t.keep_candidates,
         }
     }
@@ -407,7 +405,7 @@ impl TryFrom<TerminalPhaseWire> for TerminalPhase {
             min_adj_r2: w.min_adj_r2,
             tie_tolerance: w.tie_tolerance,
             relative_warning: w.relative_warning,
-            windows: w.windows,
+            windows: w.windows.map(window_map).transpose()?,
             keep_candidates: w.keep_candidates,
         };
         t.validate()?;
@@ -458,7 +456,7 @@ impl TerminalPhase {
         for (key, window) in self.windows.iter().flatten() {
             if window.1.partial_cmp(&window.0) != Some(std::cmp::Ordering::Greater) {
                 return Err(format!(
-                    "the terminal window {window:?} of '{key}' must be (t_first, t_last) with t_last > t_first"
+                    "the terminal window {window:?} of {key} must be (t_first, t_last) with t_last > t_first"
                 ));
             }
         }
@@ -630,18 +628,25 @@ impl NcaOptions {
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 struct WindowRecord {
-    key: WindowKey,
+    key: WindowLabel,
     #[serde(with = "nonfinite::pair")]
     window: (f64, f64),
 }
 
-/// A typed window label; the Rust side carries string labels only.
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(deny_unknown_fields)]
-struct WindowKey {
-    #[serde(rename = "type")]
-    kind: String,
-    value: String,
+fn records_of(map: BTreeMap<WindowLabel, (f64, f64)>) -> Vec<WindowRecord> {
+    map.into_iter()
+        .map(|(key, window)| WindowRecord { key, window })
+        .collect()
+}
+
+fn window_map(records: Vec<WindowRecord>) -> Result<BTreeMap<WindowLabel, (f64, f64)>, String> {
+    let mut map = BTreeMap::new();
+    for WindowRecord { key, window } in records {
+        if map.insert(key.clone(), window).is_some() {
+            return Err(format!("the terminal window of {key} is given twice"));
+        }
+    }
+    Ok(map)
 }
 
 /// The wire form of [`NcaOptions`]: the options plus the two private keys.
@@ -695,17 +700,7 @@ impl From<NcaOptions> for NcaOptionsWire {
     fn from(o: NcaOptions) -> Self {
         let mut terminal = o.terminal;
         // the windows travel in `_terminal_windows`, not inside `terminal`
-        let windows = terminal.windows.take().map(|map| {
-            map.into_iter()
-                .map(|(key, window)| WindowRecord {
-                    key: WindowKey {
-                        kind: "str".to_string(),
-                        value: key,
-                    },
-                    window,
-                })
-                .collect()
-        });
+        let windows = terminal.windows.take().map(records_of);
         Self {
             kind: o.kind,
             auc_method: o.auc_method,
@@ -750,19 +745,9 @@ impl TryFrom<NcaOptionsWire> for NcaOptions {
         }
         let mut terminal = w.terminal;
         if let Some(records) = w.terminal_windows {
-            let mut map = BTreeMap::new();
-            for record in records {
-                if record.key.kind != "str" {
-                    return Err(format!(
-                        "terminal window label of type {:?} is not supported, only \"str\"",
-                        record.key.kind
-                    ));
-                }
-                map.insert(record.key.value, record.window);
-            }
-            terminal.windows = Some(map);
-            terminal.validate()?;
+            terminal.windows = Some(window_map(records)?);
         }
+        terminal.validate()?;
         let o = NcaOptions {
             kind: w.kind,
             auc_method: w.auc_method,

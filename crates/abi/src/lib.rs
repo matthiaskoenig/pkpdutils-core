@@ -3,12 +3,14 @@
 pub mod enums;
 pub mod nonfinite;
 pub mod options;
+pub mod window;
 
 pub use enums::{
     AucMethod, BlqAction, BlqHandling, BootstrapDistribution, BootstrapSpread, C0Method, Kind,
     NcaFlag, Route, TerminalMethod, UncertaintyMethod,
 };
 pub use options::{Acceptance, Blq, BlqRules, BlqSetting, NcaOptions, TerminalPhase};
+pub use window::WindowLabel;
 
 /// The contract of an analysis request and its result.
 pub const ANALYSIS_CONTRACT: &str = "analysis/1";

@@ -3,7 +3,7 @@
 //! which reads back as no number).
 //!
 //! Use the module itself as `#[serde(with = "nonfinite")]` for an `f64`, and the submodules
-//! [`option`], [`vec`], [`pair`], [`pair_map`] and [`option_pair_map`] for the other shapes.
+//! [`option`], [`vec`], [`pair`] and [`pair_map`] for the other shapes.
 //! An `Option` field also needs `#[serde(default)]` so that a missing key reads as `None`.
 
 use serde::de::Error as _;
@@ -125,28 +125,6 @@ pub mod pair_map {
     }
 }
 
-/// `Option<BTreeMap<String, (f64, f64)>>`.
-pub mod option_pair_map {
-    use super::*;
-    use std::collections::BTreeMap;
-
-    #[derive(Serialize, Deserialize)]
-    struct Map(#[serde(with = "super::pair_map")] BTreeMap<String, (f64, f64)>);
-
-    /// The optional map of windows.
-    pub type Windows = Option<BTreeMap<String, (f64, f64)>>;
-
-    /// Write an optional map of pairs.
-    pub fn serialize<S: Serializer>(x: &Windows, serializer: S) -> Result<S::Ok, S::Error> {
-        x.as_ref().map(|m| Map(m.clone())).serialize(serializer)
-    }
-
-    /// Read an optional map of pairs.
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Windows, D::Error> {
-        Ok(Option::<Map>::deserialize(deserializer)?.map(|m| m.0))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use serde::{Deserialize, Serialize};
@@ -186,8 +164,8 @@ mod tests {
         o: Option<f64>,
         #[serde(with = "super::pair")]
         p: (f64, f64),
-        #[serde(with = "super::option_pair_map", default)]
-        m: Option<std::collections::BTreeMap<String, (f64, f64)>>,
+        #[serde(with = "super::pair_map")]
+        m: std::collections::BTreeMap<String, (f64, f64)>,
     }
 
     #[test]
@@ -199,13 +177,12 @@ mod tests {
             x: f64::INFINITY,
             o: None,
             p: (1.0, f64::NEG_INFINITY),
-            m: Some(m),
+            m,
         };
         let json = serde_json::to_string(&s).unwrap();
         assert_eq!(serde_json::from_str::<Shapes>(&json).unwrap(), s);
-        let missing: Shapes = serde_json::from_str(r#"{"x":1.0,"p":[1,2]}"#).unwrap();
+        let missing: Shapes = serde_json::from_str(r#"{"x":1.0,"p":[1,2],"m":{}}"#).unwrap();
         assert_eq!(missing.o, None);
-        assert_eq!(missing.m, None);
-        assert!(serde_json::from_str::<Shapes>(r#"{"x":"abc","p":[1,2]}"#).is_err());
+        assert!(serde_json::from_str::<Shapes>(r#"{"x":"abc","p":[1,2],"m":{}}"#).is_err());
     }
 }

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use pkpdutils_abi::{
     AucMethod, BlqAction, BlqHandling, BootstrapDistribution, BootstrapSpread, C0Method, Kind,
-    NcaFlag, NcaOptions, Route, TerminalMethod, UncertaintyMethod,
+    NcaFlag, NcaOptions, Route, TerminalMethod, UncertaintyMethod, WindowLabel,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -94,15 +94,84 @@ fn an_unknown_option_field_is_rejected_by_name() {
     );
 }
 
+fn windows_options() -> NcaOptions {
+    serde_json::from_str(include_str!("data/options_windows.json")).unwrap()
+}
+
 #[test]
-fn terminal_windows_round_trip_through_the_records() {
-    let mut opts = NcaOptions::default();
-    opts.terminal.windows = Some([("s1".to_string(), (1.0, 8.0))].into_iter().collect());
-    let json = serde_json::to_string(&opts).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert!(v["terminal"].get("windows").is_none());
-    assert_eq!(v["_terminal_windows"][0]["key"]["type"], "str");
-    assert_eq!(serde_json::from_str::<NcaOptions>(&json).unwrap(), opts);
+fn windows_of_all_eight_label_types_round_trip_without_loss() {
+    let opts = windows_options();
+    let windows = opts.terminal.windows.as_ref().unwrap();
+    assert_eq!(windows.len(), 9);
+    let nested = WindowLabel::Tuple(vec![
+        "grp".into(),
+        WindowLabel::Tuple(vec![1.into(), WindowLabel::None]),
+    ]);
+    for (label, window) in [
+        (WindowLabel::from("s1"), (1.0, 8.0)),
+        (WindowLabel::Int(3), (2.0, 9.0)),
+        (WindowLabel::Float(2.5), (0.5, 6.0)),
+        (WindowLabel::Bool(false), (1.5, 7.0)),
+        (WindowLabel::None, (0.0, 5.0)),
+        (
+            WindowLabel::Datetime("2024-01-02T03:04:05".into()),
+            (1.0, 4.0),
+        ),
+        (WindowLabel::Date("2024-01-02".into()), (1.0, 3.0)),
+        (
+            WindowLabel::Tuple(vec!["subject".into(), 3.into()]),
+            (2.0, 10.0),
+        ),
+        (nested, (0.25, 12.0)),
+    ] {
+        assert_eq!(windows[&label], window, "{label}");
+    }
+    // record order is not significant: the windows are a lookup table keyed by label, and the
+    // ordered map re-sorts Python's insertion order, so the records are compared as a decoded map
+    let python: serde_json::Value =
+        serde_json::from_str(include_str!("data/options_windows.json")).unwrap();
+    let back: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&opts).unwrap()).unwrap();
+    let (mut python, mut back) = (python, back);
+    let sorted = |v: &mut serde_json::Value| {
+        let mut records = v["_terminal_windows"].take().as_array().unwrap().clone();
+        records.sort_by_key(|r| r.to_string());
+        records
+    };
+    let (rp, rb) = (sorted(&mut python), sorted(&mut back));
+    assert_eq!(rp, rb, "the records, order aside");
+    assert_eq!(python, back, "everything else");
+    assert_eq!(
+        serde_json::from_str::<NcaOptions>(&serde_json::to_string(&opts).unwrap()).unwrap(),
+        opts
+    );
+}
+
+#[test]
+fn an_unknown_window_label_type_is_rejected_naming_it_and_the_known_ones() {
+    let mut v: serde_json::Value =
+        serde_json::from_str(include_str!("data/options_windows.json")).unwrap();
+    v["_terminal_windows"][0]["key"]["type"] = "uuid".into();
+    let err = serde_json::from_value::<NcaOptions>(v)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("uuid"), "{err}");
+    for known in [
+        "tuple", "none", "datetime", "date", "bool", "str", "int", "float",
+    ] {
+        assert!(err.contains(known), "{known} missing: {err}");
+    }
+}
+
+#[test]
+fn a_window_which_does_not_end_after_it_starts_is_rejected_with_a_readable_label() {
+    let mut v: serde_json::Value =
+        serde_json::from_str(include_str!("data/options_windows.json")).unwrap();
+    v["_terminal_windows"][7]["window"] = serde_json::json!([5.0, 1.0]);
+    let err = serde_json::from_value::<NcaOptions>(v)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("(\"subject\", 3)"), "{err}");
 }
 
 #[test]
