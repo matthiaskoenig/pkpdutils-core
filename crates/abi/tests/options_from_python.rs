@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use pkpdutils_abi::{
-    AucMethod, BlqAction, BlqHandling, BootstrapDistribution, BootstrapSpread, C0Method, Kind,
-    NcaFlag, NcaOptions, Route, TerminalMethod, UncertaintyMethod, WindowLabel,
+    Acceptance, AucMethod, Blq, BlqAction, BlqHandling, BlqRules, BlqSetting,
+    BootstrapDistribution, BootstrapSpread, C0Method, Kind, NcaFlag, NcaOptions, Route,
+    TerminalMethod, UncertaintyMethod, WindowLabel,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -63,6 +64,11 @@ fn the_full_python_options_carry_their_values() {
     assert!(opts.terminal.keep_candidates);
     assert_eq!(opts.acceptance.r2_adj_min, Some(0.98));
     assert!(opts.acceptance.exclude);
+    assert_eq!(
+        opts.acceptance,
+        Acceptance::pkanalix(true),
+        "the constructor builds the fixture's object"
+    );
     assert_eq!(opts.blq_rules(), pkpdutils_abi::BlqRules::ich_m13a());
     assert_eq!(opts.partial_aucs["early"], (0.0, 4.0));
     assert_eq!(opts.tau, Some(12.0));
@@ -191,6 +197,8 @@ fn invalid_options_are_rejected() {
         r#"{"blq": {"first": "zero", "before_tmax": "zero"}}"#,
         r#"{"terminal": {"method": "last_n"}}"#,
         r#"{"ci_level": 1.5}"#,
+        r#"{"terminal": {"min_adj_r2": 1.5}}"#,
+        r#"{"terminal": {"min_adj_r2": -0.1}}"#,
         r#"{"partial_aucs": {"a": [4.0, 0.0]}}"#,
     ] {
         assert!(serde_json::from_str::<NcaOptions>(json).is_err(), "{json}");
@@ -271,4 +279,84 @@ fn decode_handles_the_zero_value_and_an_unknown_bit() {
         NcaFlag::from_bits_retain(1 << 30).decode(),
         Vec::<&str>::new()
     );
+}
+
+#[test]
+fn every_field_of_the_all_fields_fixture_parses_to_its_own_value() {
+    let o: NcaOptions = serde_json::from_str(include_str!("data/options_all_fields.json")).unwrap();
+    assert_eq!(o.kind, Kind::Concentration);
+    assert_eq!(o.auc_method, AucMethod::Log);
+    let t = &o.terminal;
+    assert_eq!(t.method, TerminalMethod::Manual);
+    assert_eq!(t.min_points, 4);
+    assert!(!t.exclude_cmax);
+    assert_eq!(t.n_points, Some(5));
+    assert_eq!(t.points, Some(vec![1, 2, 3, 4, 5]));
+    assert_eq!(t.min_adj_r2, Some(0.8));
+    assert_eq!(t.tie_tolerance, 1e-3);
+    assert_eq!(t.relative_warning, Some(1e-6));
+    assert_eq!(t.windows.as_ref().unwrap()[&"a".into()], (1.0, 5.0));
+    assert!(t.keep_candidates);
+    assert_eq!(o.lloq, Some(0.5));
+    assert_eq!(o.lloq_relative, Some(0.1));
+    assert_eq!(
+        o.blq,
+        Blq::Rules(BlqRules {
+            first: Some(BlqSetting::Value(0.5)),
+            middle: Some(BlqSetting::Action(BlqAction::Keep)),
+            last: Some(BlqSetting::Action(BlqAction::HalfLloq)),
+            terminal_regression: true,
+            ..BlqRules::default()
+        })
+    );
+    assert_eq!(o.c0_method, C0Method::FirstValue);
+    assert_eq!(o.extrapolation_warning, 0.3);
+    assert_eq!(
+        o.acceptance,
+        Acceptance {
+            r2_adj_min: Some(0.9),
+            extrapolation_max: Some(0.3),
+            span_min: Some(2.5),
+            n_points_min: Some(4),
+            exclude: true,
+        }
+    );
+    assert_eq!(o.partial_aucs["p"], (1.0, 6.0));
+    assert_eq!(o.tau, Some(8.0));
+    assert_eq!(o.tau_tolerance, 0.2);
+    assert!(!o.intervals);
+    assert_eq!(o.units["cmax"], "ng/ml");
+    assert_eq!(o.effect_threshold, Some(1.25));
+    assert_eq!(o.n_workers, Some(3));
+    assert_eq!(o.chunk_rows, 777);
+    assert_eq!(o.uncertainty, Some(UncertaintyMethod::Bootstrap));
+    assert_eq!(o.n_boot, 250);
+    assert_eq!(o.seed, Some(42));
+    assert_eq!(o.ci_level, 0.9);
+    assert_eq!(o.bootstrap_spread, BootstrapSpread::Sd);
+    assert_eq!(o.bootstrap_distribution, BootstrapDistribution::Lognormal);
+    assert_eq!(o.delta_step, 0.05);
+}
+
+#[test]
+fn the_effect_fixture_parses_and_both_new_fixtures_round_trip() {
+    let o: NcaOptions = serde_json::from_str(include_str!("data/options_effect.json")).unwrap();
+    assert_eq!(o.kind, Kind::Effect);
+    assert_eq!(o.lloq, Some(0.25));
+    assert_eq!(o.effect_threshold, Some(0.5));
+    assert_eq!(o.blq, Blq::Handling(BlqHandling::ZeroBeforeTmax));
+    assert_eq!(o.uncertainty, Some(UncertaintyMethod::Delta));
+    assert_eq!(o.c0_method, C0Method::None);
+    for json in [
+        include_str!("data/options_effect.json"),
+        include_str!("data/options_all_fields.json"),
+    ] {
+        let o: NcaOptions = serde_json::from_str(json).unwrap();
+        let back: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&o).unwrap()).unwrap();
+        assert_eq!(
+            back,
+            serde_json::from_str::<serde_json::Value>(json).unwrap()
+        );
+    }
 }

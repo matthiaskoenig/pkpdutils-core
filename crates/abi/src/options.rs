@@ -272,13 +272,13 @@ impl Acceptance {
     }
 
     /// The default thresholds of PKanalix.
-    pub fn pkanalix() -> Self {
+    pub fn pkanalix(exclude: bool) -> Self {
         Self {
             r2_adj_min: Some(0.98),
             extrapolation_max: Some(0.20),
             span_min: Some(3.0),
             n_points_min: Some(3),
-            exclude: false,
+            exclude,
         }
     }
 }
@@ -430,6 +430,12 @@ impl TerminalPhase {
             self.tie_tolerance,
             self.tie_tolerance >= 0.0,
             "non-negative",
+        )?;
+        check_opt(
+            "min_adj_r2",
+            self.min_adj_r2,
+            |x| (0.0..=1.0).contains(&x),
+            "in [0, 1]",
         )?;
         check_opt(
             "relative_warning",
