@@ -16,15 +16,28 @@ Two contracts connect a host to the core: `batch/1`, the batch of timecourses, a
 
 ## The pint gate
 
-`crates/units/tests/data/pint_gate.json` is pint's answer for every unit string the package can produce: for every entry of `PARAMETER_UNITS` it varies only the input units the expression names (`{unit}`, `{time}`, `{dose}`, `{amount}`, `{volume}`) and records the unit, the factor and the short form from `pkpdutils`. The tests in `crates/units/tests/pint_gate.rs` compare `parameter_unit` and `short_unit` against it character for character, so the gate runs in `cargo test` without Python.
+`crates/units/tests/data/pint_gate.json` is pint's answer for the unit strings the package uses and produces, written by `scripts/pint_gate.py` from the `pkpdutils` checkout this crate mirrors. The tests in `crates/units/tests/pint_gate.rs` compare `parse_unit`, `unit_str`, `short_unit` and `parameter_unit` against it character for character, so the gate runs in `cargo test` without Python.
 
-The fixture has a `provenance` header with the `pkpdutils` version and its source (`checkout` or `release`, by whether the module was imported from a `site-packages` directory), next to the `records`. It must be regenerated from the same `pkpdutils` the Rust side is meant to agree with, which is the checkout being mirrored, and the recorded version and source tell which one produced the file. Regenerate it against the checkout being mirrored (`path/to/pkpdutils` is that checkout) with
+The input spellings are not hand written, they are extracted from the checkout: every string literal which `src/`, `tests/`, `docs/` and `examples/` hand to a unit keyword (`unit=`, `time_unit=`, `dose_unit=`, `amount_unit=`, `volume_unit=`, a `units=` mapping) or to one of the unit functions of `pkpdutils.units`, read with `ast` from the python files and from the `python` fences of the pages. The fixture has four sections:
+
+| Section | What it pins |
+| --- | --- |
+| `spellings` | every extracted literal pint accepts, with pint's unit and short form: the gate on the input side, which a hand-written list of spellings cannot provide |
+| `rejected` | the literals pint accepts and the curated registry deliberately does not (`REJECTED` in the script, with the reason), asserted to stay rejected |
+| `records` | for every distinct expression of `PARAMETER_UNITS`, every combination of the axes it names, with pint's unit, factor and short form |
+| `parameters` | every parameter with its expression, so the records are proven to cover all of them |
+
+The axis a spelling may stand in for follows its dimension, which is what the expressions branch on: a time for `{time}`, a volume for `{volume}`, a mass, an amount of substance or an activity for `{amount}`, one of those or something which becomes one per body weight for `{dose}`, and every spelling for `{unit}`. The expressions are keyed once each and not once per parameter, since the derivation is a pure function of the expression and the input units.
+
+The `provenance` header records the `pkpdutils` version, its source (`checkout` or `release`, by whether the module was imported from a `site-packages` directory), the commit of the source tree when it is a clean checkout, the digest of `PARAMETER_UNITS`, the section sizes and the axes. `crates/units/tests/pint_gate.rs` also carries those sizes as its own constants (`N_RECORDS`, `N_PARAMETERS`, `N_EXPRESSIONS`, `N_SPELLINGS`): a regenerated fixture regenerates its header with it, so the header alone cannot show that a fixture shrank, and continuous integration has no `pkpdutils` to compare against. Update the constants deliberately together with the fixture, never to make a failing gate pass.
+
+Regenerate it against the checkout being mirrored (`path/to/pkpdutils` is that checkout) with
 
 ```bash
 uv run --with-editable path/to/pkpdutils python scripts/pint_gate.py
 ```
 
-Without a checkout, the release is the fallback, `uv run --with pkpdutils python scripts/pint_gate.py`. The script writes the committed fixture by default, from any working directory; `-o PATH` writes another file instead. `--check` (same command with `--check` added) writes nothing, reads the committed fixture unless `-o PATH` names another one, and compares the `pkpdutils` version, the digest of `PARAMETER_UNITS`, the parameter and record counts and the records with that fixture (the source is recorded, not compared); a non-zero exit means the fixture is stale and must be regenerated. The script prints the provenance and the record count and exits non-zero if any combination raises in pint. Never edit the fixture by hand: if Rust disagrees, fix `pkpdutils-units`. Regeneration is needed when `PARAMETER_UNITS` gains an entry or the accepted input units widen, and whenever the checkout moves ahead of the version recorded in the fixture.
+The spellings come from the checkout `pkpdutils` was imported from, so a release install needs `--source path/to/pkpdutils` as well. The script writes the committed fixture by default, from any working directory; `-o PATH` writes another file instead. `--check` (same command with `--check` added) writes nothing, reads the committed fixture unless `-o PATH` names another one, and compares the `pkpdutils` version, the digest, the section sizes, the axes and all four sections with that fixture (the source and the commit are recorded, not compared); a non-zero exit means the fixture is stale and must be regenerated. The script prints the provenance, the section sizes and the axes, and exits non-zero if a combination raises in pint, if an axis an expression names has no spelling, or if a `REJECTED` entry is no longer in the source tree. Never edit the fixture by hand: if Rust disagrees, fix `pkpdutils-units`. Regeneration is needed when `PARAMETER_UNITS` changes, when the unit literals of `pkpdutils` change, and whenever the checkout moves ahead of the version recorded in the fixture.
 
 ## The vendored oracles
 

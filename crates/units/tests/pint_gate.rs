@@ -1,15 +1,32 @@
-//! The pint gate: every derived parameter unit agrees with pint.
+//! The pint gate: every unit spelling of the package and every derived
+//! parameter unit agrees with pint.
 //!
 //! The fixture `data/pint_gate.json` is pint's answer, written by
-//! `scripts/pint_gate.py`. It is never edited by hand.
+//! `scripts/pint_gate.py` from the `pkpdutils` checkout this crate mirrors. It
+//! is never edited by hand.
 
-use pkpdutils_units::{UnitContext, parameter_unit, short_unit};
+use std::collections::{BTreeSet, HashMap};
+
+use pkpdutils_units::{UnitContext, parameter_unit, parse_unit, short_unit, unit_str};
 use serde::Deserialize;
 
-/// One record of the fixture.
+/// The sizes of the fixture, independent of its own header.
+///
+/// The header describes the records next to it, so a fixture regenerated against
+/// a degraded `pkpdutils` would agree with itself and `--check` would agree with
+/// the same degraded library. These are the backstop that fires in continuous
+/// integration, where there is no `pkpdutils` to compare against at all, in the
+/// same way as `MANIFEST_ENTRIES` in `crates/abi/tests/oracles_present.rs`.
+/// Update them deliberately when `PARAMETER_UNITS` or the unit literals of
+/// `pkpdutils` change, and never to make a failing gate pass.
+const N_RECORDS: usize = 4949;
+const N_PARAMETERS: usize = 135;
+const N_EXPRESSIONS: usize = 16;
+const N_SPELLINGS: usize = 38;
+
+/// One record of the parameter unit section.
 #[derive(Deserialize)]
 struct Record {
-    parameter: String,
     expression: String,
     unit: String,
     time: String,
@@ -21,24 +38,47 @@ struct Record {
     expected_short: String,
 }
 
-/// The provenance header of the fixture: which `pkpdutils` produced it.
+/// One unit literal of `pkpdutils` with pint's unit and short form.
+#[derive(Deserialize)]
+struct Spelling {
+    literal: String,
+    unit: String,
+    short: String,
+}
+
+/// One spelling pint accepts which the curated registry deliberately does not.
+#[derive(Deserialize)]
+struct Rejected {
+    literal: String,
+    unit: String,
+    reason: String,
+}
+
+/// The provenance header of the fixture: which `pkpdutils` produced it and how.
 #[derive(Deserialize)]
 struct Provenance {
     pkpdutils_version: String,
     pkpdutils_source: String,
     n_records: usize,
     n_parameters: usize,
+    n_expressions: usize,
+    n_spellings: usize,
+    n_rejected: usize,
     parameter_units_digest: String,
 }
 
-/// The fixture: the provenance header and the records.
+/// The fixture: the provenance header and the four sections.
 #[derive(Deserialize)]
 struct Fixture {
     provenance: Provenance,
+    /// Every parameter of `PARAMETER_UNITS` with its expression.
+    parameters: HashMap<String, String>,
+    spellings: Vec<Spelling>,
+    rejected: Vec<Rejected>,
     records: Vec<Record>,
 }
 
-fn records() -> Vec<Record> {
+fn fixture() -> Fixture {
     let fixture: Fixture =
         serde_json::from_str(include_str!("data/pint_gate.json")).expect("fixture parses");
     let p = &fixture.provenance;
@@ -54,34 +94,56 @@ fn records() -> Vec<Record> {
                 .all(|c| c.is_ascii_hexdigit()),
         "the fixture carries no well formed PARAMETER_UNITS digest"
     );
+    // the header against the constants of this file, then the sections against
+    // the header, so neither a trimmed fixture nor a regenerated one can shrink
     assert_eq!(
-        p.n_records,
-        fixture.records.len(),
-        "the fixture header disagrees with its records"
+        (p.n_records, p.n_parameters, p.n_expressions, p.n_spellings),
+        (N_RECORDS, N_PARAMETERS, N_EXPRESSIONS, N_SPELLINGS),
+        "the fixture is not the size this gate was written for"
     );
-    let parameters: std::collections::HashSet<&str> = fixture
+    assert_eq!(
+        (
+            fixture.records.len(),
+            fixture.parameters.len(),
+            fixture.spellings.len(),
+            fixture.rejected.len()
+        ),
+        (p.n_records, p.n_parameters, p.n_spellings, p.n_rejected),
+        "the fixture header disagrees with its sections"
+    );
+    let gated: BTreeSet<&str> = fixture
         .records
         .iter()
-        .map(|r| r.parameter.as_str())
+        .map(|r| r.expression.as_str())
         .collect();
     assert_eq!(
-        p.n_parameters,
-        parameters.len(),
-        "the fixture header disagrees with the parameters of its records"
+        gated.len(),
+        p.n_expressions,
+        "the records miss an expression"
     );
-    fixture.records
+    let ungated: Vec<&String> = fixture
+        .parameters
+        .iter()
+        .filter(|(_, e)| !gated.contains(e.as_str()))
+        .map(|(name, _)| name)
+        .collect();
+    assert!(
+        ungated.is_empty(),
+        "the expression of these parameters is not gated: {ungated:?}"
+    );
+    fixture
 }
 
 fn describe(r: &Record) -> String {
     format!(
-        "{} [{}] with {} / {} / {:?} / {:?} / {:?}",
-        r.parameter, r.expression, r.unit, r.time, r.dose, r.amount, r.volume
+        "[{}] with {} / {} / {:?} / {:?} / {:?}",
+        r.expression, r.unit, r.time, r.dose, r.amount, r.volume
     )
 }
 
 #[test]
 fn every_parameter_unit_matches_pint_character_for_character() {
-    let records = records();
+    let records = fixture().records;
     let mut failures = Vec::new();
     for r in &records {
         let ctx = UnitContext {
@@ -91,10 +153,11 @@ fn every_parameter_unit_matches_pint_character_for_character() {
             amount: r.amount.as_deref(),
             volume: r.volume.as_deref(),
         };
-        // Measured against pint: 110 of 2720 records differ from pint's double by at most 2.4e-16
-        // relative, through multiplication order (found by switching the comparison to `==`).
-        // 1e-14 is the bound chosen with headroom over that, so a failure near it is a real
-        // change, not noise.
+        // Measured against pint: a minority of the records differ from pint's
+        // double by at most 2.4e-16 relative, through multiplication order
+        // (found by switching the comparison to `==`). 1e-14 is the bound chosen
+        // with headroom over that, so a failure near it is a real change, not
+        // noise.
         match parameter_unit(&r.expression, &ctx) {
             Ok((unit, factor)) => {
                 if unit != r.expected_unit
@@ -122,7 +185,7 @@ fn every_parameter_unit_matches_pint_character_for_character() {
 
 #[test]
 fn every_short_unit_matches_pint() {
-    let records = records();
+    let records = fixture().records;
     let failures: Vec<String> = records
         .iter()
         .filter_map(|r| {
@@ -144,4 +207,61 @@ fn every_short_unit_matches_pint() {
         records.len(),
         failures.join("\n")
     );
+}
+
+/// The gate on the input side: every unit literal `pkpdutils` spells anywhere in
+/// its source, tests, documentation and examples resolves to the unit pint
+/// resolves it to, in the long and in the short form.
+///
+/// This is the axis the parameter records do not pin: they cross the expressions
+/// exhaustively, and a spelling the registry does not know is simply absent from
+/// them.
+#[test]
+fn every_unit_spelling_of_the_package_matches_pint() {
+    let spellings = fixture().spellings;
+    let failures: Vec<String> = spellings
+        .iter()
+        .filter_map(|s| match unit_str(&s.literal) {
+            Err(e) => Some(format!("{:?}: {e}, pint says {:?}", s.literal, s.unit)),
+            Ok(unit) if unit != s.unit => Some(format!(
+                "{:?}: got {unit:?}, pint says {:?}",
+                s.literal, s.unit
+            )),
+            Ok(unit) => {
+                let short = short_unit(&unit);
+                (short != s.short).then(|| {
+                    format!(
+                        "{:?}: short_unit({unit:?}) = {short:?}, pint says {:?}",
+                        s.literal, s.short
+                    )
+                })
+            }
+        })
+        .collect();
+    assert!(
+        failures.is_empty(),
+        "{} of {} spellings disagree with pint:\n{}",
+        failures.len(),
+        spellings.len(),
+        failures.join("\n")
+    );
+}
+
+/// The exclusions are deliberate, so they are a tested fact: widening the
+/// registry to one of them fails here until `REJECTED` in `scripts/pint_gate.py`
+/// drops the entry and the fixture is regenerated.
+#[test]
+fn the_deliberate_exclusions_are_rejected() {
+    let rejected = fixture().rejected;
+    assert!(!rejected.is_empty(), "the fixture records no exclusion");
+    for r in &rejected {
+        assert!(
+            parse_unit(&r.literal).is_err(),
+            "{:?} is pint's {:?} and is supposed to be out of the registry ({}), \
+             but it parses",
+            r.literal,
+            r.unit,
+            r.reason
+        );
+    }
 }
