@@ -115,7 +115,12 @@ def vendor(source: Path, accept_changes: bool) -> None:
         (staging / "MANIFEST.json").write_text(json.dumps(manifest, indent=2) + "\n")
         if ORACLE_DIR.exists():
             ORACLE_DIR.rename(backup)
-        staging.rename(ORACLE_DIR)
+        try:
+            staging.rename(ORACLE_DIR)
+        except BaseException:
+            if backup.exists() and not ORACLE_DIR.exists():
+                backup.rename(ORACLE_DIR)
+            raise
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     shutil.rmtree(backup, ignore_errors=True)

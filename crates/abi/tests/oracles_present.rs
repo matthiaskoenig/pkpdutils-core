@@ -31,8 +31,10 @@ fn hex_sha256(bytes: &[u8]) -> String {
 
 fn walk(dir: &std::path::Path, out: &mut BTreeSet<String>) {
     for entry in fs::read_dir(dir).unwrap() {
-        let path = entry.unwrap().path();
-        if path.is_dir() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        // the entry's own file type does not follow a symlink, which is then a file
+        if entry.file_type().unwrap().is_dir() {
             walk(&path, out);
         } else {
             let rel = path.strip_prefix(oracle_dir()).unwrap();
