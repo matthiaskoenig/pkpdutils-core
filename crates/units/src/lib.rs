@@ -15,8 +15,11 @@ pub use registry::{Dimension, Term, Unit, UnitError, parse_unit};
 /// Dimensionalities a dose may have: an amount as mass, as substance or as
 /// activity, or such an amount per body weight.
 ///
-/// As in pint, a mass per mass is the dimensionless dimension, so a ratio
-/// such as `mg/kg` (and the dimensionless unit itself) passes this check.
+/// The per-bodyweight dimensionalities admit any dimensionless unit
+/// (`dimensionless`, `none`, `%`, `mg/g`, ...) because pint reduces
+/// `[mass] / [mass]` to dimensionless. This mirrors `check_dose_unit` in
+/// `src/pkpdutils/units.py` deliberately: it must not be tightened without
+/// changing Python first, or a batch Python accepts would fail here.
 const DOSE_DIMENSIONS: [Dimension; 6] = [
     Dimension::MASS,
     Dimension::SUBSTANCE,
@@ -159,5 +162,12 @@ mod tests {
         }
         assert!(is_per_bodyweight("mg/kg").unwrap());
         assert!(!is_per_bodyweight("mg").unwrap());
+    }
+
+    #[test]
+    fn a_dimensionless_dose_is_accepted_as_in_python() {
+        // pint reduces [mass] / [mass] to dimensionless, so Python accepts it
+        assert!(check_dose_unit("dimensionless").is_ok());
+        assert!(is_per_bodyweight("dimensionless").unwrap());
     }
 }

@@ -9,9 +9,7 @@ use std::ops::{Div, Mul};
 
 /// Signed exponents of the base dimensions of the registry.
 ///
-/// Pressure is `mass / (length * time ** 2)` and needs no axis of its own;
-/// `current` exists only so that the set matches the dimensions of pint the
-/// registry reduces through, and no unit of the registry uses it.
+/// Pressure is `mass / (length * time ** 2)` and needs no axis of its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct Dimension {
     /// Exponent of mass.
@@ -24,44 +22,34 @@ pub struct Dimension {
     pub substance: i8,
     /// Exponent of activity (`IU`).
     pub activity: i8,
-    /// Exponent of electric current.
-    pub current: i8,
 }
 
 impl Dimension {
     /// The dimensionless dimension.
-    pub const NONE: Dimension = Dimension::new(0, 0, 0, 0, 0, 0);
+    pub const NONE: Dimension = Dimension::new(0, 0, 0, 0, 0);
     /// Mass.
-    pub const MASS: Dimension = Dimension::new(1, 0, 0, 0, 0, 0);
+    pub const MASS: Dimension = Dimension::new(1, 0, 0, 0, 0);
     /// Length.
-    pub const LENGTH: Dimension = Dimension::new(0, 1, 0, 0, 0, 0);
+    pub const LENGTH: Dimension = Dimension::new(0, 1, 0, 0, 0);
     /// Time.
-    pub const TIME: Dimension = Dimension::new(0, 0, 1, 0, 0, 0);
+    pub const TIME: Dimension = Dimension::new(0, 0, 1, 0, 0);
     /// Amount of substance.
-    pub const SUBSTANCE: Dimension = Dimension::new(0, 0, 0, 1, 0, 0);
+    pub const SUBSTANCE: Dimension = Dimension::new(0, 0, 0, 1, 0);
     /// Activity (`IU`).
-    pub const ACTIVITY: Dimension = Dimension::new(0, 0, 0, 0, 1, 0);
+    pub const ACTIVITY: Dimension = Dimension::new(0, 0, 0, 0, 1);
     /// Volume, `length ** 3`.
-    pub const VOLUME: Dimension = Dimension::new(0, 3, 0, 0, 0, 0);
+    pub const VOLUME: Dimension = Dimension::new(0, 3, 0, 0, 0);
     /// Pressure, `mass / (length * time ** 2)`.
-    pub const PRESSURE: Dimension = Dimension::new(1, -1, -2, 0, 0, 0);
+    pub const PRESSURE: Dimension = Dimension::new(1, -1, -2, 0, 0);
 
-    /// A dimension from its six exponents.
-    pub const fn new(
-        mass: i8,
-        length: i8,
-        time: i8,
-        substance: i8,
-        activity: i8,
-        current: i8,
-    ) -> Self {
+    /// A dimension from its five exponents.
+    pub const fn new(mass: i8, length: i8, time: i8, substance: i8, activity: i8) -> Self {
         Dimension {
             mass,
             length,
             time,
             substance,
             activity,
-            current,
         }
     }
 
@@ -73,7 +61,6 @@ impl Dimension {
             self.time + o.time,
             self.substance + o.substance,
             self.activity + o.activity,
-            self.current + o.current,
         )
     }
 
@@ -85,7 +72,6 @@ impl Dimension {
             self.time - o.time,
             self.substance - o.substance,
             self.activity - o.activity,
-            self.current - o.current,
         )
     }
 
@@ -97,7 +83,6 @@ impl Dimension {
             self.time * n,
             self.substance * n,
             self.activity * n,
-            self.current * n,
         )
     }
 
@@ -129,7 +114,6 @@ impl fmt::Display for Dimension {
             ("time", self.time),
             ("substance", self.substance),
             ("activity", self.activity),
-            ("current", self.current),
         ];
         let parts: Vec<String> = axes
             .iter()
@@ -323,7 +307,11 @@ const BASES: [Base; 11] = [
     base("none", &["none"], Dimension::NONE, 1.0, false),
 ];
 
-/// An SI prefix: the long name, the spellings accepted as a symbol (the first
+/// An SI prefix. Prefixes apply only to the units flagged `prefixable` (gram,
+/// liter, second, mole, IU): nothing in the package spells a prefixed hour, and
+/// rejecting `kilohour` is deliberate, a curated registry is not a pint clone.
+///
+/// A prefix is: the long name, the spellings accepted as a symbol (the first
 /// is written) and the power of ten.
 struct Prefix {
     name: &'static str,
