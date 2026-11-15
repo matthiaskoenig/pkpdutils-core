@@ -170,6 +170,14 @@ pub enum UnitError {
         /// The deepest supported nesting.
         max: usize,
     },
+    /// A placeholder of a unit expression which the context does not provide.
+    #[error("'{expression}' needs a {placeholder} unit")]
+    MissingPlaceholder {
+        /// The unit expression.
+        expression: String,
+        /// The name of the placeholder, without braces.
+        placeholder: String,
+    },
     /// A unit which is no dose unit.
     #[error(
         "a dose must be a mass, an amount of substance or an activity, or one of them per body \

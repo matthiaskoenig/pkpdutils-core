@@ -7,9 +7,11 @@
 //! [`check_dose_unit`] and [`is_per_bodyweight`].
 
 mod format;
+mod parameter;
 mod registry;
 
 pub use format::{short_unit, unit_str};
+pub use parameter::{UnitContext, normalize_clearance, normalize_volume, parameter_unit};
 pub use registry::{Dimension, MAX_DEPTH, MAX_EXPONENT, Term, Unit, UnitError, parse_unit};
 
 /// Dimensionalities a dose may have: an amount as mass, as substance or as

@@ -8,7 +8,7 @@ use crate::registry::{Term, Unit, parse_unit};
 /// Positive exponents come first, alphabetically by long name and joined by
 /// ` * `, `1` when there are none, then every negative one as ` / name`,
 /// alphabetically. An exponent beyond 1 is ` ** n`.
-fn long_form(unit: &Unit) -> String {
+pub(crate) fn long_form(unit: &Unit) -> String {
     render(
         unit,
         |t| t.name.clone(),
