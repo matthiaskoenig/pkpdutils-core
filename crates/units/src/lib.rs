@@ -101,6 +101,84 @@ mod tests {
     }
 
     #[test]
+    fn every_pint_spelling_of_a_registry_unit_resolves_to_the_same_unit() {
+        // pint pairs any spelling of a prefix with any spelling of a unit and
+        // takes one trailing plural `s`, so a string written against pint has
+        // four spellings per prefixed unit and a plural of each. The expected
+        // values are a live run of `ureg.parse_units`.
+        for (input, expected) in [
+            // the four prefix/base combinations, name and symbol on both sides
+            ("millimole", "millimole"),
+            ("mmol", "millimole"),
+            ("millimol", "millimole"),
+            // `tests/nca/test_urine.py` spells a dose `mmole`
+            ("mmole", "millimole"),
+            ("mliter", "milliliter"),
+            ("mgram", "milligram"),
+            ("ksecond", "kilosecond"),
+            ("ugram", "microgram"),
+            ("micromol", "micromole"),
+            ("msec", "millisecond"),
+            ("mIU", "milliIU"),
+            ("kIU", "kiloIU"),
+            // the micro prefix: `mc` is the CDISC PKUNIT synonym, `mu` the
+            // ASCII transliteration of the Greek letter
+            ("mcg", "microgram"),
+            ("mcl", "microliter"),
+            ("mcmol", "micromole"),
+            ("mug", "microgram"),
+            // the aliases of liter
+            ("litre", "liter"),
+            ("\u{2113}", "liter"),
+            ("m\u{2113}", "milliliter"),
+            ("millilitre", "milliliter"),
+            // one trailing `s`
+            ("litres", "liter"),
+            ("mliters", "milliliter"),
+            ("hours", "hour"),
+            ("days", "day"),
+            ("mins", "minute"),
+            ("secs", "second"),
+            ("mols", "mole"),
+            ("mmoles", "millimole"),
+            ("IUs", "IU"),
+            ("counts", "count"),
+            ("nones", "none"),
+            ("percents", "percent"),
+            ("mmHgs", "millimeter_Hg"),
+        ] {
+            assert_eq!(unit_str(input).unwrap(), expected, "input {input}");
+        }
+        // the canonical output is the same whichever spelling came in
+        assert_eq!(short_unit(&unit_str("mmole").unwrap()), "mmol");
+        assert_eq!(short_unit(&unit_str("mcg").unwrap()), "\u{3bc}g");
+        assert_eq!(short_unit(&unit_str("litre").unwrap()), "l");
+        assert!(check_dose_unit("mmole").is_ok());
+        assert!(!is_per_bodyweight("mmole").unwrap());
+    }
+
+    #[test]
+    fn a_plural_needs_more_than_one_character_of_base_as_in_pint() {
+        // pint skips a plural candidate whose base part is a single character,
+        // so these are unknown there as well
+        for input in ["ls", "Ls", "mgs", "kgs", "ugs", "mcgs", "mLs", "mls", "ss"] {
+            assert!(
+                matches!(parse_unit(input).unwrap_err(), UnitError::Unknown { .. }),
+                "{input} must stay unknown"
+            );
+        }
+        // `dimensionless` is the parser's own token and takes no plural
+        assert!(parse_unit("dimensionlesss").is_err());
+        // the singular wins over the plural: `ds` is a decisecond, not days
+        assert_eq!(unit_str("ds").unwrap(), "decisecond");
+        assert_eq!(unit_str("us").unwrap(), "microsecond");
+        // a bare spelling wins over a prefixed one
+        assert_eq!(unit_str("min").unwrap(), "minute");
+        assert_eq!(unit_str("d").unwrap(), "day");
+        assert_eq!(unit_str("mmHg").unwrap(), "millimeter_Hg");
+    }
+
+    #[test]
     fn short_unit_keeps_what_the_user_wrote_and_shortens_the_canonical_form() {
         // pint's `~P` format: the middle dot U+22C5, Unicode superscripts, and
         // the micro sign U+03BC. These are the exact bytes, read from a live run.

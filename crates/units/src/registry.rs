@@ -3,6 +3,14 @@
 //! Covers mass, volume (`length ** 3`), time, amount of substance, activity
 //! (`IU`), pressure and the dimensionless `dimensionless`, `count` and `none`.
 //! Temperature is deliberately absent.
+//!
+//! Of the units it does hold it accepts every spelling pint does, because a host
+//! string comes from code written against pint: a prefix name or symbol with a
+//! unit name, symbol or alias, and one trailing plural `s`, see [`lookup`].
+//! What it deliberately does not mirror is pint beyond those units: a prefix
+//! outside [`PREFIXES`] (no `hectoliter`), a prefixed unit which is not
+//! `prefixable` (no `kilohour`), pint's implicit product (`mg l`) and its
+//! fractional exponents (`hr ** 0.5`), all of which are an error here.
 
 use std::fmt;
 use std::ops::{Div, Mul};
@@ -312,6 +320,8 @@ fn bounded(e: i32) -> Option<i32> {
 /// A base unit of the registry.
 struct Base {
     name: &'static str,
+    /// Every spelling besides the name which pint accepts for this unit: its
+    /// symbol first, which is the one the short form writes, then its aliases.
     symbols: &'static [&'static str],
     dimension: Dimension,
     factor: f64,
@@ -334,10 +344,17 @@ const fn base(
     }
 }
 
-/// The named units. The first symbol is the one the short form writes.
+/// The named units. The first symbol is the one the short form writes, the rest
+/// are the other spellings pint accepts (`L`, `litre` and `ℓ` for `liter`).
 const BASES: [Base; 12] = [
     base("gram", &["g"], Dimension::MASS, 1e-3, true),
-    base("liter", &["l", "L"], Dimension::VOLUME, 1e-3, true),
+    base(
+        "liter",
+        &["l", "L", "litre", "\u{2113}"],
+        Dimension::VOLUME,
+        1e-3,
+        true,
+    ),
     base("second", &["s", "sec"], Dimension::TIME, 1.0, true),
     base("minute", &["min"], Dimension::TIME, 60.0, false),
     base("hour", &["h", "hr"], Dimension::TIME, 3600.0, false),
@@ -381,7 +398,9 @@ const PREFIXES: [Prefix; 16] = [
     },
     Prefix {
         name: "micro",
-        symbols: &["\u{3bc}", "\u{b5}", "u"],
+        // `mc` is the CDISC PKUNIT synonym of `ug` and the usual US clinical
+        // spelling, `mu` the ASCII transliteration of the Greek letter
+        symbols: &["\u{3bc}", "\u{b5}", "u", "mu", "mc"],
         exponent: -6,
     },
     Prefix {
@@ -471,31 +490,68 @@ fn prefixed(p: &Prefix, b: &Base) -> Term {
     }
 }
 
-/// The named unit of a token, with exponent 1.
-fn lookup(token: &str) -> Option<Term> {
-    if let Some(b) = BASES
+/// The spellings of a prefix: its name, then its symbols.
+fn prefix_spellings(p: &Prefix) -> impl Iterator<Item = &'static str> {
+    std::iter::once(p.name).chain(p.symbols.iter().copied())
+}
+
+/// The base unit a spelling names, `None` when it is shorter than `min_chars`.
+///
+/// pint keeps a unit's name, its symbol and its aliases in one table, so every
+/// spelling of a unit stands for it wherever one of them does.
+fn base_of(spelling: &str, min_chars: usize) -> Option<&'static Base> {
+    if spelling.chars().count() < min_chars {
+        return None;
+    }
+    BASES
         .iter()
-        .find(|b| b.name == token || b.symbols.contains(&token))
-    {
+        .find(|b| b.name == spelling || b.symbols.contains(&spelling))
+}
+
+/// The named unit of a singular token whose base spelling has at least
+/// `min_chars` characters: a bare base, or a prefix followed by a prefixable one.
+fn resolve(token: &str, min_chars: usize) -> Option<Term> {
+    if let Some(b) = base_of(token, min_chars) {
         return Some(term_of(b));
     }
     for p in &PREFIXES {
-        if let Some(rest) = token.strip_prefix(p.name)
-            && let Some(b) = BASES.iter().find(|b| b.prefixable && b.name == rest)
-        {
-            return Some(prefixed(p, b));
-        }
-        for s in p.symbols {
+        for s in prefix_spellings(p) {
             if let Some(rest) = token.strip_prefix(s)
-                && let Some(b) = BASES
-                    .iter()
-                    .find(|b| b.prefixable && b.symbols.contains(&rest))
+                && let Some(b) = base_of(rest, min_chars).filter(|b| b.prefixable)
             {
                 return Some(prefixed(p, b));
             }
         }
     }
     None
+}
+
+/// The named unit of a token, with exponent 1.
+///
+/// Mirrors pint's `parse_unit_name`. pint pairs any spelling of a prefix (its
+/// name or one of its symbols) with any spelling of a unit (its name, its symbol
+/// or one of its aliases), so all four combinations name the same unit:
+/// `millimole`, `mmol`, `millimol` and `mmole`. A single trailing `s` is a plural
+/// of any spelling whose base part keeps more than one character, which is why
+/// `mols` and `mmoles` are a mole while `ls` and `mgs` are nothing.
+///
+/// The order is load-bearing and is pint's: it takes the first candidate of the
+/// empty suffix before the plural one, and of the empty prefix before a real one.
+///
+/// - A bare spelling comes before a prefixed one, so `min` is a minute and not a
+///   milli-inch, `d` is a day and not a decisomething, and `mmHg` is itself and
+///   not a milli-mHg.
+/// - The singular comes before the plural, so `ds` is a decisecond, as in pint,
+///   and not a plural of the day symbol `d`.
+///
+/// The registry is a curated subset of pint, so it accepts fewer *units* (no
+/// temperature, no prefixed hour, see [`Prefix`]) - but of the units it holds it
+/// accepts every spelling pint does, because a host string comes from code
+/// written against pint.
+fn lookup(token: &str) -> Option<Term> {
+    // the whole token, then the token without one trailing plural `s`, whose base
+    // part pint requires to keep more than one character
+    resolve(token, 1).or_else(|| resolve(token.strip_suffix('s')?, 2))
 }
 
 impl Unit {
