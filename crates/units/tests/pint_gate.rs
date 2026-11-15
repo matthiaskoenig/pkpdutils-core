@@ -91,12 +91,13 @@ fn every_parameter_unit_matches_pint_character_for_character() {
             amount: r.amount.as_deref(),
             volume: r.volume.as_deref(),
         };
-        // An exact comparison disagrees on 110 of 2720 records by at most 2.5e-16
-        // relative (one ulp: another multiplication order), so 1e-12 is generous.
+        // Measured against pint: 110 of 2720 records differ from pint's double by at
+        // most 2.4e-16 relative, through multiplication order. 1e-14 is the bound chosen
+        // with headroom over that, so a failure near it is a real change, not noise.
         match parameter_unit(&r.expression, &ctx) {
             Ok((unit, factor)) => {
                 if unit != r.expected_unit
-                    || (factor - r.expected_factor).abs() > 1e-12 * r.expected_factor.abs().max(1.0)
+                    || (factor - r.expected_factor).abs() > 1e-14 * r.expected_factor.abs().max(1.0)
                 {
                     failures.push(format!(
                         "{}: got {unit} x {factor}, pint says {} x {}",
