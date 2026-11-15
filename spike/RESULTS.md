@@ -25,4 +25,10 @@ Extra, 100 000 x 12 rayon: 16 threads on cores 0-15 2.02 ms (9.8x), 8 threads on
 | one 12-point curve | at most 5 us | 0.198 us | pass |
 | rayon speed up on 20 logical CPUs | at least 8x | 9.7x | pass |
 
-Notes: the kernel is not fully like-for-like with Python (no options, flags, BLQ, error handling, unit work; windows ending at the last point only, as the brief says), so the ratios are an upper bound of what the full port reaches. The 1 x 12 rayon time is pure pool dispatch (one chunk). Speedup beyond 8x comes from SMT and the efficiency cores. The spike is not a workspace member; Task 2's workspace manifest needs `exclude = ["spike"]`.
+Caveats on the ratios (they overstate what the full port will reach):
+
+- Output scope, the largest single reason. The kernel produces 8 outputs (`cmax`, `tmax`, `clast`, `tlast`, `auc_last`, `lambda_z`, `thalf`, `auc_inf_obs`) where Python's `nca()` produces dozens. Missing families: the moments and derived parameters (`aumc`, `mrt`, `cl`, `vz`, `vss`), the whole predicted set (`_pred` parameters and extrapolated fractions), the terminal window statistics (R2, span, candidates), flags, BLQ and dose handling, pint unit derivation and the xarray assembly of the result. The Python column pays for all of it and the Rust column for none of it.
+- Terminal selection rule. `terminal.py` applies `tie_tolerance`, which prefers more points among windows whose adjusted R2 is near the best; the Rust kernel takes a strict greater-than on the adjusted R2, so on noisy data it can pick a different window. The effect on the timing is negligible, since the same windows are evaluated either way.
+- No options, no error handling, windows ending at the last point only, as the brief says.
+
+The 1 x 12 rayon time is pure pool dispatch (one chunk). Speedup beyond 8x comes from SMT and the efficiency cores. The spike is not a workspace member; Task 2's workspace manifest needs `exclude = ["spike"]`.
