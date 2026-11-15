@@ -8,6 +8,7 @@ version and the source, `checkout` or `release`, of the `pkpdutils` it imported)
 """
 
 import argparse
+import hashlib
 import itertools
 import json
 import sys
@@ -69,9 +70,13 @@ def main() -> int:
             )
     module_dir = Path(pkpdutils.__file__).resolve().parent
     source = "release" if "site-packages" in module_dir.parts else "checkout"
+    digest = hashlib.sha256(
+        json.dumps(sorted(PARAMETER_UNITS.items())).encode()
+    ).hexdigest()[:16]
     provenance = {
         "pkpdutils_version": pkpdutils.__version__,
         "pkpdutils_source": source,
+        "parameter_units_digest": digest,
         "n_parameters": len(PARAMETER_UNITS),
         "n_records": len(records),
     }
@@ -85,7 +90,8 @@ def main() -> int:
     print(f"{len(records)} records from {len(PARAMETER_UNITS)} parameters")
     print(
         f"generated with pkpdutils {provenance['pkpdutils_version']} "
-        f"({provenance['pkpdutils_source']}, imported from {module_dir})"
+        f"({provenance['pkpdutils_source']}, imported from {module_dir}), "
+        f"PARAMETER_UNITS digest {digest}"
     )
     return 0
 

@@ -27,6 +27,8 @@ struct Provenance {
     pkpdutils_version: String,
     pkpdutils_source: String,
     n_records: usize,
+    n_parameters: usize,
+    parameter_units_digest: String,
 }
 
 /// The fixture: the provenance header and the records.
@@ -45,18 +47,29 @@ fn records() -> Vec<Record> {
             && matches!(p.pkpdutils_source.as_str(), "checkout" | "release"),
         "the fixture does not record the pkpdutils it was generated with"
     );
+    assert!(
+        p.parameter_units_digest.len() == 16
+            && p.parameter_units_digest
+                .chars()
+                .all(|c| c.is_ascii_hexdigit()),
+        "the fixture carries no well formed PARAMETER_UNITS digest"
+    );
     assert_eq!(
         p.n_records,
         fixture.records.len(),
         "the fixture header disagrees with its records"
     );
-    let records = fixture.records;
-    assert!(
-        records.len() > 1000,
-        "the gate fixture looks truncated: {}",
-        records.len()
+    let parameters: std::collections::HashSet<&str> = fixture
+        .records
+        .iter()
+        .map(|r| r.parameter.as_str())
+        .collect();
+    assert_eq!(
+        p.n_parameters,
+        parameters.len(),
+        "the fixture header disagrees with the parameters of its records"
     );
-    records
+    fixture.records
 }
 
 fn describe(r: &Record) -> String {
@@ -78,6 +91,8 @@ fn every_parameter_unit_matches_pint_character_for_character() {
             amount: r.amount.as_deref(),
             volume: r.volume.as_deref(),
         };
+        // An exact comparison disagrees on 110 of 2720 records by at most 2.5e-16
+        // relative (one ulp: another multiplication order), so 1e-12 is generous.
         match parameter_unit(&r.expression, &ctx) {
             Ok((unit, factor)) => {
                 if unit != r.expected_unit
