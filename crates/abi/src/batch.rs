@@ -38,6 +38,14 @@ impl PartialEq for Coordinate {
 }
 
 /// Bit equality of two slices of numbers, so that NaN equals NaN in the same position.
+///
+/// By the bits, and by nothing else, which is the fidelity the wire provides and no more.
+/// `nonfinite` writes every NaN as the string `"NaN"` and reads the canonical positive NaN
+/// back, so the sign of a NaN does not survive a round trip whatever this comparison does, and
+/// canonicalizing NaN here would let `batch == batch.round_trip()` claim a fidelity the wire
+/// does not have. The sign of a zero does survive (`serialize_f64(-0.0)` writes `-0.0`), so
+/// `0.0` and `-0.0` are different here, which is correct.
+/// `the_wire_canonicalizes_nan_and_keeps_the_sign_of_zero` pins both halves.
 pub(crate) fn bits_eq(a: &[f64], b: &[f64]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits())
 }
@@ -864,6 +872,29 @@ mod tests {
                 .to_string();
             assert!(err.contains(message), "expected {message:?}, got {err}");
         }
+    }
+
+    #[test]
+    fn the_wire_canonicalizes_nan_and_keeps_the_sign_of_zero() {
+        // the crate-wide answer to what bit equality may claim, see `bits_eq`
+        let negative_nan = f64::from_bits(f64::NAN.to_bits() | (1 << 63));
+        assert!(negative_nan.is_nan() && negative_nan.is_sign_negative());
+        let signed = Coordinate::Float(vec![negative_nan]);
+        let back: Coordinate =
+            serde_json::from_str(&serde_json::to_string(&signed).unwrap()).unwrap();
+        // the sign of a NaN is not on the wire, so it is not in the equality either
+        assert_ne!(back, signed);
+        assert_eq!(back, Coordinate::Float(vec![f64::NAN]));
+        // the sign of a zero is on the wire, so two coordinates differ by it
+        let minus = Coordinate::Float(vec![-0.0]);
+        assert_ne!(minus, Coordinate::Float(vec![0.0]));
+        let back: Coordinate =
+            serde_json::from_str(&serde_json::to_string(&minus).unwrap()).unwrap();
+        assert_eq!(back, minus);
+        let Coordinate::Float(values) = back else {
+            panic!("a float coordinate stays a float");
+        };
+        assert!(values[0].is_sign_negative());
     }
 
     #[test]

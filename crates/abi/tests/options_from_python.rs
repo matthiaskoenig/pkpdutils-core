@@ -100,6 +100,25 @@ fn an_unknown_option_field_is_rejected_by_name() {
     );
 }
 
+#[test]
+fn a_misspelled_blq_key_is_rejected_but_not_named() {
+    // `blq` is an untagged enum, as in Python, so serde reports it as "data did
+    // not match any variant" and names nothing inside it. The property the plan
+    // gates on - an unknown field rejected with the field named - therefore
+    // holds at the top level of the options and not within `blq`, which the doc
+    // comment on `Blq` records. When this test starts failing, the untagged enum
+    // was replaced by a hand-written `Deserialize`: update that comment.
+    let json = r#"{"_nca_options_version": 1, "blq": {"middlee": "zero"}}"#;
+    let err = serde_json::from_str::<NcaOptions>(json)
+        .unwrap_err()
+        .to_string();
+    assert!(!err.is_empty(), "the misspelled key must be rejected");
+    assert!(
+        !err.contains("middlee"),
+        "the error names the field after all, see the doc comment on Blq: {err}"
+    );
+}
+
 fn windows_options() -> NcaOptions {
     serde_json::from_str(include_str!("data/options_windows.json")).unwrap()
 }

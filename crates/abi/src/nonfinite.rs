@@ -2,6 +2,11 @@
 //! infinities are the strings `"NaN"`, `"inf"` and `"-inf"` (`serde_json` would write `null`,
 //! which reads back as no number).
 //!
+//! The three strings are canonical: a NaN loses its sign and its payload on the way out and
+//! reads back as the positive quiet NaN, so a sign-bit NaN does not survive a round trip. The
+//! sign of a zero does, since `-0.0` is a finite number and is written as one. The equality of
+//! this crate is built on exactly that, see `batch::bits_eq`.
+//!
 //! Use the module itself as `#[serde(with = "nonfinite")]` for an `f64`, and the submodules
 //! [`option`], [`vec`], [`option_vec`], [`pair`] and [`pair_map`] for the other shapes.
 //! An `Option` field also needs `#[serde(default)]` so that a missing key reads as `None`.

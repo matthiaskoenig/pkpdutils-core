@@ -16,6 +16,8 @@ use crate::window::WindowLabel;
 use crate::{OPTIONS_VERSION, nonfinite};
 
 /// A rule for the values below the limit of quantification: an action or a number imputed as is.
+///
+/// Untagged, and so subject to the error quality [`Blq`] describes.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 #[serde(untagged)]
 pub enum BlqSetting {
@@ -174,6 +176,18 @@ impl BlqRules {
 }
 
 /// The handling of the values below the limit of quantification: a classic handling or rules.
+///
+/// Untagged, as in Python, where the field is `BLQHandling | BLQRules` and the
+/// JSON is either a string or an object. That has one cost, recorded here
+/// because it is easy to believe otherwise: `deny_unknown_fields` rejects an
+/// unknown field **and names it** everywhere else in these options, while serde
+/// reports a failing untagged enum as "data did not match any variant" without
+/// naming anything inside it. So a misspelled key of `blq` is rejected, and it
+/// is not named. The property holds at the top level of the options and not
+/// within `blq`; `a_misspelled_blq_key_is_rejected_but_not_named` in
+/// `tests/options_from_python.rs` pins exactly that, and a hand-written
+/// `Deserialize` which tries both variants and keeps the better error is the
+/// host plan's to write.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(untagged)]
 pub enum Blq {
