@@ -59,10 +59,14 @@ Stable Rust 1.100.0 with `rustfmt` and `clippy`, and the targets `wasm32-unknown
 
 ## Checks
 
+What continuous integration runs, so `--locked` here as well: the committed `Cargo.lock` is what is checked and a resolver change is a failure rather than a silent difference.
+
 ```bash
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+cargo check --locked --workspace --target wasm32-unknown-unknown
+cargo check --locked --workspace --target wasm32-wasip1
 ```
 
 ## License

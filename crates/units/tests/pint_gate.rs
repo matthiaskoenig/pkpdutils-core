@@ -16,7 +16,7 @@ use serde::Deserialize;
 /// a degraded `pkpdutils` would agree with itself and `--check` would agree with
 /// the same degraded library. These are the backstop that fires in continuous
 /// integration, where there is no `pkpdutils` to compare against at all, in the
-/// same way as `MANIFEST_ENTRIES` in `crates/abi/tests/oracles_present.rs`.
+/// same way as `MANIFEST_ENTRIES` in `crates/oracles/tests/oracles_present.rs`.
 /// Update them deliberately when `PARAMETER_UNITS` or the unit literals of
 /// `pkpdutils` change, and never to make a failing gate pass.
 const N_RECORDS: usize = 5078;

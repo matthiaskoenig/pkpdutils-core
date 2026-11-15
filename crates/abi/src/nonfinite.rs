@@ -8,7 +8,7 @@
 //! this crate is built on exactly that, see `batch::bits_eq`.
 //!
 //! Use the module itself as `#[serde(with = "nonfinite")]` for an `f64`, and the submodules
-//! [`option`], [`vec`], [`option_vec`], [`pair`] and [`pair_map`] for the other shapes.
+//! [`option`], [`mod@vec`], [`option_vec`], [`pair`] and [`pair_map`] for the other shapes.
 //! An `Option` field also needs `#[serde(default)]` so that a missing key reads as `None`.
 
 use serde::de::Error as _;

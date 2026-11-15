@@ -1,10 +1,15 @@
 //! Units of the package: a curated registry, parsing and the canonical spelling.
 //!
-//! The registry covers exactly the dimensions the package uses (mass, volume,
-//! time, amount of substance, activity, pressure and the dimensionless units)
-//! and is not a general unit system. It reproduces the helpers of
+//! The registry covers exactly the dimensions the package uses (mass, length,
+//! volume, time, amount of substance, activity, pressure and the dimensionless
+//! units) and is not a general unit system. It reproduces the helpers of
 //! `pkpdutils.units`: [`parse_unit`], [`unit_str`], [`short_unit`],
 //! [`check_dose_unit`] and [`is_per_bodyweight`].
+//!
+//! Of the spellings it accepts, one names its unit differently than pint does:
+//! `fm` is a femtometer here, where pint reads the same spelling as its `fermi`,
+//! the same dimension, the same factor of `1e-15 meter` and the same short form
+//! `fm`.
 
 mod format;
 mod parameter;
