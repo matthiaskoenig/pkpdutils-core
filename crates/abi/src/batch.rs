@@ -193,6 +193,14 @@ pub struct Batch {
     pub route: Option<Route>,
     /// The route of every sample when they differ.
     pub routes: Option<Vec<Route>>,
+    /// The tissue the values were measured in, `"plasma"`, `"urine"`, ...
+    ///
+    /// Batch level only, with no per-sample counterpart: `Timecourses` carries it
+    /// in `attrs` and `from_timecourses` refuses curves which disagree on it, so
+    /// a mixed batch does not exist in Python. The analysis hands it back in
+    /// [`crate::result::Attributes`], where `cdisc.to_pp` reads it for `PPSPEC`
+    /// and otherwise falls back to `plasma`.
+    pub tissue: Option<String>,
     /// The non-dimension coordinates, each along the flattened samples.
     pub coords: Vec<(String, Coordinate)>,
 }
@@ -223,6 +231,7 @@ impl PartialEq for Batch {
             substances,
             route,
             routes,
+            tissue,
             coords,
         } = self;
         *contract == o.contract
@@ -247,6 +256,7 @@ impl PartialEq for Batch {
             && *substances == o.substances
             && *route == o.route
             && *routes == o.routes
+            && *tissue == o.tissue
             && *coords == o.coords
     }
 }
@@ -333,6 +343,7 @@ impl Batch {
             substances: None,
             route: Some(Route::Oral),
             routes: None,
+            tissue: Some("plasma".to_string()),
             coords: vec![(
                 "subject".to_string(),
                 Coordinate::Str(vec!["A".to_string(), "B".to_string()]),
@@ -382,6 +393,8 @@ struct BatchWire {
     route: Option<Route>,
     #[serde(default)]
     routes: Option<Vec<Route>>,
+    #[serde(default)]
+    tissue: Option<String>,
     #[serde(default)]
     coords: Vec<(String, Coordinate)>,
 }
@@ -451,6 +464,7 @@ impl From<Batch> for BatchWire {
             substances: b.substances,
             route: b.route,
             routes: b.routes,
+            tissue: b.tissue,
             coords: b.coords,
         }
     }
@@ -485,6 +499,7 @@ impl TryFrom<BatchWire> for Batch {
             substances: w.substances,
             route: w.route,
             routes: w.routes,
+            tissue: w.tissue,
             coords: w.coords,
         })
     }
@@ -521,7 +536,7 @@ mod tests {
     #[test]
     fn the_equality_still_tells_batches_apart() {
         type Mutation = (&'static str, fn(&mut Batch));
-        let mutations: [Mutation; 22] = [
+        let mutations: [Mutation; 23] = [
             ("contract", |b| b.contract = "x".into()),
             ("sample_dims", |b| b.sample_dims = vec!["y".into()]),
             ("sample_shape", |b| b.sample_shape = vec![1, 2]),
@@ -544,6 +559,7 @@ mod tests {
             ("substances", |b| b.substances = Some(vec![])),
             ("route", |b| b.route = Some(Route::IvBolus)),
             ("routes", |b| b.routes = Some(vec![Route::Oral; 2])),
+            ("tissue", |b| b.tissue = None),
         ];
         let batch = Batch::example_with_undosed_row();
         for (name, mutate) in mutations {

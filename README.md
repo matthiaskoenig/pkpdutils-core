@@ -14,6 +14,10 @@ Two contracts connect a host to the core: `batch/1`, the batch of timecourses, a
 
 `check_contract(found, expected)` accepts an exact match and otherwise returns a `ContractError` naming both sides.
 
+`batch/1` carries the timecourses, the dosing protocol of every row, the units and the batch level descriptors `substance`, `route` and `tissue` (per-sample `substances` and `routes` when a batch is mixed; a mixed `tissue` does not exist in Python). `analysis/1` carries the request (a batch and its options) and the result: the parameters, the variables over an extra dimension, the flags, the coordinates and the `attributes`, which are the `attrs` of `NCAResult.ds` - `substance`, `route`, `tissue` and the resolved options, the four a writer of the result reads back (`cdisc.to_pp` reads `tissue` for `PPSPEC`, `report.py` reads the options for its methods line).
+
+The comparison is exact, so an additive field is a new contract as soon as a host speaks the old one. While nothing speaks them - no host, no release, no other repository - a field is added to `batch/1` and `analysis/1` in place and the contract strings stay; after a host ships, the same change is a `batch/2` with a coordinated bump across the repositories.
+
 ## The pint gate
 
 `crates/units/tests/data/pint_gate.json` is pint's answer for the unit strings the package uses and produces, written by `scripts/pint_gate.py` from the `pkpdutils` checkout this crate mirrors. The tests in `crates/units/tests/pint_gate.rs` compare `parse_unit`, `unit_str`, `short_unit` and `parameter_unit` against it character for character, so the gate runs in `cargo test` without Python.

@@ -3,7 +3,7 @@
 use crate::batch::{
     Batch, Coordinate, bits_eq, check_coords, check_len, checked_product, expected_len,
 };
-use crate::{ANALYSIS_CONTRACT, NcaOptions, check_contract, nonfinite};
+use crate::{ANALYSIS_CONTRACT, NcaOptions, Route, check_contract, nonfinite};
 use serde::{Deserialize, Serialize};
 
 /// A batch with the options to analyse it with.
@@ -114,6 +114,47 @@ impl PartialEq for PointVariable {
     }
 }
 
+/// The dataset level attributes of a result, the `attrs` of `NCAResult.ds`.
+///
+/// `nca` writes `substance`, `route` and `tissue` onto the result when the batch
+/// has one of each, so that a writer of the result finds what it describes:
+/// `cdisc.to_pp` reads `tissue` for `PPSPEC` and falls back to `plasma`, which is
+/// the wrong answer for a urine analysis and a silent one. It also writes the
+/// options the analysis really ran with, which `report.py` reads back for its
+/// methods line.
+///
+/// Python's fourth attribute, `partial_aucs`, is `options.partial_aucs` of those
+/// resolved options and is not carried a second time.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Attributes {
+    /// The substance when every sample of the batch shares one, `None` when the
+    /// batch is mixed and names it in a coordinate instead.
+    #[serde(default)]
+    pub substance: Option<String>,
+    /// The route when every sample of the batch shares one.
+    #[serde(default)]
+    pub route: Option<Route>,
+    /// The tissue the values were measured in.
+    #[serde(default)]
+    pub tissue: Option<String>,
+    /// The options the analysis ran with, resolved: the automatic choices
+    /// (`uncertainty`, ...) replaced by what they resolved to.
+    pub options: NcaOptions,
+}
+
+impl Attributes {
+    /// The attributes of a batch analysed with `options`, the resolved ones.
+    pub fn of(batch: &Batch, options: NcaOptions) -> Self {
+        Self {
+            substance: batch.substance.clone(),
+            route: batch.route,
+            tissue: batch.tissue.clone(),
+            options,
+        }
+    }
+}
+
 /// The result of a non-compartmental analysis, one value per sample and parameter.
 ///
 /// Read through a wire struct which checks the contract and the length of every array.
@@ -133,26 +174,37 @@ pub struct AnalysisResult {
     pub flags: Vec<u32>,
     /// The non-dimension coordinates of the batch, carried into the result.
     pub coords: Vec<(String, Coordinate)>,
+    /// The dataset level attributes, see [`Attributes`].
+    pub attributes: Attributes,
 }
 
 impl AnalysisResult {
-    /// A result of this build's contract.
-    pub fn new(
-        sample_dims: Vec<String>,
-        sample_shape: Vec<usize>,
-        parameters: Vec<ParameterColumn>,
-        point_variables: Vec<PointVariable>,
-        flags: Vec<u32>,
-        coords: Vec<(String, Coordinate)>,
-    ) -> Self {
+    /// A result of this build's contract for a sample shape, with its flags
+    /// cleared and no variables yet.
+    ///
+    /// The variable sections are filled in by the caller, which keeps this
+    /// constructor from growing an argument per section (`sample_shape` is the
+    /// shape of a batch which was validated, so its product is a real number of
+    /// samples; one which overflows leaves the flags empty and
+    /// [`AnalysisResult::validate`] then reports it):
+    ///
+    /// ```ignore
+    /// AnalysisResult {
+    ///     parameters,
+    ///     ..AnalysisResult::new(sample_dims, sample_shape, attributes)
+    /// }
+    /// ```
+    pub fn new(sample_dims: Vec<String>, sample_shape: Vec<usize>, attributes: Attributes) -> Self {
+        let n_samples = checked_product(&sample_shape).unwrap_or(0);
         Self {
             contract: ANALYSIS_CONTRACT.to_string(),
             sample_dims,
             sample_shape,
-            parameters,
-            point_variables,
-            flags,
-            coords,
+            parameters: Vec::new(),
+            point_variables: Vec::new(),
+            flags: vec![0; n_samples],
+            coords: Vec::new(),
+            attributes,
         }
     }
 }
@@ -168,6 +220,7 @@ struct AnalysisResultWire {
     point_variables: Vec<PointVariable>,
     flags: Vec<u32>,
     coords: Vec<(String, Coordinate)>,
+    attributes: Attributes,
 }
 
 impl TryFrom<AnalysisResultWire> for AnalysisResult {
@@ -195,6 +248,7 @@ impl TryFrom<AnalysisResultWire> for AnalysisResult {
             point_variables: w.point_variables,
             flags: w.flags,
             coords: w.coords,
+            attributes: w.attributes,
         })
     }
 }
@@ -209,6 +263,7 @@ impl Serialize for AnalysisResult {
             point_variables: self.point_variables.clone(),
             flags: self.flags.clone(),
             coords: self.coords.clone(),
+            attributes: self.attributes.clone(),
         }
         .serialize(serializer)
     }
@@ -225,25 +280,28 @@ impl<'de> Deserialize<'de> for AnalysisResult {
 mod tests {
     use super::*;
 
+    fn attributes() -> Attributes {
+        Attributes::of(&Batch::example_with_undosed_row(), NcaOptions::default())
+    }
+
     fn result() -> AnalysisResult {
-        AnalysisResult::new(
-            vec!["subject".into()],
-            vec![2],
-            vec![ParameterColumn {
+        AnalysisResult {
+            parameters: vec![ParameterColumn {
                 name: "cmax".into(),
                 unit: "mg/l".into(),
                 values: vec![6.0, f64::NAN],
             }],
-            vec![PointVariable {
+            point_variables: vec![PointVariable {
                 name: "interval_auc".into(),
                 unit: "h*mg/l".into(),
                 dim: "interval".into(),
                 size: 2,
                 values: vec![1.0, 2.0, 3.0, f64::NAN],
             }],
-            vec![0, 4],
-            vec![("period".into(), Coordinate::Int(vec![1, 2]))],
-        )
+            flags: vec![0, 4],
+            coords: vec![("period".into(), Coordinate::Int(vec![1, 2]))],
+            ..AnalysisResult::new(vec!["subject".into()], vec![2], attributes())
+        }
     }
 
     #[test]
@@ -272,6 +330,68 @@ mod tests {
             err.contains("analysis/2") && err.contains("analysis/1"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn the_attributes_of_a_urine_batch_reach_the_result() {
+        // `cdisc.to_pp` reads `tissue` for `PPSPEC` and falls back to `plasma`,
+        // so a urine analysis whose tissue does not cross is a wrong submission
+        // dataset with no error anywhere
+        let mut batch = Batch::example_with_undosed_row();
+        batch.tissue = Some("urine".to_string());
+        batch.substance = Some("caffeine".to_string());
+        let options = NcaOptions {
+            tau: Some(12.0),
+            ..NcaOptions::default()
+        };
+        let r = AnalysisResult {
+            ..AnalysisResult::new(
+                vec!["subject".into()],
+                vec![2],
+                Attributes::of(&batch, options.clone()),
+            )
+        };
+        let back: AnalysisResult =
+            serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert_eq!(back.attributes.tissue.as_deref(), Some("urine"));
+        assert_eq!(back.attributes.substance.as_deref(), Some("caffeine"));
+        assert_eq!(back.attributes.route, Some(crate::Route::Oral));
+        // the resolved options, which `report.py` reads back
+        assert_eq!(back.attributes.options, options);
+        assert_eq!(back, r);
+        assert_eq!(back.flags, vec![0, 0]);
+    }
+
+    #[test]
+    fn a_result_without_attributes_is_rejected() {
+        // every result comes out of an analysis, so the resolved options and the
+        // batch level attributes are not optional
+        let mut json = serde_json::to_value(result()).unwrap();
+        json.as_object_mut().unwrap().remove("attributes");
+        let err = serde_json::from_value::<AnalysisResult>(json)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("attributes"), "{err}");
+    }
+
+    #[test]
+    fn the_attributes_tell_results_apart() {
+        let r = result();
+        for (name, mutate) in [
+            (
+                "substance",
+                (|a: &mut Attributes| a.substance = None) as fn(&mut Attributes),
+            ),
+            ("route", |a: &mut Attributes| a.route = None),
+            ("tissue", |a: &mut Attributes| {
+                a.tissue = Some("urine".into())
+            }),
+            ("options", |a: &mut Attributes| a.options.intervals = false),
+        ] {
+            let mut other = r.clone();
+            mutate(&mut other.attributes);
+            assert_ne!(other, r, "{name}");
+        }
     }
 
     #[test]
