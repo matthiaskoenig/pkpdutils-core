@@ -374,3 +374,21 @@ fn manual_points_keep_negative_indices_in_order() {
         serde_json::from_str::<serde_json::Value>(json).unwrap()
     );
 }
+
+#[test]
+fn a_nan_effect_threshold_equals_itself_and_survives_a_round_trip() {
+    // Python accepts any float here, so NaN is a legal options object
+    let options = NcaOptions {
+        effect_threshold: Some(f64::NAN),
+        ..NcaOptions::default()
+    };
+    assert_eq!(options, options.clone());
+    let back: NcaOptions = serde_json::from_str(&serde_json::to_string(&options).unwrap()).unwrap();
+    assert!(back.effect_threshold.unwrap().is_nan());
+    assert_eq!(back, options);
+    let other = NcaOptions {
+        effect_threshold: Some(1.0),
+        ..NcaOptions::default()
+    };
+    assert_ne!(other, options);
+}

@@ -473,7 +473,7 @@ impl TerminalPhase {
 }
 
 /// The options of a non-compartmental analysis.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct NcaOptions {
     /// Concentration or effect curve.
     pub kind: Kind,
@@ -523,6 +523,84 @@ pub struct NcaOptions {
     pub bootstrap_distribution: BootstrapDistribution,
     /// The relative step of the delta method.
     pub delta_step: f64,
+}
+
+/// Bit equality of two numbers, so that NaN equals NaN.
+fn f64_eq(a: f64, b: f64) -> bool {
+    a.to_bits() == b.to_bits()
+}
+
+/// Bit equality of two optional numbers.
+fn opt_f64_eq(a: Option<f64>, b: Option<f64>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => f64_eq(a, b),
+        _ => false,
+    }
+}
+
+/// Equality which holds on a round trip: every number the options hold directly compares by its
+/// bits, so an unconstrained `effect_threshold` of NaN (legal in Python) equals itself. The
+/// parts (`terminal`, `blq`, `acceptance`) are range validated, which rejects NaN, and keep
+/// their derived equality. The destructuring is exhaustive, so a new field breaks the build.
+impl PartialEq for NcaOptions {
+    fn eq(&self, o: &Self) -> bool {
+        let Self {
+            kind,
+            auc_method,
+            terminal,
+            lloq,
+            lloq_relative,
+            blq,
+            c0_method,
+            extrapolation_warning,
+            acceptance,
+            partial_aucs,
+            tau,
+            tau_tolerance,
+            intervals,
+            units,
+            effect_threshold,
+            n_workers,
+            chunk_rows,
+            uncertainty,
+            n_boot,
+            seed,
+            ci_level,
+            bootstrap_spread,
+            bootstrap_distribution,
+            delta_step,
+        } = self;
+        *kind == o.kind
+            && *auc_method == o.auc_method
+            && *terminal == o.terminal
+            && opt_f64_eq(*lloq, o.lloq)
+            && opt_f64_eq(*lloq_relative, o.lloq_relative)
+            && *blq == o.blq
+            && *c0_method == o.c0_method
+            && f64_eq(*extrapolation_warning, o.extrapolation_warning)
+            && *acceptance == o.acceptance
+            && partial_aucs.len() == o.partial_aucs.len()
+            && partial_aucs.iter().all(|(k, v)| {
+                o.partial_aucs
+                    .get(k)
+                    .is_some_and(|w| f64_eq(v.0, w.0) && f64_eq(v.1, w.1))
+            })
+            && opt_f64_eq(*tau, o.tau)
+            && f64_eq(*tau_tolerance, o.tau_tolerance)
+            && *intervals == o.intervals
+            && *units == o.units
+            && opt_f64_eq(*effect_threshold, o.effect_threshold)
+            && *n_workers == o.n_workers
+            && *chunk_rows == o.chunk_rows
+            && *uncertainty == o.uncertainty
+            && *n_boot == o.n_boot
+            && *seed == o.seed
+            && f64_eq(*ci_level, o.ci_level)
+            && *bootstrap_spread == o.bootstrap_spread
+            && *bootstrap_distribution == o.bootstrap_distribution
+            && f64_eq(*delta_step, o.delta_step)
+    }
 }
 
 impl Default for NcaOptions {

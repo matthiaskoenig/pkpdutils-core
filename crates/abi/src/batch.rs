@@ -51,6 +51,59 @@ fn opt_bits_eq(a: &Option<Vec<f64>>, b: &Option<Vec<f64>>) -> bool {
     }
 }
 
+/// The product of a sample shape, `None` on overflow.
+pub(crate) fn checked_product(shape: &[usize]) -> Option<usize> {
+    shape.iter().try_fold(1usize, |a, &b| a.checked_mul(b))
+}
+
+/// Accept `found` only when it is exactly `expected`, naming the field otherwise.
+pub(crate) fn check_len(field: &str, expected: usize, found: usize) -> Result<(), String> {
+    if expected == found {
+        Ok(())
+    } else {
+        Err(format!("{field} has length {found}, expected {expected}"))
+    }
+}
+
+/// The length a field of `per_sample` entries per sample must have, `n_samples * per_sample`.
+pub(crate) fn expected_len(
+    field: &str,
+    n_samples: usize,
+    per_sample: usize,
+) -> Result<usize, String> {
+    n_samples
+        .checked_mul(per_sample)
+        .ok_or_else(|| format!("{field}: {n_samples} samples times {per_sample} overflows"))
+}
+
+/// Check that every coordinate has one entry per sample.
+pub(crate) fn check_coords(
+    coords: &[(String, Coordinate)],
+    n_samples: usize,
+) -> Result<(), String> {
+    for (name, c) in coords {
+        check_len(&format!("coords[{name}]"), n_samples, c.len())?;
+    }
+    Ok(())
+}
+
+impl Coordinate {
+    /// The number of entries.
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Str(v) => v.len(),
+            Self::Int(v) => v.len(),
+            Self::Float(v) => v.len(),
+            Self::Bool(v) => v.len(),
+        }
+    }
+
+    /// Whether there are no entries.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 /// The dosing protocol of one row, the doses without the `NaN` padding.
 ///
 /// Mirrors `pkpdutils.timecourse.Dosing`: one unit and one route for every dose. The unit and
@@ -77,11 +130,19 @@ pub struct Dosing {
 
 impl PartialEq for Dosing {
     fn eq(&self, other: &Self) -> bool {
-        bits_eq(&self.amounts, &other.amounts)
-            && bits_eq(&self.times, &other.times)
-            && opt_bits_eq(&self.durations, &other.durations)
-            && self.unit == other.unit
-            && self.route == other.route
+        // exhaustive, so that a new field breaks the build instead of leaving equality
+        let Self {
+            amounts,
+            times,
+            durations,
+            unit,
+            route,
+        } = self;
+        bits_eq(amounts, &other.amounts)
+            && bits_eq(times, &other.times)
+            && opt_bits_eq(durations, &other.durations)
+            && *unit == other.unit
+            && *route == other.route
     }
 }
 
@@ -138,29 +199,55 @@ pub struct Batch {
 
 impl PartialEq for Batch {
     fn eq(&self, o: &Self) -> bool {
-        self.contract == o.contract
-            && self.sample_dims == o.sample_dims
-            && self.sample_shape == o.sample_shape
-            && self.n_time == o.n_time
-            && bits_eq(&self.times, &o.times)
-            && bits_eq(&self.values, &o.values)
-            && opt_bits_eq(&self.sd, &o.sd)
-            && opt_bits_eq(&self.se, &o.se)
-            && opt_bits_eq(&self.n, &o.n)
-            && opt_bits_eq(&self.nominal_time, &o.nominal_time)
-            && opt_bits_eq(&self.lloq, &o.lloq)
-            && self.max_doses == o.max_doses
-            && bits_eq(&self.dose_amount, &o.dose_amount)
-            && bits_eq(&self.dose_time, &o.dose_time)
-            && bits_eq(&self.dose_duration, &o.dose_duration)
-            && self.time_unit == o.time_unit
-            && self.unit == o.unit
-            && self.dose_unit == o.dose_unit
-            && self.substance == o.substance
-            && self.substances == o.substances
-            && self.route == o.route
-            && self.routes == o.routes
-            && self.coords == o.coords
+        // exhaustive, so that a new field breaks the build instead of leaving equality
+        let Self {
+            contract,
+            sample_dims,
+            sample_shape,
+            n_time,
+            times,
+            values,
+            sd,
+            se,
+            n,
+            nominal_time,
+            lloq,
+            max_doses,
+            dose_amount,
+            dose_time,
+            dose_duration,
+            time_unit,
+            unit,
+            dose_unit,
+            substance,
+            substances,
+            route,
+            routes,
+            coords,
+        } = self;
+        *contract == o.contract
+            && *sample_dims == o.sample_dims
+            && *sample_shape == o.sample_shape
+            && *n_time == o.n_time
+            && bits_eq(times, &o.times)
+            && bits_eq(values, &o.values)
+            && opt_bits_eq(sd, &o.sd)
+            && opt_bits_eq(se, &o.se)
+            && opt_bits_eq(n, &o.n)
+            && opt_bits_eq(nominal_time, &o.nominal_time)
+            && opt_bits_eq(lloq, &o.lloq)
+            && *max_doses == o.max_doses
+            && bits_eq(dose_amount, &o.dose_amount)
+            && bits_eq(dose_time, &o.dose_time)
+            && bits_eq(dose_duration, &o.dose_duration)
+            && *time_unit == o.time_unit
+            && *unit == o.unit
+            && *dose_unit == o.dose_unit
+            && *substance == o.substance
+            && *substances == o.substances
+            && *route == o.route
+            && *routes == o.routes
+            && *coords == o.coords
     }
 }
 
@@ -172,8 +259,20 @@ impl Batch {
 
     /// The number of doses of a row: the leading entries of its dose slice which are not `NaN`.
     ///
-    /// A subject without a protocol (`io.py` `_build_batch`) has none.
+    /// A subject without a protocol (`io.py` `_build_batch`) has none. The padding is `NaN` at
+    /// the back, so a row with a `NaN` in the middle is malformed and is treated as ending at
+    /// its first `NaN`.
+    ///
+    /// # Panics
+    ///
+    /// When `row` is not a sample of the batch, a caller bug: a batch read from the wire has
+    /// validated lengths, so no host input panics here.
     pub fn n_doses_of_row(&self, row: usize) -> usize {
+        assert!(
+            row < self.n_samples(),
+            "row {row} out of range for a batch of {} samples",
+            self.n_samples()
+        );
         let slice = &self.dose_amount[row * self.max_doses..(row + 1) * self.max_doses];
         slice.iter().take_while(|x| !x.is_nan()).count()
     }
@@ -189,6 +288,10 @@ impl Batch {
 
     /// The dosing protocol of a row, without the padding, the analogue of
     /// `Timecourses.dosing_of()`.
+    ///
+    /// # Panics
+    ///
+    /// When `row` is not a sample of the batch, see [`Batch::n_doses_of_row`].
     pub fn dosing_of_row(&self, row: usize) -> Dosing {
         let n = self.n_doses_of_row(row);
         let start = row * self.max_doses;
@@ -215,7 +318,7 @@ impl Batch {
             times: vec![0.0, 1.0, 2.0, 4.0, 0.0, 1.0, 2.0, 4.0],
             values: vec![0.0, 5.0, 3.0, 1.0, 0.0, 6.0, 4.0, f64::NAN],
             sd: None,
-            se: Some(vec![]),
+            se: Some(vec![0.1; 8]),
             n: None,
             nominal_time: Some(vec![0.0, 1.0, 2.0, 4.0, 0.0, 1.0, 2.0, 4.0]),
             lloq: Some(vec![0.1, f64::NAN]),
@@ -283,6 +386,46 @@ struct BatchWire {
     coords: Vec<(String, Coordinate)>,
 }
 
+impl BatchWire {
+    /// Check every array against the sample shape, so no host input can index out of range.
+    fn check_lengths(&self) -> Result<(), String> {
+        check_len(
+            "sample_shape",
+            self.sample_dims.len(),
+            self.sample_shape.len(),
+        )?;
+        let n = checked_product(&self.sample_shape)
+            .ok_or_else(|| "sample_shape: the number of samples overflows".to_string())?;
+        let points = expected_len("times", n, self.n_time)?;
+        check_len("times", points, self.times.len())?;
+        check_len("values", points, self.values.len())?;
+        for (name, v) in [
+            ("sd", &self.sd),
+            ("se", &self.se),
+            ("n", &self.n),
+            ("nominal_time", &self.nominal_time),
+        ] {
+            if let Some(v) = v {
+                check_len(name, points, v.len())?;
+            }
+        }
+        if let Some(v) = &self.lloq {
+            check_len("lloq", n, v.len())?;
+        }
+        if let Some(v) = &self.substances {
+            check_len("substances", n, v.len())?;
+        }
+        if let Some(v) = &self.routes {
+            check_len("routes", n, v.len())?;
+        }
+        let doses = expected_len("dose_amount", n, self.max_doses)?;
+        check_len("dose_amount", doses, self.dose_amount.len())?;
+        check_len("dose_time", doses, self.dose_time.len())?;
+        check_len("dose_duration", doses, self.dose_duration.len())?;
+        check_coords(&self.coords, n)
+    }
+}
+
 impl From<Batch> for BatchWire {
     fn from(b: Batch) -> Self {
         Self {
@@ -318,6 +461,7 @@ impl TryFrom<BatchWire> for Batch {
 
     fn try_from(w: BatchWire) -> Result<Self, String> {
         check_contract(&w.contract, BATCH_CONTRACT).map_err(|e| e.to_string())?;
+        w.check_lengths()?;
         Ok(Self {
             contract: w.contract,
             sample_dims: w.sample_dims,
@@ -376,24 +520,126 @@ mod tests {
 
     #[test]
     fn the_equality_still_tells_batches_apart() {
+        type Mutation = (&'static str, fn(&mut Batch));
+        let mutations: [Mutation; 22] = [
+            ("contract", |b| b.contract = "x".into()),
+            ("sample_dims", |b| b.sample_dims = vec!["y".into()]),
+            ("sample_shape", |b| b.sample_shape = vec![1, 2]),
+            ("n_time", |b| b.n_time = 5),
+            ("times", |b| b.times[3] = 9.0),
+            ("values", |b| b.values[0] = 1.0),
+            ("sd", |b| b.sd = Some(vec![])),
+            ("se", |b| b.se = None),
+            ("n", |b| b.n = Some(vec![1.0])),
+            ("nominal_time", |b| b.nominal_time = None),
+            ("lloq", |b| b.lloq = Some(vec![0.1, 0.2])),
+            ("max_doses", |b| b.max_doses = 3),
+            ("dose_amount", |b| b.dose_amount[2] = 50.0),
+            ("dose_time", |b| b.dose_time[2] = 1.0),
+            ("dose_duration", |b| b.dose_duration[0] = 1.0),
+            ("time_unit", |b| b.time_unit = "min".into()),
+            ("unit", |b| b.unit = "ng/ml".into()),
+            ("dose_unit", |b| b.dose_unit = None),
+            ("substance", |b| b.substance = None),
+            ("substances", |b| b.substances = Some(vec![])),
+            ("route", |b| b.route = Some(Route::IvBolus)),
+            ("routes", |b| b.routes = Some(vec![Route::Oral; 2])),
+        ];
         let batch = Batch::example_with_undosed_row();
+        for (name, mutate) in mutations {
+            let mut other = batch.clone();
+            mutate(&mut other);
+            assert_ne!(other, batch, "{name}");
+        }
         let mut other = batch.clone();
-        other.values[0] = 1.0;
-        assert_ne!(other, batch);
+        other.coords[0].1 = Coordinate::Str(vec!["A".into(), "C".into()]);
+        assert_ne!(other, batch, "coords");
         let mut other = batch.clone();
-        other.sd = Some(vec![]);
-        assert_ne!(other, batch);
-        let mut other = batch.clone();
-        other.se = None;
-        assert_ne!(other, batch);
+        other.lloq = Some(vec![f64::NAN, 0.1]);
+        assert_ne!(other, batch, "NaN position");
+    }
+
+    #[test]
+    fn a_nan_in_the_middle_of_a_dose_row_ends_the_row() {
+        let mut batch = Batch::example_with_undosed_row();
+        batch.max_doses = 3;
+        let nan = f64::NAN;
+        batch.dose_amount = vec![nan, nan, nan, 100.0, nan, 50.0];
+        batch.dose_time = vec![nan, nan, nan, 0.0, nan, 12.0];
+        batch.dose_duration = vec![nan; 6];
+        assert_eq!(batch.n_doses_of_row(1), 1);
+        assert_eq!(batch.dosing_of_row(1).amounts, vec![100.0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "row 2 out of range")]
+    fn a_row_outside_the_batch_is_a_caller_bug() {
+        Batch::example_with_undosed_row().n_doses_of_row(2);
+    }
+
+    #[test]
+    fn short_arrays_are_rejected_naming_field_expected_and_found() {
+        type Break = (&'static str, fn(&mut serde_json::Value));
+        let breaks: [Break; 9] = [
+            ("dose_amount", |j| {
+                j["dose_amount"] = serde_json::json!([1.0])
+            }),
+            ("dose_duration", |j| {
+                j["dose_duration"] = serde_json::json!([])
+            }),
+            ("dose_time", |j| j["dose_time"] = serde_json::json!(["NaN"])),
+            ("times", |j| j["times"] = serde_json::json!([1.0])),
+            ("values", |j| j["values"] = serde_json::json!([])),
+            ("sd", |j| j["sd"] = serde_json::json!([1.0])),
+            ("lloq", |j| j["lloq"] = serde_json::json!([1.0])),
+            ("routes", |j| j["routes"] = serde_json::json!(["oral"])),
+            ("coords[subject]", |j| {
+                j["coords"] = serde_json::json!([["subject", {"str": ["A"]}]])
+            }),
+        ];
+        for (field, brk) in breaks {
+            let mut json = serde_json::to_value(Batch::example_with_undosed_row()).unwrap();
+            brk(&mut json);
+            let err = serde_json::from_value::<Batch>(json)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains(&format!("{field} has length")) && err.contains("expected"),
+                "{field}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_shape_which_overflows_is_rejected_not_wrapped() {
+        let mut json = serde_json::to_value(Batch::example_with_undosed_row()).unwrap();
+        json["sample_dims"] = serde_json::json!(["a", "b"]);
+        json["sample_shape"] = serde_json::json!([usize::MAX, 2]);
+        let err = serde_json::from_value::<Batch>(json)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("overflows"), "{err}");
+        let mut json = serde_json::to_value(Batch::example_with_undosed_row()).unwrap();
+        json["sample_dims"] = serde_json::json!(["a", "b"]);
+        let err = serde_json::from_value::<Batch>(json)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("sample_shape has length"), "{err}");
     }
 
     #[test]
     fn an_empty_optional_array_is_not_an_absent_one() {
-        let batch = Batch::example_with_undosed_row();
+        // no time points, so an empty `sd` is valid and differs from an absent `se`
+        let mut batch = Batch::example_with_undosed_row();
+        batch.n_time = 0;
+        batch.times.clear();
+        batch.values.clear();
+        batch.nominal_time = None;
+        batch.sd = Some(vec![]);
+        batch.se = None;
         let back: Batch = serde_json::from_str(&serde_json::to_string(&batch).unwrap()).unwrap();
-        assert_eq!(back.se, Some(vec![]));
-        assert_eq!(back.sd, None);
+        assert_eq!(back.sd, Some(vec![]));
+        assert_eq!(back.se, None);
     }
 
     #[test]

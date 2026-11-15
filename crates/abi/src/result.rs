@@ -1,6 +1,8 @@
 //! The analysis request going into the core and the result coming out of it.
 
-use crate::batch::{Batch, Coordinate, bits_eq};
+use crate::batch::{
+    Batch, Coordinate, bits_eq, check_coords, check_len, checked_product, expected_len,
+};
 use crate::{ANALYSIS_CONTRACT, NcaOptions, check_contract, nonfinite};
 use serde::{Deserialize, Serialize};
 
@@ -70,7 +72,9 @@ pub struct ParameterColumn {
 
 impl PartialEq for ParameterColumn {
     fn eq(&self, o: &Self) -> bool {
-        self.name == o.name && self.unit == o.unit && bits_eq(&self.values, &o.values)
+        // exhaustive, so that a new field breaks the build instead of leaving equality
+        let Self { name, unit, values } = self;
+        *name == o.name && *unit == o.unit && bits_eq(values, &o.values)
     }
 }
 
@@ -94,18 +98,29 @@ pub struct PointVariable {
 
 impl PartialEq for PointVariable {
     fn eq(&self, o: &Self) -> bool {
-        self.name == o.name
-            && self.unit == o.unit
-            && self.dim == o.dim
-            && self.size == o.size
-            && bits_eq(&self.values, &o.values)
+        // exhaustive, so that a new field breaks the build instead of leaving equality
+        let Self {
+            name,
+            unit,
+            dim,
+            size,
+            values,
+        } = self;
+        *name == o.name
+            && *unit == o.unit
+            && *dim == o.dim
+            && *size == o.size
+            && bits_eq(values, &o.values)
     }
 }
 
 /// The result of a non-compartmental analysis, one value per sample and parameter.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(deny_unknown_fields)]
+///
+/// Read through a wire struct which checks the contract and the length of every array.
+#[derive(Clone, Debug, PartialEq)]
 pub struct AnalysisResult {
+    /// The contract, [`ANALYSIS_CONTRACT`].
+    pub contract: String,
     /// The names of the sample dimensions, outermost first.
     pub sample_dims: Vec<String>,
     /// The size of every sample dimension.
@@ -120,29 +135,115 @@ pub struct AnalysisResult {
     pub coords: Vec<(String, Coordinate)>,
 }
 
+impl AnalysisResult {
+    /// A result of this build's contract.
+    pub fn new(
+        sample_dims: Vec<String>,
+        sample_shape: Vec<usize>,
+        parameters: Vec<ParameterColumn>,
+        point_variables: Vec<PointVariable>,
+        flags: Vec<u32>,
+        coords: Vec<(String, Coordinate)>,
+    ) -> Self {
+        Self {
+            contract: ANALYSIS_CONTRACT.to_string(),
+            sample_dims,
+            sample_shape,
+            parameters,
+            point_variables,
+            flags,
+            coords,
+        }
+    }
+}
+
+/// The wire form of [`AnalysisResult`], which checks the contract and the lengths when read.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AnalysisResultWire {
+    contract: String,
+    sample_dims: Vec<String>,
+    sample_shape: Vec<usize>,
+    parameters: Vec<ParameterColumn>,
+    point_variables: Vec<PointVariable>,
+    flags: Vec<u32>,
+    coords: Vec<(String, Coordinate)>,
+}
+
+impl TryFrom<AnalysisResultWire> for AnalysisResult {
+    type Error = String;
+
+    fn try_from(w: AnalysisResultWire) -> Result<Self, String> {
+        check_contract(&w.contract, ANALYSIS_CONTRACT).map_err(|e| e.to_string())?;
+        check_len("sample_shape", w.sample_dims.len(), w.sample_shape.len())?;
+        let n = checked_product(&w.sample_shape)
+            .ok_or_else(|| "sample_shape: the number of samples overflows".to_string())?;
+        for p in &w.parameters {
+            check_len(&format!("parameters[{}].values", p.name), n, p.values.len())?;
+        }
+        for p in &w.point_variables {
+            let field = format!("point_variables[{}].values", p.name);
+            check_len(&field, expected_len(&field, n, p.size)?, p.values.len())?;
+        }
+        check_len("flags", n, w.flags.len())?;
+        check_coords(&w.coords, n)?;
+        Ok(Self {
+            contract: w.contract,
+            sample_dims: w.sample_dims,
+            sample_shape: w.sample_shape,
+            parameters: w.parameters,
+            point_variables: w.point_variables,
+            flags: w.flags,
+            coords: w.coords,
+        })
+    }
+}
+
+impl Serialize for AnalysisResult {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        AnalysisResultWire {
+            contract: self.contract.clone(),
+            sample_dims: self.sample_dims.clone(),
+            sample_shape: self.sample_shape.clone(),
+            parameters: self.parameters.clone(),
+            point_variables: self.point_variables.clone(),
+            flags: self.flags.clone(),
+            coords: self.coords.clone(),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for AnalysisResult {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = AnalysisResultWire::deserialize(deserializer)?;
+        AnalysisResult::try_from(wire).map_err(serde::de::Error::custom)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn result() -> AnalysisResult {
-        AnalysisResult {
-            sample_dims: vec!["subject".into()],
-            sample_shape: vec![2],
-            parameters: vec![ParameterColumn {
+        AnalysisResult::new(
+            vec!["subject".into()],
+            vec![2],
+            vec![ParameterColumn {
                 name: "cmax".into(),
                 unit: "mg/l".into(),
                 values: vec![6.0, f64::NAN],
             }],
-            point_variables: vec![PointVariable {
+            vec![PointVariable {
                 name: "interval_auc".into(),
                 unit: "h*mg/l".into(),
                 dim: "interval".into(),
                 size: 2,
                 values: vec![1.0, 2.0, 3.0, f64::NAN],
             }],
-            flags: vec![0, 4],
-            coords: vec![("period".into(), Coordinate::Int(vec![1, 2]))],
-        }
+            vec![0, 4],
+            vec![("period".into(), Coordinate::Int(vec![1, 2]))],
+        )
     }
 
     #[test]
@@ -169,6 +270,38 @@ mod tests {
             .to_string();
         assert!(
             err.contains("analysis/2") && err.contains("analysis/1"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_foreign_result_contract_is_rejected_by_name() {
+        let mut r = result();
+        r.contract = "analysis/2".into();
+        let err = serde_json::from_str::<AnalysisResult>(&serde_json::to_string(&r).unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("analysis/2") && err.contains("analysis/1"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_result_with_a_short_array_is_rejected() {
+        let mut json = serde_json::to_value(result()).unwrap();
+        json["flags"] = serde_json::json!([0]);
+        let err = serde_json::from_value::<AnalysisResult>(json)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("flags has length 1, expected 2"), "{err}");
+        let mut json = serde_json::to_value(result()).unwrap();
+        json["point_variables"][0]["values"] = serde_json::json!([1.0]);
+        let err = serde_json::from_value::<AnalysisResult>(json)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("point_variables[interval_auc].values"),
             "{err}"
         );
     }
