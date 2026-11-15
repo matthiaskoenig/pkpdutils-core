@@ -1,0 +1,79 @@
+{
+  "values": {
+    "Kind": [
+      "concentration",
+      "effect"
+    ],
+    "AUCMethod": [
+      "linear",
+      "linear_log",
+      "log"
+    ],
+    "TerminalMethod": [
+      "all_after_tmax",
+      "best_fit",
+      "last_n",
+      "manual"
+    ],
+    "BLQHandling": [
+      "nan",
+      "zero_before_tmax"
+    ],
+    "BLQAction": [
+      "drop",
+      "half_lloq",
+      "keep",
+      "lloq",
+      "zero"
+    ],
+    "C0Method": [
+      "first_value",
+      "log_back_extrapolation",
+      "none"
+    ],
+    "UncertaintyMethod": [
+      "bootstrap",
+      "delta",
+      "none"
+    ],
+    "BootstrapSpread": [
+      "sd",
+      "se"
+    ],
+    "BootstrapDistribution": [
+      "lognormal",
+      "normal"
+    ],
+    "Route": [
+      "iv_bolus",
+      "iv_infusion",
+      "oral"
+    ]
+  },
+  "flags": {
+    "POSITIVE_SLOPE": 1,
+    "TOO_FEW_POINTS": 2,
+    "EXTRAPOLATION_HIGH": 4,
+    "NO_MAX": 8,
+    "NO_ABSORPTION": 16,
+    "BLQ_TRUNCATED": 32,
+    "NO_DATA": 64,
+    "DELTA_WINDOW_CHANGE": 128,
+    "INCOMPLETE_INTERVAL": 256,
+    "EXTRAPOLATED_TROUGH": 512,
+    "SPAN_LOW": 1024,
+    "NOT_ACCEPTED": 2048,
+    "PARTIAL_EXTRAPOLATED": 4096,
+    "TERMINAL_LOW_CONCENTRATION": 8192
+  },
+  "route_is_iv": {
+    "iv_bolus": true,
+    "iv_infusion": true,
+    "oral": false
+  },
+  "c0_codes": {
+    "C0_NONE": 0,
+    "C0_BACK_EXTRAPOLATION": 1,
+    "C0_FIRST_VALUE": 2
+  }
+}

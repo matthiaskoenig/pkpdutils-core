@@ -137,6 +137,62 @@ impl C0Method {
     pub const CODE_FIRST_VALUE: i32 = 2;
 }
 
+impl Kind {
+    /// Every variant, which the generated enum value fixture is checked against.
+    pub const ALL: &[Self] = &[Self::Concentration, Self::Effect];
+}
+
+impl AucMethod {
+    /// Every variant, which the generated enum value fixture is checked against.
+    pub const ALL: &[Self] = &[Self::Linear, Self::LinearLog, Self::Log];
+}
+
+impl TerminalMethod {
+    /// Every variant, which the generated enum value fixture is checked against.
+    pub const ALL: &[Self] = &[Self::BestFit, Self::LastN, Self::AllAfterTmax, Self::Manual];
+}
+
+impl BlqHandling {
+    /// Every variant, which the generated enum value fixture is checked against.
+    pub const ALL: &[Self] = &[Self::Nan, Self::ZeroBeforeTmax];
+}
+
+impl BlqAction {
+    /// Every variant, which the generated enum value fixture is checked against.
+    pub const ALL: &[Self] = &[
+        Self::Drop,
+        Self::Keep,
+        Self::Zero,
+        Self::Lloq,
+        Self::HalfLloq,
+    ];
+}
+
+impl C0Method {
+    /// Every variant, which the generated enum value fixture is checked against.
+    pub const ALL: &[Self] = &[Self::LogBackExtrapolation, Self::FirstValue, Self::None];
+}
+
+impl UncertaintyMethod {
+    /// Every variant, which the generated enum value fixture is checked against.
+    pub const ALL: &[Self] = &[Self::None, Self::Bootstrap, Self::Delta];
+}
+
+impl BootstrapSpread {
+    /// Every variant, which the generated enum value fixture is checked against.
+    pub const ALL: &[Self] = &[Self::Se, Self::Sd];
+}
+
+impl BootstrapDistribution {
+    /// Every variant, which the generated enum value fixture is checked against.
+    pub const ALL: &[Self] = &[Self::Normal, Self::Lognormal];
+}
+
+impl Route {
+    /// Every variant, which the generated enum value fixture is checked against.
+    pub const ALL: &[Self] = &[Self::IvBolus, Self::IvInfusion, Self::Oral];
+}
+
 bitflags! {
     /// The quality flags of a row, the bits of the Python `NCAFlag`.
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
