@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["crates/abi"]
+# the throwaway package of the first spike sits at the repository root and is not a member
+exclude = ["spike"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Matthias König"]
+
+[workspace.dependencies]
+thiserror = "2"
