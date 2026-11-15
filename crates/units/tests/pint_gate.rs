@@ -25,7 +25,7 @@ struct Record {
 #[derive(Deserialize)]
 struct Provenance {
     pkpdutils_version: String,
-    pkpdutils_path: String,
+    pkpdutils_source: String,
     n_records: usize,
 }
 
@@ -41,7 +41,8 @@ fn records() -> Vec<Record> {
         serde_json::from_str(include_str!("data/pint_gate.json")).expect("fixture parses");
     let p = &fixture.provenance;
     assert!(
-        !p.pkpdutils_version.is_empty() && !p.pkpdutils_path.is_empty(),
+        !p.pkpdutils_version.is_empty()
+            && matches!(p.pkpdutils_source.as_str(), "checkout" | "release"),
         "the fixture does not record the pkpdutils it was generated with"
     );
     assert_eq!(

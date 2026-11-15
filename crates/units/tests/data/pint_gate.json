@@ -1,7 +1,7 @@
 {
 "provenance": {
 "pkpdutils_version": "1.4.0",
-"pkpdutils_path": "/home/mkoenig/git/pkpdutils/src/pkpdutils",
+"pkpdutils_source": "checkout",
 "n_parameters": 135,
 "n_records": 2720
 },

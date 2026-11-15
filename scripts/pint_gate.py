@@ -4,7 +4,7 @@ For every expression of `PARAMETER_UNITS` the script varies only the axes the
 expression names (`{unit}`, `{time}`, `{dose}`, `{amount}`, `{volume}`), asks
 pint through `pkpdutils` for the unit, the factor and the short form, and
 writes the records as JSON next to a provenance header (the
-version and the path of the `pkpdutils` it imported). It exits non-zero if any combination raises.
+version and the source, `checkout` or `release`, of the `pkpdutils` it imported). It exits non-zero if any combination raises.
 """
 
 import argparse
@@ -67,9 +67,11 @@ def main() -> int:
                     "expected_short": short,
                 }
             )
+    module_dir = Path(pkpdutils.__file__).resolve().parent
+    source = "release" if "site-packages" in module_dir.parts else "checkout"
     provenance = {
         "pkpdutils_version": pkpdutils.__version__,
-        "pkpdutils_path": str(Path(pkpdutils.__file__).resolve().parent),
+        "pkpdutils_source": source,
         "n_parameters": len(PARAMETER_UNITS),
         "n_records": len(records),
     }
@@ -83,7 +85,7 @@ def main() -> int:
     print(f"{len(records)} records from {len(PARAMETER_UNITS)} parameters")
     print(
         f"generated with pkpdutils {provenance['pkpdutils_version']} "
-        f"from {provenance['pkpdutils_path']}"
+        f"({provenance['pkpdutils_source']}, imported from {module_dir})"
     )
     return 0
 
