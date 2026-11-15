@@ -1,5 +1,6 @@
 //! The vendored conformance oracles are present, intact and complete.
 
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
@@ -28,6 +29,18 @@ fn hex_sha256(bytes: &[u8]) -> String {
         })
 }
 
+fn walk(dir: &std::path::Path, out: &mut BTreeSet<String>) {
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            walk(&path, out);
+        } else {
+            let rel = path.strip_prefix(oracle_dir()).unwrap();
+            out.insert(rel.to_str().unwrap().replace('\\', "/"));
+        }
+    }
+}
+
 fn file_count(rel: &str) -> usize {
     fs::read_dir(oracle_dir().join(rel))
         .unwrap()
@@ -42,6 +55,16 @@ fn every_vendored_oracle_matches_its_recorded_checksum() {
     // an empty manifest would pass the loop below, so pin its size
     assert_eq!(files.len(), MANIFEST_ENTRIES);
     assert_eq!(manifest["source_commit"].as_str().unwrap().len(), 40);
+    let mut on_disk = BTreeSet::new();
+    walk(&oracle_dir(), &mut on_disk);
+    let mut expected: BTreeSet<String> = files.keys().cloned().collect();
+    expected.insert("MANIFEST.json".to_string());
+    let unexpected: Vec<_> = on_disk.difference(&expected).collect();
+    let absent: Vec<_> = expected.difference(&on_disk).collect();
+    assert!(
+        unexpected.is_empty() && absent.is_empty(),
+        "unrecorded files {unexpected:?}, missing files {absent:?}"
+    );
     let bad: Vec<String> = files
         .iter()
         .filter_map(|(rel, digest)| match fs::read(oracle_dir().join(rel)) {
@@ -57,13 +80,10 @@ fn every_vendored_oracle_matches_its_recorded_checksum() {
 
 #[test]
 fn the_reference_cases_are_all_there() {
-    assert_eq!(
-        json("tests/data/reference/nca_reference.json")
-            .as_array()
-            .unwrap()
-            .len(),
-        9
-    );
+    let nca = json("tests/data/reference/nca_reference.json");
+    let nca = nca.as_array().unwrap();
+    assert_eq!(nca.len(), 9);
+    assert!(nca.iter().all(|c| !c.as_object().unwrap().is_empty()));
 
     let validation = json("tests/data/validation/reference.json");
     let cases = validation["cases"].as_object().unwrap();
@@ -79,7 +99,9 @@ fn the_reference_cases_are_all_there() {
 
     let scenarios =
         fs::read_to_string(oracle_dir().join("docs/data/benchmarks/scenarios.csv")).unwrap();
-    let rows = scenarios.lines().filter(|l| !l.is_empty()).count() - 1;
+    let mut lines = scenarios.lines().filter(|l| !l.is_empty());
+    assert!(lines.next().unwrap().starts_with("scenario,dataset"));
+    let rows = lines.count();
     assert_eq!(rows, 8);
     for dir in ["winnonlin", "pknca", "noncompart"] {
         assert_eq!(

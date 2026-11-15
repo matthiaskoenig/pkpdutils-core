@@ -9,7 +9,10 @@ copied content.
 With `--check` nothing is copied. The vendored files are re-hashed against the
 manifest and, when `--source` is given, the source files against it as well and
 the commit of the source against the recorded one. It exits non-zero on any
-difference and names the files. Standard library only.
+difference and names the files, including a file under `testdata/oracles/` the
+manifest does not list. The set of files comes from `git ls-files` of the source,
+and a change of that set against an existing manifest needs `--accept-changes`.
+Standard library only.
 """
 
 import argparse
@@ -36,16 +39,16 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def git(source: Path, *args: str) -> str:
+def git(source: Path, *args: str, strip: bool = True) -> str:
     result = subprocess.run(
         ["git", "-C", str(source), *args], capture_output=True, text=True, check=True
     )
-    return result.stdout.strip()
+    return result.stdout.strip() if strip else result.stdout
 
 
 def source_commit(source: Path) -> str:
-    """Return the commit of a clean source tree, refuse a dirty one."""
-    dirty = git(source, "status", "--porcelain")
+    """Return the commit of a source tree without changes to tracked files."""
+    dirty = git(source, "status", "--porcelain", "--untracked-files=no")
     if dirty:
         sys.exit(
             f"refusing: {source} has uncommitted changes, the recorded commit "
@@ -54,33 +57,68 @@ def source_commit(source: Path) -> str:
     return git(source, "rev-parse", "HEAD")
 
 
+def tracked(source: Path, *pathspecs: str) -> list[str]:
+    out = git(source, "ls-files", "-z", "--", *pathspecs, strip=False)
+    return [p for p in out.split("\0") if p]
+
+
 def relative_paths(source: Path) -> list[str]:
-    paths = list(FILES)
+    """The oracle set, the files the commit of the source tracks."""
+    tracked_files = set(tracked(source, *FILES))
+    absent = [p for p in FILES if p not in tracked_files]
+    if absent:
+        sys.exit(f"refusing: not tracked in the source commit: {', '.join(absent)}")
+    paths = set(tracked_files)
     for directory in DIRECTORIES:
-        paths += [
-            p.relative_to(source).as_posix()
-            for p in (source / directory).rglob("*")
-            if p.is_file()
-        ]
-    missing = [p for p in paths if not (source / p).is_file()]
+        found = tracked(source, directory)
+        if not found:
+            sys.exit(f"refusing: no tracked files under {directory} in the source")
+        paths.update(found)
+    missing = [p for p in sorted(paths) if not (source / p).is_file()]
     if missing:
         sys.exit(f"missing in source: {', '.join(missing)}")
     return sorted(paths)
 
 
-def vendor(source: Path) -> None:
+def vendored_paths() -> set[str]:
+    return {
+        p.relative_to(ORACLE_DIR).as_posix()
+        for p in ORACLE_DIR.rglob("*")
+        if p.is_file()
+    }
+
+
+def vendor(source: Path, accept_changes: bool) -> None:
     commit = source_commit(source)
     paths = relative_paths(source)
-    if ORACLE_DIR.exists():
-        shutil.rmtree(ORACLE_DIR)
-    files = {}
-    for rel in paths:
-        target = ORACLE_DIR / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source / rel, target)
-        files[rel] = sha256(target)
-    manifest = {"source_commit": commit, "files": files}
-    MANIFEST_PATH.write_text(json.dumps(manifest, indent=2) + "\n")
+    if MANIFEST_PATH.exists():
+        old = set(json.loads(MANIFEST_PATH.read_text())["files"])
+        added, removed = sorted(set(paths) - old), sorted(old - set(paths))
+        if (added or removed) and not accept_changes:
+            lines = [f"  added: {p}" for p in added] + [f"  removed: {p}" for p in removed]
+            sys.exit(
+                "refusing: the oracle set changed, pass --accept-changes if that "
+                "is intended:\n" + "\n".join(lines)
+            )
+    staging = ORACLE_DIR.parent / ".oracles-staging"
+    backup = ORACLE_DIR.parent / ".oracles-old"
+    for leftover in (staging, backup):
+        shutil.rmtree(leftover, ignore_errors=True)
+    try:
+        files = {}
+        for rel in paths:
+            target = staging / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source / rel, target)
+            files[rel] = sha256(source / rel)
+        manifest = {"source_commit": commit, "files": files}
+        (staging / "MANIFEST.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        if ORACLE_DIR.exists():
+            ORACLE_DIR.rename(backup)
+        staging.rename(ORACLE_DIR)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    shutil.rmtree(backup, ignore_errors=True)
     print(f"vendored {len(files)} files from pkpdutils {commit}")
 
 
@@ -94,6 +132,8 @@ def check(source: Path | None) -> int:
             problems.append(f"vendored file missing: {rel}")
         elif sha256(path) != digest:
             problems.append(f"vendored file differs from manifest: {rel}")
+    for rel in sorted(vendored_paths() - set(recorded) - {"MANIFEST.json"}):
+        problems.append(f"vendored file not in manifest: {rel}")
     if source is not None:
         for rel in relative_paths(source):
             if rel not in recorded:
@@ -108,7 +148,7 @@ def check(source: Path | None) -> int:
             problems.append(
                 f"source commit {commit} differs from recorded {manifest['source_commit']}"
             )
-        if git(source, "status", "--porcelain"):
+        if git(source, "status", "--porcelain", "--untracked-files=no"):
             problems.append("source tree has uncommitted changes")
     for problem in problems:
         print(problem)
@@ -120,12 +160,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--source", type=Path, help="checkout of pkpdutils")
     parser.add_argument("--check", action="store_true", help="re-hash, copy nothing")
+    parser.add_argument(
+        "--accept-changes",
+        action="store_true",
+        help="allow the set of vendored files to differ from the existing manifest",
+    )
     args = parser.parse_args()
     if args.check:
         return check(args.source)
     if args.source is None:
         parser.error("--source is required to vendor")
-    vendor(args.source)
+    vendor(args.source, args.accept_changes)
     return 0
 
 

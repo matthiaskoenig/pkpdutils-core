@@ -34,7 +34,7 @@ Without a checkout, the release is the fallback, `uv run --with pkpdutils python
 python3 scripts/vendor_oracles.py --source path/to/pkpdutils
 ```
 
-`python3 scripts/vendor_oracles.py --check --source path/to/pkpdutils` copies nothing and exits non-zero, naming the files, if the vendored files or the source differ from the manifest or the source commit moved. `cargo test` (`crates/abi/tests/oracles_present.rs`) proves the vendored files match the manifest and that no reference case was dropped, but CI has no `pkpdutils` checkout and cannot compare against the source. Run `--check --source` by hand before a release and whenever the Python oracles change. Never edit the vendored files by hand.
+The set of files is read from `git ls-files` of the source, so it is the set the recorded commit tracks. When a manifest exists and the set differs from it, the script prints the added and removed paths and refuses unless `--accept-changes` is passed. `python3 scripts/vendor_oracles.py --check` copies nothing and checks only the vendored files against the manifest, including a file under `testdata/oracles/` the manifest does not list. `python3 scripts/vendor_oracles.py --check --source path/to/pkpdutils` also compares the source files and its commit with the manifest; either form exits non-zero, naming the files, on any difference. `cargo test` (`crates/abi/tests/oracles_present.rs`) proves the vendored files match the manifest and that no reference case was dropped, but CI has no `pkpdutils` checkout and cannot compare against the source. Run `--check --source` by hand before a release and whenever the Python oracles change. Never edit the vendored files by hand.
 
 ## Toolchain
 
