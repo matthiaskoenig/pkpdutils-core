@@ -3,13 +3,17 @@
 For every expression of `PARAMETER_UNITS` the script varies only the axes the
 expression names (`{unit}`, `{time}`, `{dose}`, `{amount}`, `{volume}`), asks
 pint through `pkpdutils` for the unit, the factor and the short form, and
-writes the records as JSON. It exits non-zero if any combination raises.
+writes the records as JSON next to a provenance header (the
+version and the path of the `pkpdutils` it imported). It exits non-zero if any combination raises.
 """
 
 import argparse
 import itertools
 import json
 import sys
+from pathlib import Path
+
+import pkpdutils
 
 from pkpdutils.nca.nca import PARAMETER_UNITS
 from pkpdutils.nca.result import parameter_unit
@@ -63,14 +67,24 @@ def main() -> int:
                     "expected_short": short,
                 }
             )
+    provenance = {
+        "pkpdutils_version": pkpdutils.__version__,
+        "pkpdutils_path": str(Path(pkpdutils.__file__).resolve().parent),
+        "n_parameters": len(PARAMETER_UNITS),
+        "n_records": len(records),
+    }
     if failures:
         print(f"{len(failures)} combinations raised:", file=sys.stderr)
         print("\n".join(failures[:20]), file=sys.stderr)
         return 1
     with open(args.output, "w") as f:
-        json.dump(records, f, indent=0)
+        json.dump({"provenance": provenance, "records": records}, f, indent=0)
         f.write("\n")
     print(f"{len(records)} records from {len(PARAMETER_UNITS)} parameters")
+    print(
+        f"generated with pkpdutils {provenance['pkpdutils_version']} "
+        f"from {provenance['pkpdutils_path']}"
+    )
     return 0
 
 

@@ -21,9 +21,35 @@ struct Record {
     expected_short: String,
 }
 
+/// The provenance header of the fixture: which `pkpdutils` produced it.
+#[derive(Deserialize)]
+struct Provenance {
+    pkpdutils_version: String,
+    pkpdutils_path: String,
+    n_records: usize,
+}
+
+/// The fixture: the provenance header and the records.
+#[derive(Deserialize)]
+struct Fixture {
+    provenance: Provenance,
+    records: Vec<Record>,
+}
+
 fn records() -> Vec<Record> {
-    let records: Vec<Record> =
+    let fixture: Fixture =
         serde_json::from_str(include_str!("data/pint_gate.json")).expect("fixture parses");
+    let p = &fixture.provenance;
+    assert!(
+        !p.pkpdutils_version.is_empty() && !p.pkpdutils_path.is_empty(),
+        "the fixture does not record the pkpdutils it was generated with"
+    );
+    assert_eq!(
+        p.n_records,
+        fixture.records.len(),
+        "the fixture header disagrees with its records"
+    );
+    let records = fixture.records;
     assert!(
         records.len() > 1000,
         "the gate fixture looks truncated: {}",
