@@ -26,6 +26,16 @@ uv run --with-editable path/to/pkpdutils python scripts/pint_gate.py
 
 Without a checkout, the release is the fallback, `uv run --with pkpdutils python scripts/pint_gate.py`. The script writes the committed fixture by default, from any working directory; `-o PATH` writes another file instead. `--check` (same command with `--check` added) writes nothing, reads the committed fixture unless `-o PATH` names another one, and compares the `pkpdutils` version, the digest of `PARAMETER_UNITS`, the parameter and record counts and the records with that fixture (the source is recorded, not compared); a non-zero exit means the fixture is stale and must be regenerated. The script prints the provenance and the record count and exits non-zero if any combination raises in pint. Never edit the fixture by hand: if Rust disagrees, fix `pkpdutils-units`. Regeneration is needed when `PARAMETER_UNITS` gains an entry or the accepted input units widen, and whenever the checkout moves ahead of the version recorded in the fixture.
 
+## The vendored oracles
+
+`testdata/oracles/` holds the files the Python tests pin their numbers to (the NCA and validation reference JSON, the validation README and `docs/data/benchmarks/` in full), copied with their relative paths, and `MANIFEST.json` with the sha256 of each of the 31 files and the commit of `pkpdutils` they were copied from. Vendor them from a clean checkout (`path/to/pkpdutils` is that checkout; the script refuses a tree with uncommitted changes) with
+
+```bash
+python3 scripts/vendor_oracles.py --source path/to/pkpdutils
+```
+
+`python3 scripts/vendor_oracles.py --check --source path/to/pkpdutils` copies nothing and exits non-zero, naming the files, if the vendored files or the source differ from the manifest or the source commit moved. `cargo test` (`crates/abi/tests/oracles_present.rs`) proves the vendored files match the manifest and that no reference case was dropped, but CI has no `pkpdutils` checkout and cannot compare against the source. Run `--check --source` by hand before a release and whenever the Python oracles change. Never edit the vendored files by hand.
+
 ## Toolchain
 
 Stable Rust 1.100.0 with `rustfmt` and `clippy`, and the targets `wasm32-unknown-unknown` and `wasm32-wasip1`, pinned in `rust-toolchain.toml`.

@@ -1,0 +1,91 @@
+//! The vendored conformance oracles are present, intact and complete.
+
+use std::fmt::Write as _;
+use std::fs;
+use std::path::PathBuf;
+
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+
+const MANIFEST_ENTRIES: usize = 31;
+
+fn oracle_dir() -> PathBuf {
+    // cargo runs a test binary from the package root, so go up to the workspace
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/oracles")
+}
+
+fn json(rel: &str) -> Value {
+    let text = fs::read_to_string(oracle_dir().join(rel)).unwrap();
+    serde_json::from_str(&text).unwrap()
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .fold(String::new(), |mut out, b| {
+            write!(out, "{b:02x}").unwrap();
+            out
+        })
+}
+
+fn file_count(rel: &str) -> usize {
+    fs::read_dir(oracle_dir().join(rel))
+        .unwrap()
+        .filter(|e| e.as_ref().unwrap().file_type().unwrap().is_file())
+        .count()
+}
+
+#[test]
+fn every_vendored_oracle_matches_its_recorded_checksum() {
+    let manifest = json("MANIFEST.json");
+    let files = manifest["files"].as_object().unwrap();
+    // an empty manifest would pass the loop below, so pin its size
+    assert_eq!(files.len(), MANIFEST_ENTRIES);
+    assert_eq!(manifest["source_commit"].as_str().unwrap().len(), 40);
+    let bad: Vec<String> = files
+        .iter()
+        .filter_map(|(rel, digest)| match fs::read(oracle_dir().join(rel)) {
+            Err(_) => Some(format!("missing: {rel}")),
+            Ok(bytes) if hex_sha256(&bytes) != digest.as_str().unwrap() => {
+                Some(format!("differs: {rel}"))
+            }
+            Ok(_) => None,
+        })
+        .collect();
+    assert!(bad.is_empty(), "vendored oracles damaged: {bad:?}");
+}
+
+#[test]
+fn the_reference_cases_are_all_there() {
+    assert_eq!(
+        json("tests/data/reference/nca_reference.json")
+            .as_array()
+            .unwrap()
+            .len(),
+        9
+    );
+
+    let validation = json("tests/data/validation/reference.json");
+    let cases = validation["cases"].as_object().unwrap();
+    assert_eq!(cases.len(), 6);
+    let references: usize = cases
+        .values()
+        .flat_map(|case| case["references"].as_object().unwrap().values())
+        .map(|subject| subject.as_object().unwrap().len())
+        .sum();
+    assert_eq!(references, 1043);
+    assert_eq!(validation["partial_cases"].as_object().unwrap().len(), 1);
+    assert_eq!(validation["summary_cases"].as_object().unwrap().len(), 1);
+
+    let scenarios =
+        fs::read_to_string(oracle_dir().join("docs/data/benchmarks/scenarios.csv")).unwrap();
+    let rows = scenarios.lines().filter(|l| !l.is_empty()).count() - 1;
+    assert_eq!(rows, 8);
+    for dir in ["winnonlin", "pknca", "noncompart"] {
+        assert_eq!(
+            file_count(&format!("docs/data/benchmarks/{dir}")),
+            8,
+            "{dir}"
+        );
+    }
+}

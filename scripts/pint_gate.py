@@ -5,7 +5,7 @@ expression names (`{unit}`, `{time}`, `{dose}`, `{amount}`, `{volume}`), asks
 pint through `pkpdutils` for the unit, the factor and the short form, and
 writes the records as JSON next to a provenance header (the version and the
 source, `checkout` or `release`, of the `pkpdutils` it imported). It exits
-non-zero if any combination raises.
+non-zero if any combination raises or yields a non-finite factor.
 
 With `--check` it writes nothing: it recomputes the digest of `PARAMETER_UNITS`,
 the parameter count, the record count and the records from the importable
