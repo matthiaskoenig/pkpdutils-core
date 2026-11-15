@@ -1,6 +1,8 @@
 //! Units of the parameters: the expression of a parameter resolved against the
 //! units of an analysis and normalized to liters and hours.
 
+use std::sync::LazyLock;
+
 use crate::registry::{Dimension, Unit, UnitError, parse_unit};
 
 /// The units a parameter expression is resolved against.
@@ -18,12 +20,33 @@ pub struct UnitContext<'a> {
     pub volume: Option<&'a str>,
 }
 
-/// Convert `unit` to `target` (parsed from a string) and return it with the
-/// factor a magnitude in `unit` is multiplied with.
-fn convert(unit: &Unit, target: &str) -> Result<(Unit, f64), UnitError> {
-    let target = parse_unit(target)?;
-    let factor = unit.factor() / target.factor();
-    Ok((target, factor))
+/// The normalization targets, built from the terms of the registry.
+struct Targets {
+    volume: Unit,
+    volume_per_mass: Unit,
+    clearance: Unit,
+    clearance_per_mass: Unit,
+}
+
+static TARGETS: LazyLock<Targets> = LazyLock::new(|| {
+    let liter = Unit::named("liter");
+    let hour = Unit::named("hour");
+    let kilogram = Unit::named("kilogram");
+    let volume_per_mass = liter.over(&kilogram).expect("exponents are 1");
+    let clearance = liter.over(&hour).expect("exponents are 1");
+    let clearance_per_mass = clearance.over(&kilogram).expect("exponents are 1");
+    Targets {
+        volume: liter,
+        volume_per_mass,
+        clearance,
+        clearance_per_mass,
+    }
+});
+
+/// Convert `unit` to `target` and return it with the factor a magnitude in
+/// `unit` is multiplied with.
+fn convert(unit: &Unit, target: &Unit) -> (Unit, f64) {
+    (target.clone(), unit.factor() / target.factor())
 }
 
 /// Convert a volume to `liter` and a volume per body weight to `liter / kilogram`.
@@ -31,19 +54,15 @@ fn convert(unit: &Unit, target: &str) -> Result<(Unit, f64), UnitError> {
 /// The unit is classified by its dimension, so a prefixed or compound spelling
 /// is recognized. Anything else, a clearance included, is returned unchanged.
 ///
-/// # Errors
-///
-/// [`UnitError`] never in practice; the targets are units of the registry.
-///
 /// Returns the new unit and the factor applied (1 when unchanged).
-pub fn normalize_volume(unit: &Unit) -> Result<(Unit, f64), UnitError> {
+pub fn normalize_volume(unit: &Unit) -> (Unit, f64) {
     let d = unit.dimension();
     if d == Dimension::VOLUME {
-        convert(unit, "liter")
+        convert(unit, &TARGETS.volume)
     } else if d == Dimension::VOLUME.div(Dimension::MASS) {
-        convert(unit, "liter / kilogram")
+        convert(unit, &TARGETS.volume_per_mass)
     } else {
-        Ok((unit.clone(), 1.0))
+        (unit.clone(), 1.0)
     }
 }
 
@@ -52,20 +71,16 @@ pub fn normalize_volume(unit: &Unit) -> Result<(Unit, f64), UnitError> {
 ///
 /// Anything else is returned unchanged.
 ///
-/// # Errors
-///
-/// [`UnitError`] never in practice; the targets are units of the registry.
-///
 /// Returns the new unit and the factor applied (1 when unchanged).
-pub fn normalize_clearance(unit: &Unit) -> Result<(Unit, f64), UnitError> {
+pub fn normalize_clearance(unit: &Unit) -> (Unit, f64) {
     let d = unit.dimension();
     let per_time = Dimension::VOLUME.div(Dimension::TIME);
     if d == per_time {
-        convert(unit, "liter / hour")
+        convert(unit, &TARGETS.clearance)
     } else if d == per_time.div(Dimension::MASS) {
-        convert(unit, "liter / hour / kilogram")
+        convert(unit, &TARGETS.clearance_per_mass)
     } else {
-        Ok((unit.clone(), 1.0))
+        (unit.clone(), 1.0)
     }
 }
 
@@ -99,8 +114,8 @@ pub fn parameter_unit(expression: &str, ctx: &UnitContext) -> Result<(String, f6
         })?;
         raw = raw.replace(&placeholder, value);
     }
-    let (unit, f1) = normalize_volume(&parse_unit(&raw)?)?;
-    let (unit, f2) = normalize_clearance(&unit)?;
+    let (unit, f1) = normalize_volume(&parse_unit(&raw)?);
+    let (unit, f2) = normalize_clearance(&unit);
     let text = if unit.terms().is_empty() {
         "dimensionless".to_string()
     } else {
@@ -208,9 +223,9 @@ mod tests {
     #[test]
     fn volume_normalization_leaves_a_clearance_alone_and_only_volumes_normalize() {
         let ml_min = parse_unit("ml/min").unwrap();
-        let (unit, factor) = normalize_volume(&ml_min).unwrap();
+        let (unit, factor) = normalize_volume(&ml_min);
         assert_eq!((unit, factor), (ml_min.clone(), 1.0));
-        let (unit, factor) = normalize_clearance(&ml_min).unwrap();
+        let (unit, factor) = normalize_clearance(&ml_min);
         assert_eq!(crate::format::long_form(&unit), "liter / hour");
         assert!((factor - 0.06).abs() < 1e-12);
         let ctx = UnitContext {
@@ -224,5 +239,37 @@ mod tests {
             parameter_unit("1 / ({time})", &ctx).unwrap(),
             ("1 / minute".into(), 1.0)
         );
+    }
+
+    #[test]
+    fn the_targets_equal_what_the_parser_produces() {
+        assert_eq!(TARGETS.volume, parse_unit("liter").unwrap());
+        assert_eq!(
+            TARGETS.volume_per_mass,
+            parse_unit("liter / kilogram").unwrap()
+        );
+        assert_eq!(TARGETS.clearance, parse_unit("liter / hour").unwrap());
+        assert_eq!(
+            TARGETS.clearance_per_mass,
+            parse_unit("liter / hour / kilogram").unwrap()
+        );
+    }
+
+    #[test]
+    fn per_bodyweight_units_which_do_not_cancel_are_converted() {
+        // Values from a live run of pkpdutils.nca.result.parameter_unit.
+        let ctx = UnitContext {
+            unit: "ng/ml",
+            time: "min",
+            dose: Some("ug/kg"),
+            amount: None,
+            volume: None,
+        };
+        let (unit, factor) = parameter_unit("({dose}) / ({unit})", &ctx).unwrap();
+        assert_eq!(unit, "liter / kilogram");
+        assert!((factor - 1.0).abs() < 1e-12);
+        let (unit, factor) = parameter_unit("({dose}) / (({unit}) * ({time}))", &ctx).unwrap();
+        assert_eq!(unit, "liter / hour / kilogram");
+        assert!((factor - 60.0).abs() < 1e-9 * 60.0);
     }
 }

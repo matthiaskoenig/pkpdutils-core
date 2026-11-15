@@ -490,6 +490,22 @@ fn lookup(token: &str) -> Option<Term> {
     None
 }
 
+impl Unit {
+    /// The unit of one named unit of the registry, by long name or symbol.
+    ///
+    /// For a name the registry is known to hold (`liter`, `hour`, `kilogram`),
+    /// the same term `parse_unit` produces. Crate internal: callers outside
+    /// this crate parse strings.
+    ///
+    /// # Panics
+    ///
+    /// If the name is not in the registry, a programming error.
+    pub(crate) fn named(name: &str) -> Unit {
+        let term = lookup(name).unwrap_or_else(|| panic!("'{name}' is not in the registry"));
+        Unit { terms: vec![term] }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
     Number(String),
