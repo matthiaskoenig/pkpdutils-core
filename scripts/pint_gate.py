@@ -25,6 +25,9 @@ from pkpdutils.nca.nca import PARAMETER_UNITS
 from pkpdutils.nca.result import parameter_unit
 from pkpdutils.units import short_unit
 
+REPO_DIR = Path(__file__).resolve().parent.parent
+FIXTURE_PATH = REPO_DIR / "crates" / "units" / "tests" / "data" / "pint_gate.json"
+
 AXES = {
     "unit": ["mg/l", "ng/ml", "ug/l", "mmol/l", "mg/L", "mmHg", "dimensionless"],
     "time": ["hr", "h", "hour", "min"],
@@ -59,11 +62,17 @@ def check(path: Path, provenance: dict, records: list[dict]) -> int:
 def main() -> int:
     """Write the fixture and return the process exit code."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("-o", "--output", required=True)
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=FIXTURE_PATH,
+        help="fixture to write, or to compare with --check (default: the committed fixture)",
+    )
     parser.add_argument(
         "--check",
         action="store_true",
-        help="compare the fixture at OUTPUT with a fresh run instead of writing it",
+        help="compare the fixture with a fresh run instead of writing it",
     )
     args = parser.parse_args()
 
@@ -117,8 +126,8 @@ def main() -> int:
         print("\n".join(failures[:20]), file=sys.stderr)
         return 1
     if args.check:
-        return check(Path(args.output), provenance, records)
-    with open(args.output, "w") as f:
+        return check(args.output, provenance, records)
+    with args.output.open("w") as f:
         json.dump({"provenance": provenance, "records": records}, f, indent=0)
         f.write("\n")
     print(f"{len(records)} records from {len(PARAMETER_UNITS)} parameters")

@@ -21,10 +21,10 @@ Two contracts connect a host to the core: `batch/1`, the batch of timecourses, a
 The fixture has a `provenance` header with the `pkpdutils` version and its source (`checkout` or `release`, by whether the module was imported from a `site-packages` directory), next to the `records`. It must be regenerated from the same `pkpdutils` the Rust side is meant to agree with, which is the checkout being mirrored, and the recorded version and source tell which one produced the file. Regenerate it against the checkout being mirrored (`path/to/pkpdutils` is that checkout) with
 
 ```bash
-uv run --with-editable path/to/pkpdutils python scripts/pint_gate.py -o crates/units/tests/data/pint_gate.json
+uv run --with-editable path/to/pkpdutils python scripts/pint_gate.py
 ```
 
-Without a checkout, the release is the fallback, `uv run --with pkpdutils python scripts/pint_gate.py -o crates/units/tests/data/pint_gate.json`. `--check` (same command with `--check` added) writes nothing and compares the digest of `PARAMETER_UNITS`, the parameter and record counts and the records with the committed fixture; a non-zero exit means the fixture is stale and must be regenerated. The script prints the provenance and the record count and exits non-zero if any combination raises in pint. Never edit the fixture by hand: if Rust disagrees, fix `pkpdutils-units`. Regeneration is needed when `PARAMETER_UNITS` gains an entry or the accepted input units widen, and whenever the checkout moves ahead of the version recorded in the fixture.
+Without a checkout, the release is the fallback, `uv run --with pkpdutils python scripts/pint_gate.py`. The script writes the committed fixture by default, from any working directory; `-o PATH` writes another file instead. `--check` (same command with `--check` added) writes nothing, reads the committed fixture unless `-o PATH` names another one, and compares the digest of `PARAMETER_UNITS`, the parameter and record counts and the records with that fixture; a non-zero exit means the fixture is stale and must be regenerated. The script prints the provenance and the record count and exits non-zero if any combination raises in pint. Never edit the fixture by hand: if Rust disagrees, fix `pkpdutils-units`. Regeneration is needed when `PARAMETER_UNITS` gains an entry or the accepted input units widen, and whenever the checkout moves ahead of the version recorded in the fixture.
 
 ## Toolchain
 
