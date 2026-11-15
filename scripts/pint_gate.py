@@ -44,6 +44,10 @@ def check(path: Path, provenance: dict, records: list[dict]) -> int:
         committed = json.loads(path.read_text())
         header = committed["provenance"]
         committed_records = committed["records"]
+        if not isinstance(header, dict):
+            raise TypeError("provenance is not an object")
+        if not isinstance(committed_records, list):
+            raise TypeError("records is not a list")
     except FileNotFoundError:
         print(
             f"{path} does not exist, generate it with the same command without --check",
@@ -147,7 +151,7 @@ def main() -> int:
         "n_records": len(records),
     }
     if failures:
-        print(f"{len(failures)} combinations raised:", file=sys.stderr)
+        print(f"{len(failures)} combinations failed:", file=sys.stderr)
         print("\n".join(failures[:20]), file=sys.stderr)
         return 1
     if args.check:
