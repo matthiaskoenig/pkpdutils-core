@@ -10,7 +10,7 @@ mod format;
 mod registry;
 
 pub use format::{short_unit, unit_str};
-pub use registry::{Dimension, Term, Unit, UnitError, parse_unit};
+pub use registry::{Dimension, MAX_DEPTH, MAX_EXPONENT, Term, Unit, UnitError, parse_unit};
 
 /// Dimensionalities a dose may have: an amount as mass, as substance or as
 /// activity, or such an amount per body weight.
@@ -169,5 +169,58 @@ mod tests {
         // pint reduces [mass] / [mass] to dimensionless, so Python accepts it
         assert!(check_dose_unit("dimensionless").is_ok());
         assert!(is_per_bodyweight("dimensionless").unwrap());
+    }
+
+    #[test]
+    fn percent_is_a_dimensionless_unit() {
+        assert_eq!(unit_str("percent").unwrap(), "percent");
+        assert_eq!(unit_str("%").unwrap(), "percent");
+        assert_eq!(short_unit("percent"), "%");
+        assert!(check_dose_unit("%").is_ok());
+    }
+
+    #[test]
+    fn malformed_and_oversized_input_is_an_error_and_never_a_panic() {
+        use UnitError::*;
+        let syntax = |e: UnitError| matches!(e, Syntax { .. });
+        for input in [
+            "mg/", "/mg", "mg*", "()", "mg//l", "mg**", "mg**1.5", "(mg", "mg)",
+        ] {
+            assert!(syntax(parse_unit(input).unwrap_err()), "{input}");
+        }
+        assert!(matches!(parse_unit("milli").unwrap_err(), Unknown { .. }));
+        for input in [
+            "mg**99999999999",
+            "l**100",
+            "mg**200",
+            "(mg**8)**9",
+            "1/mg**65",
+        ] {
+            assert!(
+                matches!(parse_unit(input).unwrap_err(), Exponent { .. }),
+                "{input}"
+            );
+        }
+        assert!(parse_unit("mg**64").is_ok());
+        assert!(parse_unit("mg**-64").is_ok());
+        // a signed exponent takes one sign only
+        for input in ["mg**--2", "mg**+-2", "mg**-+2"] {
+            assert!(syntax(parse_unit(input).unwrap_err()), "{input}");
+        }
+        assert_eq!(unit_str("mg**+2").unwrap(), "milligram ** 2");
+        // a dimensionless dose must not come from an overflowing exponent
+        assert!(check_dose_unit("mg**200").is_err());
+        assert!(is_per_bodyweight("mg**200").is_err());
+    }
+
+    #[test]
+    fn deep_nesting_is_an_error_and_not_a_stack_overflow() {
+        let deep = format!("{}mg{}", "(".repeat(100_000), ")".repeat(100_000));
+        assert!(matches!(
+            parse_unit(&deep).unwrap_err(),
+            UnitError::Nesting { .. }
+        ));
+        let ok = format!("{}mg{}", "(".repeat(MAX_DEPTH), ")".repeat(MAX_DEPTH));
+        assert_eq!(unit_str(&ok).unwrap(), "milligram");
     }
 }

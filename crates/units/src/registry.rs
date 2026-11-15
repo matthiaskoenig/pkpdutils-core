@@ -13,15 +13,15 @@ use std::ops::{Div, Mul};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct Dimension {
     /// Exponent of mass.
-    pub mass: i8,
+    pub mass: i32,
     /// Exponent of length.
-    pub length: i8,
+    pub length: i32,
     /// Exponent of time.
-    pub time: i8,
+    pub time: i32,
     /// Exponent of amount of substance.
-    pub substance: i8,
+    pub substance: i32,
     /// Exponent of activity (`IU`).
-    pub activity: i8,
+    pub activity: i32,
 }
 
 impl Dimension {
@@ -43,7 +43,7 @@ impl Dimension {
     pub const PRESSURE: Dimension = Dimension::new(1, -1, -2, 0, 0);
 
     /// A dimension from its five exponents.
-    pub const fn new(mass: i8, length: i8, time: i8, substance: i8, activity: i8) -> Self {
+    pub const fn new(mass: i32, length: i32, time: i32, substance: i32, activity: i32) -> Self {
         Dimension {
             mass,
             length,
@@ -76,7 +76,7 @@ impl Dimension {
     }
 
     /// The dimension raised to an integer power.
-    pub const fn pow(self, n: i8) -> Dimension {
+    pub const fn pow(self, n: i32) -> Dimension {
         Dimension::new(
             self.mass * n,
             self.length * n,
@@ -154,6 +154,22 @@ pub enum UnitError {
         /// What is wrong with it.
         reason: String,
     },
+    /// An exponent beyond the supported range.
+    #[error("an exponent of '{unit}' is beyond the supported range of +-{max}")]
+    Exponent {
+        /// The whole unit string.
+        unit: String,
+        /// The largest absolute exponent.
+        max: i32,
+    },
+    /// Parentheses nested too deeply.
+    #[error("'{unit}' nests parentheses deeper than {max} levels")]
+    Nesting {
+        /// The whole unit string, truncated to its first 40 characters.
+        unit: String,
+        /// The deepest supported nesting.
+        max: usize,
+    },
     /// A unit which is no dose unit.
     #[error(
         "a dose must be a mass, an amount of substance or an activity, or one of them per body \
@@ -205,9 +221,9 @@ impl Unit {
 
     /// The dimension of the unit.
     pub fn dimension(&self) -> Dimension {
-        self.terms.iter().fold(Dimension::NONE, |d, t| {
-            d * t.dimension.pow(i8::try_from(t.exponent).unwrap_or(0))
-        })
+        self.terms
+            .iter()
+            .fold(Dimension::NONE, |d, t| d * t.dimension.pow(t.exponent))
     }
 
     /// The factor of the unit to the base units of the registry.
@@ -218,47 +234,63 @@ impl Unit {
             .product()
     }
 
-    /// The product with another unit.
-    pub fn times(&self, other: &Unit) -> Unit {
+    /// The product with another unit, `None` if an exponent leaves
+    /// [`MAX_EXPONENT`].
+    pub fn times(&self, other: &Unit) -> Option<Unit> {
         self.combine(other, 1)
     }
 
-    /// The quotient by another unit.
-    pub fn over(&self, other: &Unit) -> Unit {
+    /// The quotient by another unit, `None` if an exponent leaves
+    /// [`MAX_EXPONENT`].
+    pub fn over(&self, other: &Unit) -> Option<Unit> {
         self.combine(other, -1)
     }
 
-    /// The unit raised to an integer power.
-    pub fn pow(&self, n: i32) -> Unit {
+    /// The unit raised to an integer power, `None` if an exponent leaves
+    /// [`MAX_EXPONENT`].
+    pub fn pow(&self, n: i32) -> Option<Unit> {
         if n == 0 {
-            return Unit::dimensionless();
+            return Some(Unit::dimensionless());
         }
-        let terms = self
-            .terms
-            .iter()
-            .map(|t| Term {
-                exponent: t.exponent * n,
+        let mut terms = Vec::with_capacity(self.terms.len());
+        for t in &self.terms {
+            terms.push(Term {
+                exponent: bounded(t.exponent.checked_mul(n)?)?,
                 ..t.clone()
-            })
-            .collect();
-        Unit { terms }
+            });
+        }
+        Some(Unit { terms })
     }
 
-    fn combine(&self, other: &Unit, sign: i32) -> Unit {
+    fn combine(&self, other: &Unit, sign: i32) -> Option<Unit> {
         let mut terms = self.terms.clone();
         for o in &other.terms {
+            let delta = sign.checked_mul(o.exponent)?;
             match terms.iter_mut().find(|t| t.name == o.name) {
-                Some(t) => t.exponent += sign * o.exponent,
+                Some(t) => t.exponent = bounded(t.exponent.checked_add(delta)?)?,
                 None => terms.push(Term {
-                    exponent: sign * o.exponent,
+                    exponent: delta,
                     ..o.clone()
                 }),
             }
         }
         terms.retain(|t| t.exponent != 0);
         terms.sort_by(|a, b| a.name.cmp(&b.name));
-        Unit { terms }
+        Some(Unit { terms })
     }
+}
+
+/// The largest absolute exponent a unit may carry. A host string must never
+/// overflow the arithmetic, so a larger exponent is an error.
+pub const MAX_EXPONENT: i32 = 64;
+
+/// The deepest nesting of parentheses the parser follows, which keeps its
+/// recursion far from the stack limit.
+pub const MAX_DEPTH: usize = 64;
+
+/// The exponent itself when it is within [`MAX_EXPONENT`].
+fn bounded(e: i32) -> Option<i32> {
+    (e.abs() <= MAX_EXPONENT).then_some(e)
 }
 
 /// A base unit of the registry.
@@ -287,7 +319,7 @@ const fn base(
 }
 
 /// The named units. The first symbol is the one the short form writes.
-const BASES: [Base; 11] = [
+const BASES: [Base; 12] = [
     base("gram", &["g"], Dimension::MASS, 1e-3, true),
     base("liter", &["l", "L"], Dimension::VOLUME, 1e-3, true),
     base("second", &["s", "sec"], Dimension::TIME, 1.0, true),
@@ -303,6 +335,7 @@ const BASES: [Base; 11] = [
         133.322_387_415,
         false,
     ),
+    base("percent", &["%"], Dimension::NONE, 0.01, false),
     base("count", &["count"], Dimension::NONE, 1.0, false),
     base("none", &["none"], Dimension::NONE, 1.0, false),
 ];
@@ -452,6 +485,7 @@ fn lookup(token: &str) -> Option<Term> {
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
     Number(String),
+    Sign(char),
     Name(String),
     Star,
     Slash,
@@ -492,6 +526,9 @@ fn tokenize(s: &str) -> Result<Vec<Token>, String> {
                 i += 1;
             }
             tokens.push(Token::Number(chars[start..i].iter().collect()));
+        } else if c == '%' {
+            tokens.push(Token::Name("%".to_string()));
+            i += 1;
         } else if c.is_alphabetic() || c == '_' {
             let start = i;
             while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
@@ -499,7 +536,7 @@ fn tokenize(s: &str) -> Result<Vec<Token>, String> {
             }
             tokens.push(Token::Name(chars[start..i].iter().collect()));
         } else if c == '-' || c == '+' {
-            tokens.push(Token::Number(c.to_string()));
+            tokens.push(Token::Sign(c));
             i += 1;
         } else {
             return Err(format!("unexpected character '{c}'"));
@@ -512,11 +549,14 @@ fn tokenize(s: &str) -> Result<Vec<Token>, String> {
 enum Failure {
     Syntax(String),
     Unknown(String),
+    Exponent,
+    Nesting,
 }
 
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    depth: usize,
 }
 
 impl Parser {
@@ -531,11 +571,11 @@ impl Parser {
             match self.peek() {
                 Some(Token::Star) => {
                     self.pos += 1;
-                    left = left.times(&self.term()?);
+                    left = left.times(&self.term()?).ok_or(Failure::Exponent)?;
                 }
                 Some(Token::Slash) => {
                     self.pos += 1;
-                    left = left.over(&self.term()?);
+                    left = left.over(&self.term()?).ok_or(Failure::Exponent)?;
                 }
                 _ => return Ok(left),
             }
@@ -548,31 +588,30 @@ impl Parser {
         if self.peek() == Some(&Token::Pow) {
             self.pos += 1;
             let n = self.integer()?;
-            return Ok(atom.pow(n));
+            return atom.pow(n).ok_or(Failure::Exponent);
         }
         Ok(atom)
     }
 
-    /// An optionally signed integer exponent.
+    /// An integer exponent with at most one sign, within [`MAX_EXPONENT`].
     fn integer(&mut self) -> Result<i32, Failure> {
         let mut sign = 1;
-        while let Some(Token::Number(t)) = self.peek() {
-            match t.as_str() {
-                "-" => sign = -sign,
-                "+" => {}
-                digits => {
-                    let n: i32 = digits
-                        .parse()
-                        .map_err(|_| Failure::Syntax(format!("bad exponent '{digits}'")))?;
-                    self.pos += 1;
-                    return Ok(sign * n);
-                }
+        if let Some(Token::Sign(c)) = self.peek() {
+            if *c == '-' {
+                sign = -1;
             }
             self.pos += 1;
         }
-        Err(Failure::Syntax(
-            "an integer exponent is expected".to_string(),
-        ))
+        match self.peek() {
+            Some(Token::Number(digits)) => {
+                let n: i32 = digits.parse().map_err(|_| Failure::Exponent)?;
+                self.pos += 1;
+                bounded(sign * n).ok_or(Failure::Exponent)
+            }
+            _ => Err(Failure::Syntax(
+                "an integer exponent is expected".to_string(),
+            )),
+        }
     }
 
     /// `atom = name | '1' | '(' expr ')'`
@@ -598,7 +637,12 @@ impl Parser {
             ))),
             Some(Token::Open) => {
                 self.pos += 1;
+                self.depth += 1;
+                if self.depth > MAX_DEPTH {
+                    return Err(Failure::Nesting);
+                }
                 let inner = self.expr()?;
+                self.depth -= 1;
                 if self.peek() == Some(&Token::Close) {
                     self.pos += 1;
                     Ok(inner)
@@ -631,7 +675,11 @@ pub fn parse_unit(s: &str) -> Result<Unit, UnitError> {
         reason,
     };
     let tokens = tokenize(s).map_err(syntax)?;
-    let mut parser = Parser { tokens, pos: 0 };
+    let mut parser = Parser {
+        tokens,
+        pos: 0,
+        depth: 0,
+    };
     let result = parser.expr().and_then(|u| {
         if parser.pos == parser.tokens.len() {
             Ok(u)
@@ -645,6 +693,14 @@ pub fn parse_unit(s: &str) -> Result<Unit, UnitError> {
     match result {
         Ok(u) => Ok(u),
         Err(Failure::Syntax(reason)) => Err(syntax(reason)),
+        Err(Failure::Exponent) => Err(UnitError::Exponent {
+            unit: s.to_string(),
+            max: MAX_EXPONENT,
+        }),
+        Err(Failure::Nesting) => Err(UnitError::Nesting {
+            unit: s.chars().take(40).collect(),
+            max: MAX_DEPTH,
+        }),
         Err(Failure::Unknown(name)) => Err(UnitError::Unknown {
             name,
             unit: s.to_string(),
