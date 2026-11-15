@@ -1,5 +1,12 @@
 //! The contract constants every pkpdutils-core crate and every host agrees on.
 
+pub mod enums;
+
+pub use enums::{
+    AucMethod, BlqAction, BlqHandling, BootstrapDistribution, BootstrapSpread, C0Method, Kind,
+    NcaFlag, Route, TerminalMethod, UncertaintyMethod,
+};
+
 /// The contract of an analysis request and its result.
 pub const ANALYSIS_CONTRACT: &str = "analysis/1";
 
