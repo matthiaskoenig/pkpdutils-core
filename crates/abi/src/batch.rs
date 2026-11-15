@@ -8,7 +8,7 @@ use crate::nonfinite;
 use crate::{BATCH_CONTRACT, Route, check_contract};
 use serde::{Deserialize, Serialize};
 
-/// A coordinate along a sample dimension, which keeps its dtype through an analysis.
+/// The values of a coordinate, which keep their dtype through an analysis.
 ///
 /// `nca` carries `period`, `sequence` and covariates into the result and
 /// `stats/bioequivalence.py` reads them back, so a string must not turn into a number.
@@ -76,13 +76,53 @@ pub(crate) fn expected_len(
         .ok_or_else(|| format!("{field}: {n_samples} samples times {per_sample} overflows"))
 }
 
-/// Check that every coordinate has one entry per sample.
+/// A coordinate over some of the sample dimensions.
+///
+/// A sample coordinate of `pkpdutils` lives on a *subset* of the sample
+/// dimensions: `sample_coordinates` (`src/pkpdutils/result.py`) selects every
+/// coordinate whose dims are a subset of them. So the dimensions are part of the
+/// wire, and a coordinate is not one value per sample: `read_adnca(analytes=[..])`
+/// puts `substance` along `analyte` only, a crossover batch has `period` of
+/// length 2, and neither can be rebuilt from a column flattened over all samples.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SampleCoordinate {
+    /// The name.
+    pub name: String,
+    /// The sample dimensions it lives on, a subset of `sample_dims` in their
+    /// order; empty for a coordinate of a single value.
+    pub dims: Vec<String>,
+    /// The values, row major over `dims`.
+    pub values: Coordinate,
+}
+
+/// Check every coordinate against the dimensions it names.
 pub(crate) fn check_coords(
-    coords: &[(String, Coordinate)],
-    n_samples: usize,
+    coords: &[SampleCoordinate],
+    sample_dims: &[String],
+    sample_shape: &[usize],
 ) -> Result<(), String> {
-    for (name, c) in coords {
-        check_len(&format!("coords[{name}]"), n_samples, c.len())?;
+    let mut seen: Vec<&str> = Vec::with_capacity(coords.len());
+    for c in coords {
+        let field = format!("coords[{}]", c.name);
+        if seen.contains(&c.name.as_str()) {
+            return Err(format!("{field} is given twice"));
+        }
+        seen.push(&c.name);
+        let mut expected = 1usize;
+        for (i, dim) in c.dims.iter().enumerate() {
+            if c.dims[..i].contains(dim) {
+                return Err(format!("{field} names the dimension {dim} twice"));
+            }
+            let axis = sample_dims
+                .iter()
+                .position(|d| d == dim)
+                .ok_or_else(|| format!("{field} is on {dim}, which is no sample dimension"))?;
+            expected = expected
+                .checked_mul(sample_shape[axis])
+                .ok_or_else(|| format!("{field}: the size of its dimensions overflows"))?;
+        }
+        check_len(&field, expected, c.values.len())?;
     }
     Ok(())
 }
@@ -201,8 +241,8 @@ pub struct Batch {
     /// [`crate::result::Attributes`], where `cdisc.to_pp` reads it for `PPSPEC`
     /// and otherwise falls back to `plasma`.
     pub tissue: Option<String>,
-    /// The non-dimension coordinates, each along the flattened samples.
-    pub coords: Vec<(String, Coordinate)>,
+    /// The non-dimension coordinates, each over the dimensions it names.
+    pub coords: Vec<SampleCoordinate>,
 }
 
 impl PartialEq for Batch {
@@ -344,10 +384,11 @@ impl Batch {
             route: Some(Route::Oral),
             routes: None,
             tissue: Some("plasma".to_string()),
-            coords: vec![(
-                "subject".to_string(),
-                Coordinate::Str(vec!["A".to_string(), "B".to_string()]),
-            )],
+            coords: vec![SampleCoordinate {
+                name: "subject".to_string(),
+                dims: vec!["subject".to_string()],
+                values: Coordinate::Str(vec!["A".to_string(), "B".to_string()]),
+            }],
         }
     }
 }
@@ -396,7 +437,7 @@ struct BatchWire {
     #[serde(default)]
     tissue: Option<String>,
     #[serde(default)]
-    coords: Vec<(String, Coordinate)>,
+    coords: Vec<SampleCoordinate>,
 }
 
 impl BatchWire {
@@ -435,7 +476,7 @@ impl BatchWire {
         check_len("dose_amount", doses, self.dose_amount.len())?;
         check_len("dose_time", doses, self.dose_time.len())?;
         check_len("dose_duration", doses, self.dose_duration.len())?;
-        check_coords(&self.coords, n)
+        check_coords(&self.coords, &self.sample_dims, &self.sample_shape)
     }
 }
 
@@ -568,8 +609,11 @@ mod tests {
             assert_ne!(other, batch, "{name}");
         }
         let mut other = batch.clone();
-        other.coords[0].1 = Coordinate::Str(vec!["A".into(), "C".into()]);
+        other.coords[0].values = Coordinate::Str(vec!["A".into(), "C".into()]);
         assert_ne!(other, batch, "coords");
+        let mut other = batch.clone();
+        other.coords[0].dims = vec![];
+        assert_ne!(other, batch, "coords dims");
         let mut other = batch.clone();
         other.lloq = Some(vec![f64::NAN, 0.1]);
         assert_ne!(other, batch, "NaN position");
@@ -610,7 +654,8 @@ mod tests {
             ("lloq", |j| j["lloq"] = serde_json::json!([1.0])),
             ("routes", |j| j["routes"] = serde_json::json!(["oral"])),
             ("coords[subject]", |j| {
-                j["coords"] = serde_json::json!([["subject", {"str": ["A"]}]])
+                j["coords"] = serde_json::json!([{"name": "subject", "dims": ["subject"],
+                                        "values": {"str": ["A"]}}])
             }),
         ];
         for (field, brk) in breaks {
@@ -698,17 +743,90 @@ mod tests {
 
     #[test]
     fn coordinates_keep_their_dtype() {
+        let along = |name: &str, values| SampleCoordinate {
+            name: name.to_string(),
+            dims: vec!["subject".to_string()],
+            values,
+        };
         let c = vec![
-            (
-                "subject".to_string(),
-                Coordinate::Str(vec!["A".into(), "B".into()]),
-            ),
-            ("period".to_string(), Coordinate::Int(vec![1, 2])),
-            ("weight".to_string(), Coordinate::Float(vec![70.0, 82.5])),
+            along("subject", Coordinate::Str(vec!["A".into(), "B".into()])),
+            along("period", Coordinate::Int(vec![1, 2])),
+            along("weight", Coordinate::Float(vec![70.0, 82.5])),
         ];
-        let back: Vec<(String, Coordinate)> =
+        let back: Vec<SampleCoordinate> =
             serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
         assert_eq!(back, c);
+    }
+
+    /// A batch of two analytes and two subjects, the substance along `analyte`.
+    #[cfg(test)]
+    fn two_analytes() -> Batch {
+        let mut batch = Batch::example_with_undosed_row();
+        batch.sample_dims = vec!["analyte".to_string(), "subject".to_string()];
+        batch.sample_shape = vec![2, 1];
+        batch.coords = vec![
+            SampleCoordinate {
+                name: "substance".to_string(),
+                dims: vec!["analyte".to_string()],
+                values: Coordinate::Str(vec!["parent".into(), "metabolite".into()]),
+            },
+            SampleCoordinate {
+                name: "subject".to_string(),
+                dims: vec!["subject".to_string()],
+                values: Coordinate::Str(vec!["A".into()]),
+            },
+        ];
+        batch
+    }
+
+    #[test]
+    fn a_coordinate_on_a_subset_of_the_sample_dimensions_round_trips() {
+        // `read_adnca(analytes=[..])` puts `substance` along `analyte` only, so a
+        // batch of 2 analytes and 1 subject has 2 substances and not 2 * 1 of them
+        // broadcast; `metabolite_ratio` and `cdisc.py` read the coordinate back
+        let batch = two_analytes();
+        let back: Batch = serde_json::from_str(&serde_json::to_string(&batch).unwrap()).unwrap();
+        assert_eq!(back.coords[0].dims, vec!["analyte".to_string()]);
+        assert_eq!(back.coords[0].values.len(), 2);
+        assert_eq!(back, batch);
+        // a coordinate of a single value names no dimension
+        let mut batch = batch;
+        batch.coords.push(SampleCoordinate {
+            name: "study".to_string(),
+            dims: vec![],
+            values: Coordinate::Str(vec!["one".into()]),
+        });
+        let back: Batch = serde_json::from_str(&serde_json::to_string(&batch).unwrap()).unwrap();
+        assert_eq!(back, batch);
+    }
+
+    #[test]
+    fn a_coordinate_is_checked_against_the_dimensions_it_names() {
+        type Break = (&'static str, fn(&mut Batch));
+        let breaks: [Break; 4] = [
+            ("coords[substance] has length 2, expected 1", |b| {
+                b.coords[0].dims = vec!["subject".to_string()]
+            }),
+            (
+                "coords[substance] is on period, which is no sample dimension",
+                |b| b.coords[0].dims = vec!["period".to_string()],
+            ),
+            ("coords[substance] names the dimension analyte twice", |b| {
+                b.coords[0].dims = vec!["analyte".to_string(), "analyte".to_string()]
+            }),
+            ("coords[substance] is given twice", |b| {
+                let first = b.coords[0].clone();
+                b.coords.push(first)
+            }),
+        ];
+        for (message, brk) in breaks {
+            let mut batch = two_analytes();
+            brk(&mut batch);
+            let err = serde_json::from_str::<Batch>(&serde_json::to_string(&batch).unwrap())
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(message), "expected {message:?}, got {err}");
+        }
     }
 
     #[test]

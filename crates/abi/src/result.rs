@@ -1,7 +1,7 @@
 //! The analysis request going into the core and the result coming out of it.
 
 use crate::batch::{
-    Batch, Coordinate, bits_eq, check_coords, check_len, checked_product, expected_len,
+    Batch, SampleCoordinate, bits_eq, check_coords, check_len, checked_product, expected_len,
 };
 use crate::{ANALYSIS_CONTRACT, NcaOptions, Route, check_contract, nonfinite};
 use serde::{Deserialize, Serialize};
@@ -173,7 +173,7 @@ pub struct AnalysisResult {
     /// The flag bits of every sample, see `NcaFlag`.
     pub flags: Vec<u32>,
     /// The non-dimension coordinates of the batch, carried into the result.
-    pub coords: Vec<(String, Coordinate)>,
+    pub coords: Vec<SampleCoordinate>,
     /// The dataset level attributes, see [`Attributes`].
     pub attributes: Attributes,
 }
@@ -219,7 +219,7 @@ struct AnalysisResultWire {
     parameters: Vec<ParameterColumn>,
     point_variables: Vec<PointVariable>,
     flags: Vec<u32>,
-    coords: Vec<(String, Coordinate)>,
+    coords: Vec<SampleCoordinate>,
     attributes: Attributes,
 }
 
@@ -239,7 +239,7 @@ impl TryFrom<AnalysisResultWire> for AnalysisResult {
             check_len(&field, expected_len(&field, n, p.size)?, p.values.len())?;
         }
         check_len("flags", n, w.flags.len())?;
-        check_coords(&w.coords, n)?;
+        check_coords(&w.coords, &w.sample_dims, &w.sample_shape)?;
         Ok(Self {
             contract: w.contract,
             sample_dims: w.sample_dims,
@@ -279,6 +279,7 @@ impl<'de> Deserialize<'de> for AnalysisResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::batch::Coordinate;
 
     fn attributes() -> Attributes {
         Attributes::of(&Batch::example_with_undosed_row(), NcaOptions::default())
@@ -299,7 +300,11 @@ mod tests {
                 values: vec![1.0, 2.0, 3.0, f64::NAN],
             }],
             flags: vec![0, 4],
-            coords: vec![("period".into(), Coordinate::Int(vec![1, 2]))],
+            coords: vec![SampleCoordinate {
+                name: "period".into(),
+                dims: vec!["subject".into()],
+                values: Coordinate::Int(vec![1, 2]),
+            }],
             ..AnalysisResult::new(vec!["subject".into()], vec![2], attributes())
         }
     }

@@ -7,7 +7,7 @@ pub mod options;
 pub mod result;
 pub mod window;
 
-pub use batch::{Batch, Coordinate, Dosing};
+pub use batch::{Batch, Coordinate, Dosing, SampleCoordinate};
 pub use enums::{
     AucMethod, BlqAction, BlqHandling, BootstrapDistribution, BootstrapSpread, C0Method, Kind,
     NcaFlag, Route, TerminalMethod, UncertaintyMethod,
