@@ -58,6 +58,13 @@ impl<'de> Deserialize<'de> for AnalysisRequest {
 }
 
 /// One parameter of a result, a value per sample.
+///
+/// An integer variable of `nca.py`'s `INTEGER_VARIABLES` which is not `flags`
+/// (`c0_method`) travels here as well: the codes are small, so a double holds
+/// them exactly, and Python casts them back by that set. A boolean and a text
+/// variable do not, and have their own sections,
+/// [`AnalysisResult::boolean_variables`] and
+/// [`AnalysisResult::text_variables`].
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct ParameterColumn {
@@ -68,6 +75,42 @@ pub struct ParameterColumn {
     /// One value per sample, row major, NaN where it is not defined.
     #[serde(with = "nonfinite::vec")]
     pub values: Vec<f64>,
+}
+
+/// A boolean variable of a result, a value per sample.
+///
+/// `nca.py` declares `BOOLEAN_VARIABLES = {"accepted", "excluded"}` and writes
+/// both onto every result, driven by `NCAOptions.acceptance`, which is part of
+/// this contract, so the kernel computes them. A column of 0.0 and 1.0 would
+/// carry them by a convention written nowhere, and a host without
+/// `BOOLEAN_VARIABLES` to consult could not tell them from a measurement.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct BooleanColumn {
+    /// The name of the variable.
+    pub name: String,
+    /// The unit, as `attrs["units"]` of the variable; Python writes
+    /// `dimensionless` for these.
+    pub unit: String,
+    /// One value per sample, row major.
+    pub values: Vec<bool>,
+}
+
+/// A text variable of a result, a value per sample.
+///
+/// `nca.py` declares `TEXT_VARIABLES = {"excluded_reason"}` and writes it
+/// whenever a sample is excluded; `to_dataframe` reports it and `cdisc.py` reads
+/// `ds.data_vars`. Nothing numeric can carry it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TextColumn {
+    /// The name of the variable.
+    pub name: String,
+    /// The unit, as `attrs["units"]` of the variable; Python writes
+    /// `dimensionless` for these.
+    pub unit: String,
+    /// One value per sample, row major, the empty string where there is none.
+    pub values: Vec<String>,
 }
 
 impl PartialEq for ParameterColumn {
@@ -170,6 +213,10 @@ pub struct AnalysisResult {
     pub parameters: Vec<ParameterColumn>,
     /// The variables over an extra dimension.
     pub point_variables: Vec<PointVariable>,
+    /// The boolean variables, `accepted` and `excluded`.
+    pub boolean_variables: Vec<BooleanColumn>,
+    /// The text variables, `excluded_reason`.
+    pub text_variables: Vec<TextColumn>,
     /// The flag bits of every sample, see `NcaFlag`.
     pub flags: Vec<u32>,
     /// The non-dimension coordinates of the batch, carried into the result.
@@ -202,6 +249,8 @@ impl AnalysisResult {
             sample_shape,
             parameters: Vec::new(),
             point_variables: Vec::new(),
+            boolean_variables: Vec::new(),
+            text_variables: Vec::new(),
             flags: vec![0; n_samples],
             coords: Vec::new(),
             attributes,
@@ -218,6 +267,10 @@ struct AnalysisResultWire {
     sample_shape: Vec<usize>,
     parameters: Vec<ParameterColumn>,
     point_variables: Vec<PointVariable>,
+    #[serde(default)]
+    boolean_variables: Vec<BooleanColumn>,
+    #[serde(default)]
+    text_variables: Vec<TextColumn>,
     flags: Vec<u32>,
     coords: Vec<SampleCoordinate>,
     attributes: Attributes,
@@ -238,6 +291,14 @@ impl TryFrom<AnalysisResultWire> for AnalysisResult {
             let field = format!("point_variables[{}].values", p.name);
             check_len(&field, expected_len(&field, n, p.size)?, p.values.len())?;
         }
+        for b in &w.boolean_variables {
+            let field = format!("boolean_variables[{}].values", b.name);
+            check_len(&field, n, b.values.len())?;
+        }
+        for x in &w.text_variables {
+            let field = format!("text_variables[{}].values", x.name);
+            check_len(&field, n, x.values.len())?;
+        }
         check_len("flags", n, w.flags.len())?;
         check_coords(&w.coords, &w.sample_dims, &w.sample_shape)?;
         Ok(Self {
@@ -246,6 +307,8 @@ impl TryFrom<AnalysisResultWire> for AnalysisResult {
             sample_shape: w.sample_shape,
             parameters: w.parameters,
             point_variables: w.point_variables,
+            boolean_variables: w.boolean_variables,
+            text_variables: w.text_variables,
             flags: w.flags,
             coords: w.coords,
             attributes: w.attributes,
@@ -261,6 +324,8 @@ impl Serialize for AnalysisResult {
             sample_shape: self.sample_shape.clone(),
             parameters: self.parameters.clone(),
             point_variables: self.point_variables.clone(),
+            boolean_variables: self.boolean_variables.clone(),
+            text_variables: self.text_variables.clone(),
             flags: self.flags.clone(),
             coords: self.coords.clone(),
             attributes: self.attributes.clone(),
@@ -298,6 +363,23 @@ mod tests {
                 dim: "interval".into(),
                 size: 2,
                 values: vec![1.0, 2.0, 3.0, f64::NAN],
+            }],
+            boolean_variables: vec![
+                BooleanColumn {
+                    name: "accepted".into(),
+                    unit: "dimensionless".into(),
+                    values: vec![true, false],
+                },
+                BooleanColumn {
+                    name: "excluded".into(),
+                    unit: "dimensionless".into(),
+                    values: vec![false, true],
+                },
+            ],
+            text_variables: vec![TextColumn {
+                name: "excluded_reason".into(),
+                unit: "dimensionless".into(),
+                values: vec![String::new(), "acceptance criteria".into()],
             }],
             flags: vec![0, 4],
             coords: vec![SampleCoordinate {
@@ -365,6 +447,44 @@ mod tests {
         assert_eq!(back.attributes.options, options);
         assert_eq!(back, r);
         assert_eq!(back.flags, vec![0, 0]);
+    }
+
+    #[test]
+    fn the_acceptance_variables_keep_their_type() {
+        // `accepted`, `excluded` and `excluded_reason` are on every result
+        // (`nca.py` BOOLEAN_VARIABLES and TEXT_VARIABLES) and are driven by
+        // `NCAOptions.acceptance`, which is part of this contract
+        let r = result();
+        let back: AnalysisResult =
+            serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert_eq!(back.boolean_variables[0].values, vec![true, false]);
+        assert_eq!(back.boolean_variables[1].name, "excluded");
+        assert_eq!(
+            back.text_variables[0].values,
+            vec![String::new(), "acceptance criteria".to_string()]
+        );
+        assert_eq!(back, r);
+        // a boolean is not a number and a number is not a boolean
+        let json = serde_json::to_value(&r).unwrap();
+        assert_eq!(json["boolean_variables"][0]["values"][0], true);
+        let mut broken = json.clone();
+        broken["boolean_variables"][0]["values"] = serde_json::json!([1.0, 0.0]);
+        assert!(serde_json::from_value::<AnalysisResult>(broken).is_err());
+        // and both are checked against the sample count by name
+        for (field, section) in [
+            ("boolean_variables[accepted]", "boolean_variables"),
+            ("text_variables[excluded_reason]", "text_variables"),
+        ] {
+            let mut broken = json.clone();
+            broken[section][0]["values"] = serde_json::json!([]);
+            let err = serde_json::from_value::<AnalysisResult>(broken)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains(&format!("{field}.values has length 0")),
+                "{err}"
+            );
+        }
     }
 
     #[test]
