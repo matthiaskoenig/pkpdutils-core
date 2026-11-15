@@ -69,12 +69,24 @@ fn every_vendored_oracle_matches_its_recorded_checksum() {
     );
     let bad: Vec<String> = files
         .iter()
-        .filter_map(|(rel, digest)| match fs::read(oracle_dir().join(rel)) {
-            Err(_) => Some(format!("missing: {rel}")),
-            Ok(bytes) if hex_sha256(&bytes) != digest.as_str().unwrap() => {
-                Some(format!("differs: {rel}"))
+        .filter_map(|(rel, digest)| {
+            let path = oracle_dir().join(rel);
+            // the link itself, never what it points at
+            match fs::symlink_metadata(&path) {
+                Err(_) => return Some(format!("missing: {rel}")),
+                Ok(m) if m.file_type().is_symlink() => return Some(format!("symlink: {rel}")),
+                Ok(m) if !m.file_type().is_file() => {
+                    return Some(format!("not a regular file: {rel}"));
+                }
+                Ok(_) => {}
             }
-            Ok(_) => None,
+            match fs::read(path) {
+                Err(_) => Some(format!("missing: {rel}")),
+                Ok(bytes) if hex_sha256(&bytes) != digest.as_str().unwrap() => {
+                    Some(format!("differs: {rel}"))
+                }
+                Ok(_) => None,
+            }
         })
         .collect();
     assert!(bad.is_empty(), "vendored oracles damaged: {bad:?}");

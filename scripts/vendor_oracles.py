@@ -84,8 +84,8 @@ def vendored_paths() -> set[str]:
     return {
         p.relative_to(ORACLE_DIR).as_posix()
         for p in ORACLE_DIR.rglob("*")
-        # a symlink of either kind is a path, a real directory is only traversed
-        if p.is_symlink() or p.is_file()
+        # everything but a real directory is a path: a symlink, a FIFO, a file
+        if p.is_symlink() or not p.is_dir()
     }
 
 
@@ -134,8 +134,12 @@ def check(source: Path | None) -> int:
     problems = []
     for rel, digest in recorded.items():
         path = ORACLE_DIR / rel
-        if not path.is_file():
+        if path.is_symlink():
+            problems.append(f"vendored path is a symlink: {rel}")
+        elif not path.exists():
             problems.append(f"vendored file missing: {rel}")
+        elif not path.is_file():
+            problems.append(f"vendored path is not a regular file: {rel}")
         elif sha256(path) != digest:
             problems.append(f"vendored file differs from manifest: {rel}")
     for rel in sorted(vendored_paths() - set(recorded) - {"MANIFEST.json"}):
