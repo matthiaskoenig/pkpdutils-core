@@ -226,21 +226,6 @@ pub struct AnalysisResult {
 }
 
 impl AnalysisResult {
-    /// A result of this build's contract for a sample shape, with its flags
-    /// cleared and no variables yet.
-    ///
-    /// The variable sections are filled in by the caller, which keeps this
-    /// constructor from growing an argument per section (`sample_shape` is the
-    /// shape of a batch which was validated, so its product is a real number of
-    /// samples; one which overflows leaves the flags empty and
-    /// [`AnalysisResult::validate`] then reports it):
-    ///
-    /// ```ignore
-    /// AnalysisResult {
-    ///     parameters,
-    ///     ..AnalysisResult::new(sample_dims, sample_shape, attributes)
-    /// }
-    /// ```
     /// Check every section against the sample shape, so that no column of the
     /// result is read out of range.
     ///
@@ -278,6 +263,35 @@ impl AnalysisResult {
         check_coords(&self.coords, &self.sample_dims, &self.sample_shape)
     }
 
+    /// A result of this build's contract for a sample shape, with its flags
+    /// cleared and no variables yet.
+    ///
+    /// The variable sections are filled in by the caller, which keeps this
+    /// constructor from growing an argument per section. `sample_shape` is the
+    /// shape of a batch which was validated, so its product is a real number of
+    /// samples; one which overflows leaves the flags empty and
+    /// [`AnalysisResult::validate`] then reports it.
+    ///
+    /// ```
+    /// use pkpdutils_abi::{AnalysisResult, Attributes, NcaOptions, ParameterColumn};
+    ///
+    /// let attributes = Attributes {
+    ///     substance: Some("caffeine".to_string()),
+    ///     route: None,
+    ///     tissue: Some("plasma".to_string()),
+    ///     options: NcaOptions::default(),
+    /// };
+    /// let result = AnalysisResult {
+    ///     parameters: vec![ParameterColumn {
+    ///         name: "cmax".to_string(),
+    ///         unit: "mg/l".to_string(),
+    ///         values: vec![6.0, 4.0],
+    ///     }],
+    ///     ..AnalysisResult::new(vec!["subject".to_string()], vec![2], attributes)
+    /// };
+    /// assert_eq!(result.flags, vec![0, 0]);
+    /// assert!(result.validate().is_ok());
+    /// ```
     pub fn new(sample_dims: Vec<String>, sample_shape: Vec<usize>, attributes: Attributes) -> Self {
         let n_samples = checked_product(&sample_shape).unwrap_or(0);
         Self {
