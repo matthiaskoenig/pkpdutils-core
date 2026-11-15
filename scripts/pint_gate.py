@@ -17,6 +17,7 @@ import argparse
 import hashlib
 import itertools
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -39,14 +40,33 @@ AXES = {
 
 def check(path: Path, provenance: dict, records: list[dict]) -> int:
     """Compare a fresh run with the committed fixture and return the exit code."""
-    committed = json.loads(path.read_text())
-    header = committed["provenance"]
+    try:
+        committed = json.loads(path.read_text())
+        header = committed["provenance"]
+        committed_records = committed["records"]
+    except FileNotFoundError:
+        print(
+            f"{path} does not exist, generate it with the same command without --check",
+            file=sys.stderr,
+        )
+        return 1
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(
+            f"{path} is not a pint gate fixture ({error!r}), regenerate it",
+            file=sys.stderr,
+        )
+        return 1
     differs = [
         f"{key}: fixture {header.get(key)!r}, fresh {provenance[key]!r}"
-        for key in ("parameter_units_digest", "n_parameters", "n_records")
+        for key in (
+            "pkpdutils_version",
+            "parameter_units_digest",
+            "n_parameters",
+            "n_records",
+        )
         if header.get(key) != provenance[key]
     ]
-    if committed["records"] != records:
+    if committed_records != records:
         differs.append("records: the fixture differs from a fresh run")
     if differs:
         print(f"{path} is stale, regenerate it:", file=sys.stderr)
@@ -67,7 +87,7 @@ def main() -> int:
         "--output",
         type=Path,
         default=FIXTURE_PATH,
-        help="fixture to write, or to compare with --check (default: the committed fixture)",
+        help="fixture to write, or to compare with --check (default: the committed one)",
     )
     parser.add_argument(
         "--check",
@@ -94,6 +114,11 @@ def main() -> int:
                 short = short_unit(unit)
             except Exception as error:  # noqa: BLE001
                 failures.append(f"{parameter} {expression} {given}: {error}")
+                continue
+            if not math.isfinite(factor):
+                failures.append(
+                    f"{parameter} {expression} {given}: non-finite factor {factor!r}"
+                )
                 continue
             records.append(
                 {

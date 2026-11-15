@@ -91,9 +91,10 @@ fn every_parameter_unit_matches_pint_character_for_character() {
             amount: r.amount.as_deref(),
             volume: r.volume.as_deref(),
         };
-        // Measured against pint: 110 of 2720 records differ from pint's double by at
-        // most 2.4e-16 relative, through multiplication order (found by switching the comparison to `==`). 1e-14 is the bound chosen
-        // with headroom over that, so a failure near it is a real change, not noise.
+        // Measured against pint: 110 of 2720 records differ from pint's double by at most 2.4e-16
+        // relative, through multiplication order (found by switching the comparison to `==`).
+        // 1e-14 is the bound chosen with headroom over that, so a failure near it is a real
+        // change, not noise.
         match parameter_unit(&r.expression, &ctx) {
             Ok((unit, factor)) => {
                 if unit != r.expected_unit
