@@ -3,7 +3,7 @@
 //! which reads back as no number).
 //!
 //! Use the module itself as `#[serde(with = "nonfinite")]` for an `f64`, and the submodules
-//! [`option`], [`vec`], [`pair`] and [`pair_map`] for the other shapes.
+//! [`option`], [`vec`], [`option_vec`], [`pair`] and [`pair_map`] for the other shapes.
 //! An `Option` field also needs `#[serde(default)]` so that a missing key reads as `None`.
 
 use serde::de::Error as _;
@@ -82,6 +82,29 @@ pub mod vec {
             .into_iter()
             .map(|v| v.0)
             .collect())
+    }
+}
+
+/// `Option<Vec<f64>>`, `None` is `null` and an empty vector is `[]`.
+pub mod option_vec {
+    use super::*;
+
+    /// Write an optional vector of numbers.
+    pub fn serialize<S: Serializer>(
+        x: &Option<Vec<f64>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        x.as_ref()
+            .map(|v| v.iter().copied().map(Value).collect::<Vec<_>>())
+            .serialize(serializer)
+    }
+
+    /// Read an optional vector of numbers.
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Vec<f64>>, D::Error> {
+        Ok(Option::<Vec<Value>>::deserialize(deserializer)?
+            .map(|v| v.into_iter().map(|v| v.0).collect()))
     }
 }
 
@@ -166,6 +189,24 @@ mod tests {
         p: (f64, f64),
         #[serde(with = "super::pair_map")]
         m: std::collections::BTreeMap<String, (f64, f64)>,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    struct Optional {
+        #[serde(with = "super::option_vec", default)]
+        v: Option<Vec<f64>>,
+    }
+
+    #[test]
+    fn an_absent_vector_and_an_empty_one_stay_different() {
+        for v in [None, Some(vec![]), Some(vec![1.0, f64::NAN])] {
+            let json = serde_json::to_string(&Optional { v: v.clone() }).unwrap();
+            let back: Optional = serde_json::from_str(&json).unwrap();
+            assert_eq!(back.v.as_ref().map(Vec::len), v.as_ref().map(Vec::len));
+        }
+        assert_eq!(serde_json::from_str::<Optional>("{}").unwrap().v, None);
+        let back: Optional = serde_json::from_str(r#"{"v":[1,"NaN"]}"#).unwrap();
+        assert!(back.v.unwrap()[1].is_nan());
     }
 
     #[test]

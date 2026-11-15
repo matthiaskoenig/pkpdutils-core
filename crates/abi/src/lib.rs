@@ -1,15 +1,19 @@
 //! The contract constants every pkpdutils-core crate and every host agrees on.
 
+pub mod batch;
 pub mod enums;
 pub mod nonfinite;
 pub mod options;
+pub mod result;
 pub mod window;
 
+pub use batch::{Batch, Coordinate, Dosing};
 pub use enums::{
     AucMethod, BlqAction, BlqHandling, BootstrapDistribution, BootstrapSpread, C0Method, Kind,
     NcaFlag, Route, TerminalMethod, UncertaintyMethod,
 };
 pub use options::{Acceptance, Blq, BlqRules, BlqSetting, NcaOptions, TerminalPhase};
+pub use result::{AnalysisRequest, AnalysisResult, ParameterColumn, PointVariable};
 pub use window::WindowLabel;
 
 /// The contract of an analysis request and its result.
