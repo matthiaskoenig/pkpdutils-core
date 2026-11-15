@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/abi"]
+members = ["crates/abi", "crates/units"]
 # the throwaway package of the first spike sits at the repository root and is not a member
 exclude = ["spike"]
 
