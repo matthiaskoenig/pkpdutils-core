@@ -13,13 +13,17 @@
 //! is the same bit for bit where it can be, and pins an upstream oddity with a test rather than
 //! correcting it.
 
-// The packing and the trapezoid rules are the first two pieces of the analysis pipeline, which
-// nothing calls yet: their own tests are the only caller until it exists, and the lint would
-// fire on every one of them. The allow goes with the first caller.
+// Each module is one finished piece of the analysis pipeline and the row loop which calls them
+// - pack the row, integrate its segments, regress its terminal phase - is not written yet. The
+// terminal phase is handed a row which is already packed and never integrates, so it is no
+// caller of the two before it. Until that loop exists their own tests are the only caller and
+// the lint fires on every item in them; the allow goes away with the first real caller.
 #[allow(dead_code)]
 mod auc;
 #[allow(dead_code)]
 mod pack;
+#[allow(dead_code)]
+mod terminal;
 
 /// Why a batch could not be analysed.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
