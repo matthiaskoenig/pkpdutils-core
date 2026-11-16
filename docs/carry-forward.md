@@ -57,3 +57,36 @@ None of these is a correctness defect. They are listed so the next reader does n
 ## Documents behind the code
 
 The design at `docs/superpowers/specs/2026-11-15-rust-core-design.md` in `pkpdutils` describes `batch/1` without `tissue`, and Task 5 Step 4 of the plan specifies six result fields. Both are behind this repository in exactly those two places: `Batch` carries `tissue`, and `AnalysisResult` carries `attributes` and the boolean and text sections. They are approved documents, so they were left for their author to amend.
+
+# Carry forward from the single dose kernel
+
+What the plan of the single dose non-compartmental analysis kernel left open, deliberately. The rule of the first section holds here as well: every item was seen, judged and not acted on. None of them is a wrong number. The final review of the branch found no critical defect and no reachable panic, and measured the kernel against the python package over 73 analyses and 3 409 numbers with every one of them agreeing, 93.3 percent of them bit for bit and the worst relative difference at 2.65e-15.
+
+## The gates do not compose
+
+**Nine of the 54 parameter columns are named by no gate at all** (the 53 of `PARAMETERS` in `crates/core/src/parameters.rs` plus `c0_method`): `cmin`, `tmin`, `aumc_all`, `thalf_eff`, `lambda_z_stderr`, `aumc_back_extrap_fraction`, `cmax_half`, `tmax_half` and `c0_method`, and fifteen more are reached by the benchmark gate alone.
+
+**The whole result layer is ungated.** No gate reads `flags`, `accepted`, `excluded`, `n`, the `dose_amount` coordinate or the `candidate_*` point variables.
+
+**Ungated input classes:** every BLQ action and axis and both `lloq` paths, `TerminalMethod::LastN`, `TerminalMethod::Manual` and the per-sample windows, `min_adj_r2`, any non-default `tie_tolerance`, `AucMethod::Log`, `C0Method::FirstValue` and `C0Method::None`, mixed-route batches, unsorted and duplicate times, and pre-dose samples.
+
+The numbers of all of it were checked against python by the reviewer of the branch, so this is regression risk and not a defect: a later plan can break any of those paths and every gate still passes. The cheapest closure is one committed snapshot fixture of the kernel's own output over about a dozen curves which cover those classes, generated once from the python package.
+
+## Five findings of Task 5 are lost
+
+The ledger of Task 5 records "5 minors deferred" and neither it nor the task report enumerates them. They are unrecoverable, so no list of open items of this branch, this one included, can be assumed to be complete.
+
+## Open items
+
+- `window_statistics` (`crates/core/src/terminal.rs:101`) clamps `columns` to the shortest of its four slices, so a caller who passes a short `out` gets windows over a truncated row with silently wrong suffix sums; a `debug_assert_eq!` on the widths closes it.
+- `crates/core/src/parameters.rs:936` allocates `vec![false; t.len()]` per row under `TerminalMethod::Manual`, the one allocation `Scratch` exists to avoid, and no benchmark shape uses `Manual`, so the cost of it is unmeasured.
+- The backward summation order of the areas is pinned by no committed test; only the external cross-check against python covers it. A `to_bits` test of a long row against a python value would make it a committed requirement.
+- The strictness of `slope < 0.0` is unpinned at the boundary: a constructed zero-slope window should yield `NcaFlag::POSITIVE_SLOPE` and no test says so.
+- A batch of zero samples returns a result with a single column, because `parameter_columns` (`crates/core/src/assemble.rs:176`) derives the reported set from the routes of the rows and an empty batch has none, where python returns the full 37-variable set, which the reviewer of the branch measured; deriving the set from `batch.route`/`batch.routes` when there are no rows is the faithful fix.
+- Python's `test_units_of_the_references` has no rust owner: the validation gate pins the dimensions by converting into the reference unit instead of comparing the unit string python asserts. The reviewer of the branch compared the strings over 73 analyses and all of them matched, so the behaviour is right and only the gate is missing.
+- Lift `Table`, `field` and `number` into `crates/oracles/tests/common/csv.rs` behind a `#[path]` include: three gate binaries carry the reader today and the version in `benchmarks.rs` is the strict superset of the others.
+- `read_text` of `crates/oracles/tests/common/mod.rs:27` ends with `fs::read_to_string(path).unwrap()`, which drops the path on a read error after `symlink_metadata` has succeeded.
+- One documentation pass over `docs/python-reference/gates.md:7`: the citation `:15` of `crates/oracles/tests/common/mod.rs` is off by one, since the expression it quotes is on `:16`; "16 regression numbers" counts value-level assertions, 14 numeric and 2 NaN, where the surrounding text counts numbers; and `f_minute / f_hour` is called a "prefix ratio" in `crates/oracles/tests/common/units.rs:36` where it is 60.
+- `Batch::n_doses_of_row` (`crates/abi/src/batch.rs:423`) asserts on the row and then slices, so it panics on an unvalidated batch even for row 0. It predates this branch, and the kernel's deliberate avoidance of it is the evidence that it is a trap for the next host.
+- The repository pins no ruff configuration, so `ruff check` over `scripts/` means whatever the installed ruff selects by default: ruff 0.17.5 reports ten findings there, none of them in the kernel or in a fixture, six of them `B023` on closures which are called inside the iteration that defines them (`scripts/python_timing.py`, benign) and one of them an import grouping which contradicts the first-party convention of the `pkpdutils` repository. A committed `ruff.toml` which selects the rules and names `pkpdutils` first party, and then one pass over what it reports, is the fix.
+- A half padded dose - an amount without a time or a time without an amount - is accepted where `Timecourses.from_arrays` raises ("A dose needs an amount and a time, or both NaN for the padding"). It is harmless after the padding check which `Batch::validate` now carries, because the dose columns of a row are then a prefix of it in each of the two arrays and the positional pick of `reference_dose` therefore lands on a column which is a dose or on no dose at all; the host plan can refuse it outright and name the column, as python does.
