@@ -1,0 +1,117 @@
+# Test gates of the single-dose NCA kernel (read-only survey of pkpdutils @ bae69c1)
+
+Paths: PY = a checkout of the `pkpdutils` repository, RS = this repository, ORA = RS/testdata/oracles.
+Vendoring: ORA/MANIFEST.json:1-2 (source_commit bae69c15..., 31 files, sha256 each). Layout under ORA mirrors the PY repo-relative path
+(ORA/docs/data/benchmarks/..., ORA/tests/data/reference/..., ORA/tests/data/validation/...).
+Rust side today: RS/crates/oracles/tests/oracles_present.rs (MANIFEST_ENTRIES = 31 at :11, `oracle_dir()` at :13-16 = CARGO_MANIFEST_DIR/../../testdata/oracles,
+serde_json + sha2 only) checks presence/checksums. NO Rust test consumes an oracle value yet (no numerics exist, RS/docs/carry-forward.md:5).
+A kernel test consumes a vendored file the same way: `PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/oracles/<repo-relative path>")`, or from inside crates/oracles.
+Note: published crates cannot see ../../testdata (oracles/src/lib.rs:3-9), so numeric gates must live in the unpublished crate `pkpdutils-oracles` (or another publish=false crate).
+
+## 1. The three gates
+
+### 1a. PY/tests/nca/test_reference.py (pkdb_analysis 0.3.1 regression)
+- Loads PY/tests/data/reference/nca_reference.json (:19-20). All inputs are INLINE in the JSON (time, concentration arrays); the `file` field (Divoll1982_Fig1.tsv, Kim2011_Fig2.tsv, midazolam.tsv, data_example2.csv) is provenance only and is never read by the test (to_timecourse :40-49). So the tsv/csv originals are not needed.
+- 9 cases (names, n points): synthetic_monoexp 50, nan_values 10, Divoll1982_Fig1 14, Kim2011_Fig2 13, midazolam 2001, Benowitz1995_caffeine_2mgkg 8, _4mgkg 8, Benowitz1995_paraxanthine_2mgkg 8, _4mgkg 8.
+- Two parametrized tests x 9 cases = 18 test items: `test_reference_case` (:97-111) and `test_reference_regression` (:114-129).
+- Options (:34-37): AUCMethod.LINEAR, TerminalPhase(method=ALL_AFTER_TMAX) (all points after tmax; NOT best fit). Route.ORAL, dose from case. Single `nca_single`.
+- Parameters compared (MAPPING :23-32): auc->auc_last, aucinf->auc_inf_obs, tmax, cmax, kel->lambda_z, thalf, vd->vz_f, cl->cl_f. NOT compared (present in json): tmaxhalf, cmaxhalf, vdss, dose.
+- Comparison: `actual.to(expected_unit).magnitude == pytest.approx(expected, rel=1e-6, abs=1e-12)` (:108-111). Unit conversion through pint into the unit stored in the json.
+- NaN: expected magnitude `null` => actual must be NaN (:105-107). Applies to aucinf, kel, thalf, vd, vdss, cl of both paraxanthine cases (terminal fit impossible), and to tmaxhalf/cmaxhalf of the first three cases (not compared).
+- Regression test (:114-129): slope null => lambda_z NaN (:119-121); else `-lambda_z` in 1/time_unit == approx(regression.slope, rel=1e-6) and `lambda_z_intercept` == approx(regression.intercept, rel=1e-6) (:122-127; intercept is ln-scale intercept, unit-free comparison). Only slope+intercept used; r_value, p_value, std_err, max_idx not asserted. Last 2 lines :128-129 only parse units.
+- Special rule `expected_parameters` (:52-81, dead duplicate code :82-94 after the return): if the first non-NaN sample has t0>0 (cases Divoll1982_Fig1 t0=0.083, nan_values t0=1.0) the expected auc and aucinf gain triangle 0.5*t0*c0 (converted to the json auc unit) and cl, vd are multiplied by aucinf/(aucinf+triangle). This is the "value 0 at dose inserted" WinNonlin rule; the json predates it. Skipped when auc or aucinf magnitude is null (:67, :76). A Rust gate must re-implement this adjustment.
+- Unit quirks a Rust gate must reproduce: 'hr' and 'min' time units (midazolam in min, kel unit 1/minute); micro-g/mL with cl in 'milliliter / hour' and vd in 'liter' (Divoll, Kim); midazolam mixes dose in mg with concentration in mmol/l and expects vd unit 'liter * milligram / millimole' and cl 'liter * milligram / millimole / minute' (no molar mass conversion); synthetic: dose mol vs nmol/l -> vd 'liter' (needs a unit scale factor 1e9 handled by the unit conversion).
+- nan_values: concentration contains a null as LAST point (null in `concentration`, line index 9, time 24.0). Two cases contain null (nan_values, Divoll1982_Fig1 has 1).
+- Tolerance 1e-6 relative, 1e-12 absolute. (Tightest gate in this file.)
+
+### 1b. PY/tests/nca/test_validation.py + PY/scripts/validation.py (published WinNonlin/PKNCA values)
+- Loads PY/tests/data/validation/reference.json through scripts/validation.py (`_document` :69-74, `case_ids` :82, `entries` :234-243). Datasets read from the benchmarks CSV (batch_of :107-134 reads `dataset["file"]` relative to repo root = docs/data/benchmarks/{theoph,indometh}.csv).
+- Reference file has 8 cases in 3 sections: `cases` (5 WinNonlin full-subject cases + theoph-pknca), `partial_cases` (theoph-pknca-partial), `summary_cases` (theoph-pknca-summary). SECTIONS validation.py:60.
+- Total references = 1055 (test_validation.py:127, asserted :194-196). Breakdown: theoph-winnonlin-linear 12 subj x 24 params = 288; theoph-winnonlin-linear-log 288; indometh-winnonlin-linear 6 x 26 = 156 (21 common + c0, auc_back_extrap_fraction, cl, vz, vss); indometh-winnonlin-linear-log 156; indometh-winnonlin-linear-infusion 6 x 24 = 144 (21 common + cl, vz, vss); theoph-pknca 5 + 6 = 11 (subject 1: cmax, clast, lambda_z, tlast, tmax; subject 6: + auc_last); theoph-pknca-partial 1 (subject 1 auc_partial, window [0, 12.12]); theoph-pknca-summary 11 (cmax/auc_last/auc_inf_obs geomean+geocv, thalf, thalf_sd, tmax_median/min/max). Sum: 288+288+156+156+144+11+1+11 = 1055.
+- The 21 common WinNonlin parameters (test_validation.py:34-56): cmax tmax tlast clast auc_last auc_all auc_inf_obs auc_inf_pred auc_extrap_fraction aumc_last aumc_inf mrt lambda_z lambda_z_r2 lambda_z_r2_adj lambda_z_n_points lambda_z_t_first lambda_z_t_last thalf cmax_dn auc_inf_dn. Theoph adds tlag, cl_f, vz_f (:57); indometh bolus adds c0, auc_back_extrap_fraction, cl, vz, vss (:58-65); infusion adds cl, vz, vss (:68).
+- Test items: `test_reference_value` one per (case, subject, parameter) = 1055 (:158-168); `test_reference_is_complete` (:171-196) pins the structure; `test_full_cases_cover_every_subject` x5 (:199-212); `test_units_of_the_references` x8 (:215-228: reference unit string must equal the unit the analysis reports - a pint-string equality gate); `test_sources_are_named` x8 (:231-239); known_differences, copy-safety, `test_table_is_current` (:259-269, compares generated markdown docs/validation_table.md and docs/validation.md: pure Python doc gate).
+- Options per case (reference.json `options`): theoph WinNonlin/PKNCA: terminal best_fit, min_points 3, exclude_cmax TRUE; indometh: best_fit, min_points 3, exclude_cmax FALSE (Cmax kept as a terminal candidate); auc_method linear or linear_log (theoph-pknca, partial, summary: linear_log). theoph dose flat 320 mg, oral, conc mg/L, time hr; indometh dose 25 mg, iv_bolus, conc ug/mL ("same as mg/L"); infusion case: route iv_infusion, dose_duration 0.25 h (reference.json cases.indometh-winnonlin-linear-infusion).
+- Comparison function: `deviation(expected, value)` scripts/validation.py:211-223 : both NaN -> 0; exactly one NaN -> +inf (fail); expected == 0 -> |value| (ABSOLUTE); else |value-expected|/|expected|. Assert `deviation <= expected["tolerance"]` (test_validation.py:163-164). Per-reference tolerance in the file: three values occur: 1e-06 (all 5 WinNonlin cases, 1032 refs), 1e-04 (theoph-pknca 11 refs and theoph-pknca-partial 1 ref), 1e-02 (theoph-pknca-summary 11 refs, 3 printed digits).
+- NaN: any NaN reference would fail on a finite result and vice versa; there are no NaN references (all numbers are finite published values). known_differences: all 8 cases have an EMPTY list (so no xfail marks fire; `strict=True` xfail machinery at test_validation.py:144 unused today).
+- Not the kernel: summary case needs `NCAResult.summarize` (geomean, geocv, sd, median, min, max over subjects), partial case needs `partial_auc`.
+
+### 1c. PY/tests/nca/test_benchmark_datasets.py (three tools, full tables)
+- Loads PY/docs/data/benchmarks/scenarios.csv (:33) -> 8 scenarios; x 3 tools (:34) = 24 parametrized `test_benchmark` items (:83-97) + 1 `test_every_reference_column_is_named` (:100-119, a crosswalk-mapping test, not numerics).
+- Per scenario: reads the dataset (theoph.csv or indometh.csv), sets dose and duration from the scenario row, TerminalPhase(BEST_FIT, min_points=3, exclude_cmax=scenario flag) (:58-65), `nca(batch)` -> dataframe indexed by Subject.
+- Expected: WinNonlin `read_winnonlin(winnonlin/<file>)`; PKNCA `read_pknca_results(pknca/<scenario>.csv, duplicates="first")` then droplevel(start,end) (:76-79); NonCompart `read_noncompart(noncompart/<scenario>.csv)`. Table columns are renamed to pkpdutils variable names through PY/src/pkpdutils/crosswalk.py (WINNONLIN_NAMES :51-95, PKNCA_NAMES :109, PKNCA_NAMES_BY_ROUTE :158, NONCOMPART_NAMES :188, NONCOMPART_NAMES_BY_ROUTE :234); percent columns /100 (WINNONLIN_PERCENT :98, PKNCA_PERCENT :184 aucpext.obs/aucpext.pred, NONCOMPART_PERCENT :253); unmapped Corr_XY / b0 / CORRXY dropped (:104, :260). PKNCA rows with a non-empty `exclude` are dropped (crosswalk.py:636-640) and duplicate (profile, interval, parameter) rows keep the first (:670-676; docstring in the test: first tmax is the observed maximum). `cl.obs`/`vz.obs` map to cl/vz for IV routes, cl_f/vz_f otherwise (:645-653).
+- Parameters compared: every expected column (all-NaN columns dropped :87) that exists in our result: `set(expected.columns) & set(ours.columns)`; at least 30 columns must exist (:93); the only allowed column missing from ours is `tlag` (:89-92, NonCompart reports tlag 0 for infusion).
+- Comparison: `np.testing.assert_allclose(v, e, rtol=1e-8, atol=1e-12)` (TOLERANCE :38, :97), assert_allclose default equal_nan=True so NaN must be NaN in the same positions. Subject index sets must be identical (:88). THIS IS THE TIGHTEST GATE: 1e-8 relative (1e-12 absolute). The WinNonlin tables carry 8-15 significant digits (rounding up to 6e-9, test docstring :36-37).
+- Counts: 8 scenarios, 6 or 12 subjects each (theoph 12, indometh 6) => theoph 2 scenarios x 3 tools x 12 + indometh 6 scenarios x 3 tools x 6 subjects; ~34 PKNCA codes, ~36 NonCompart columns, 29-49 WinNonlin columns per scenario.
+
+## 2. JSON structures
+
+### nca_reference.json (ORA/tests/data/reference/nca_reference.json)
+Top level: LIST of 9 case objects. Keys of a case: `name`, `file` (str|null, provenance), `time_unit` ("hr"|"min"), `unit` (concentration, ("nmol/l","g/l","µg/ml","mmol/l","mg/l")), `dose` (float), `dose_unit` ("mol"|"g"|"mg"), `substance`, `time` (list[float]), `concentration` (list[float|null], null = NaN), `regression` (object), `parameters` (object).
+- Key path to one expected parameter: `[i]["parameters"]["<old name>"]["magnitude"]` (float|null) and `["unit"]` (pint long string, e.g. "hour * nanomole / liter", "1 / hour", "liter / hour", "milliliter / hour", "liter * milligram / millimole / minute"). Old names: auc, aucinf, tmax, cmax, tmaxhalf, cmaxhalf, kel, thalf, dose, vd, vdss, cl. Values are in THEIR OWN `unit` (not a canonical unit): convert before comparing.
+- `regression`: slope (per time unit, negative, null if no fit), slope_unit "1 / hour" or "1 / minute", intercept (natural-log intercept, with intercept_unit = conc unit string), r_value, p_value, std_err, max_idx (index of cmax). Only slope+intercept are asserted.
+- Mapping old->new at test_reference.py:23-32.
+
+### reference.json (ORA/tests/data/validation/reference.json)
+Top level object keys: `description`, `sources`, `datasets`, `cases`, `partial_cases`, `summary_cases`.
+- `sources[<source id>]`: tool, author, title, date, url, file, retrieved, precision, settings.
+- `datasets[theoph|indometh]`: file ("docs/data/benchmarks/theoph.csv"), n_subjects (12|6), subject_column, time_column, value_column, time_unit "hr", unit ("mg/L"|"ug/mL"), substance, route, dose (320.0|25.0), dose_unit "mg", dose_note.
+- `cases[<case id>]`: dataset, comparator, source, options{auc_method, terminal{method, min_points, exclude_cmax}}, note, optional route / dose_duration (infusion), `references`, optional `known_differences` (list of {parameter, subjects, reason}; absent or empty everywhere).
+- Key path to one expected value: `cases["theoph-winnonlin-linear"]["references"]["<subject as string, '1'..'12'>"]["<pkpdutils variable name>"]["value"]` with siblings `unit` (pint long string, "hour * milligram / liter", "dimensionless", "1 / hour", "1 / liter", "hour / liter", "hour ** 2 * milligram / liter"), `source` (id into `sources`), `tolerance` (1e-6).
+- `partial_cases["theoph-pknca-partial"]`: same plus `window: [0.0, 12.12]`; path `["references"]["1"]["auc_partial"]["value"]` = 92.365442 hour*mg/L, tolerance 1e-4.
+- `summary_cases["theoph-pknca-summary"]`: plus `dim: "Subject"`, `references` is FLAT (no subject level): `references["cmax_geomean"]["value"]`, tolerance 0.01. The test addresses them under pseudo-subject "all".
+- Values are in the dataset's units (mg/L, h) as written in `unit`; fractions are stored as fractions (WinNonlin percentages divided by 100), dn parameters per liter.
+
+## 3. Benchmark scenarios (ORA/docs/data/benchmarks/scenarios.csv)
+8 scenarios. Columns: scenario, dataset, subject, time, conc, time_unit (h), unit (mg/L), dose, dose_unit (mg), route, duration, auc_method, exclude_cmax, winnonlin (file).
+Axes: dataset {theoph (320 mg, oral, exclude_cmax true), indometh (25 mg; iv_bolus / iv_infusion 0.25 h / oral = "Wrong_Extravascular" treat-as-oral, exclude_cmax false for iv, true for oral)} x route (oral, iv_bolus, iv_infusion; indometh has all three) x auc_method {linear, linear_log} :
+theoph-linear, theoph-linear-log, indometh-bolus-linear, indometh-bolus-linear-log, indometh-infusion-linear, indometh-infusion-linear-log, indometh-oral-linear, indometh-oral-linear-log. All BEST_FIT terminal, min_points 3.
+Compared against: (a) Phoenix WinNonlin 6.3/7.0 "Final Parameters Pivoted" CSVs published in the NonCompart validation report (Han 2018; 8 files in docs/data/benchmarks/winnonlin/), (b) PKNCA 0.12.1 and (c) NonCompart 0.8.4 run on R 4.5.3 (versions.csv) by scripts/benchmark_datasets.R, tables in pknca/ and noncompart/ (one CSV per scenario each). Note: the oral indometh WinNonlin tables are named "Wrong_Extravascular" and the PKNCA/NonCompart ones are the same analysis.
+
+## 4. File map: 31 vendored files -> Python gate
+| vendored file (under ORA/) | Python gate that uses its original |
+|---|---|
+| tests/data/reference/nca_reference.json | test_reference.py:19 |
+| tests/data/validation/reference.json | scripts/validation.py REFERENCE_PATH, test_validation.py (all) |
+| tests/data/validation/README.md | not a gate (provenance/license; test_validation docstring only) |
+| docs/data/benchmarks/theoph.csv | test_validation (batch_of, validation.py:107-113) + test_benchmark_datasets.py:43 (theoph-* scenarios) |
+| docs/data/benchmarks/indometh.csv | same, indometh-* scenarios and indometh validation cases |
+| docs/data/benchmarks/scenarios.csv | test_benchmark_datasets.py:33 |
+| docs/data/benchmarks/versions.csv | none (provenance of R/PKNCA/NonCompart versions; docs only) |
+| winnonlin/Final_Parameters_Pivoted_Theoph_Linear.csv | benchmark theoph-linear x winnonlin; also the origin of the reference.json case theoph-winnonlin-linear |
+| winnonlin/Final_Parameters_Pivoted_Theoph_Log.csv | benchmark theoph-linear-log; origin of theoph-winnonlin-linear-log |
+| winnonlin/Final_Parameters_Pivoted_Indometh_Linear.csv | benchmark indometh-bolus-linear; origin of indometh-winnonlin-linear |
+| winnonlin/Final_Parameters_Pivoted_Indometh_Log.csv | benchmark indometh-bolus-linear-log; origin of indometh-winnonlin-linear-log |
+| winnonlin/Final_Parameters_Pivoted_Indometh_Linear_Infusion.csv | benchmark indometh-infusion-linear; origin of indometh-winnonlin-linear-infusion |
+| winnonlin/Final_Parameters_Pivoted_Indometh_Log_Infusion.csv | benchmark indometh-infusion-linear-log |
+| winnonlin/Final_Parameters_Pivoted_Indometh_Linear_Wrong_Extravascular.csv | benchmark indometh-oral-linear |
+| winnonlin/Final_Parameters_Pivoted_Indometh_Log_Wrong_Extravascular.csv | benchmark indometh-oral-linear-log |
+| pknca/{theoph-linear, theoph-linear-log, indometh-bolus-linear, indometh-bolus-linear-log, indometh-infusion-linear, indometh-infusion-linear-log, indometh-oral-linear, indometh-oral-linear-log}.csv (8 files) | benchmark `pknca` tool, same scenario name |
+| noncompart/{same 8 names}.csv (8 files) | benchmark `noncompart` tool, same scenario name |
+Count: 2 json + 1 README + 2 datasets + scenarios + versions + 8 winnonlin + 8 pknca + 8 noncompart = 31. OK.
+
+### GAP LIST (a gate needs it, original NOT vendored)
+1. PY/src/pkpdutils/crosswalk.py (name maps WINNONLIN_NAMES/PKNCA_NAMES(+BY_ROUTE)/NONCOMPART_NAMES(+BY_ROUTE), the *_PERCENT sets, UNMAPPED sets, the PKNCA exclude/duplicates="first"/route rules at :636-676). The three benchmark tables use foreign column names; without this map a Rust test cannot translate Cmax/AUCIFO/aucinf.obs etc. into kernel names. Must be re-derived or vendored as a data file (e.g. a CSV name map) - not present in ORA.
+2. PY/scripts/validation.py logic: `deviation()` (:211-223, NaN/zero rule), case option wiring `options_of`/`batch_of` (:107-158), `run_case` partial window logic (:172-190), `summarize_case`. Not vendored; must be re-implemented in Rust from this spec. (reference.json itself carries the options, so only the 10-line rule needs re-implementing.)
+3. Unit expectations: `test_units_of_the_references` (test_validation.py:215-228) and test_reference's pint `.to(unit)` need the pint registry; ORA has no pint data. RS/crates/units + RS/crates/units/tests/pint_gate.rs hold the Rust unit gate (pint equality); the kernel unit-expression table `PARAMETER_UNITS` (PY/src/pkpdutils/nca/nca.py) and `parameter_unit` (nca/result.py) are not vendored (the reference.json `unit` strings are only the expected output, not the rule).
+4. NCAOptions defaults the gates silently rely on, none in ORA: tie_tolerance 1e-4 of the terminal selection (PY/src/pkpdutils/nca/terminal.py; flagged at RS/docs/carry-forward.md:9), SPAN/min-points rules, "value at dose inserted" rule (back-extrapolated c0 for bolus, 0 for oral/infusion; documented in CLAUDE.md of PY, and implemented in test_reference.py:52-81 only as an adjustment of the expected values). The rule is only specified in prose, no oracle isolates it.
+5. Summary statistics oracle for 1b summary case needs `ParameterResult.summarize` (PY/src/pkpdutils/result.py, not vendored; out of kernel scope).
+6. PY/scripts/benchmark_datasets.R (regenerates pknca/ noncompart/ tables; needs R) and scripts/vendor_oracles.py in RS - not needed to run gates, only to refresh.
+7. Original tsv/csv data files of nca_reference.json cases (tests/data/{Divoll1982_Fig1.tsv, Kim2011_Fig2.tsv, midazolam.tsv, data_example2.csv}) are NOT vendored and NOT needed: the json embeds time/concentration inline. Listed only so nobody adds a task referring to them.
+8. docs/validation_table.md / docs/validation.md (test_table_is_current) - documentation snapshots, not vendored, not a kernel gate.
+
+## 5. Which gates run in Rust without Python
+- 1a test_reference: yes, fully offline from the JSON. Needs a Rust unit converter for the listed unit strings (hour/minute, nanomole/millimole/mole/gram/milligram/microgram, liter/milliliter) and the expected-value adjustment :52-81. Unit expectations on midazolam (dose mg vs conc mmol/l, no molar mass) are a unit-algebra check, not a numeric one.
+- 1b test_validation numeric items (1055 references): yes, from reference.json + theoph.csv/indometh.csv. `test_units_of_the_references`: only if the Rust unit-expression table produces identical pint-style strings (RS/crates/units gate). `test_table_is_current`: needs the Python script and markdown; stays Python (doc generation, pandas/markdown output). `test_reference_is_complete`/`test_full_cases_cover_every_subject`/`test_sources_are_named` are structure checks and can be ported as serde_json asserts (counts above) to guard the vendored file.
+- 1c test_benchmark: yes at the numeric level, with the three table readers written in Rust (name maps from gap 1). CSV parsing needs: PKNCA long format with `NA` and `Inf` literals and quoted strings; WinNonlin headers with `%`; NonCompart quoted header. `test_every_reference_column_is_named` ties to the Python crosswalk module and is Python-only unless the name map is ported.
+- Inherently Python: anything that calls pandas/pint/xarray (to_dataframe, read_* crosswalk readers, summarize), the docs snippet gates, `scripts/benchmark_datasets.R` (R), and `test_table_is_current`. Regeneration of the oracles (pknca/noncompart tables) needs R; the ORA copies need no R/Python at test time.
+- Cross-check by Python: RS/scripts/pint_gate.py already ties units to pint; keep it for unit parity.
+
+## 6. Cases a single-dose kernel cannot (or should not) reproduce
+- All 9 nca_reference.json cases, all 8 scenarios and all 8 reference.json cases are SINGLE-dose (one dose, oral/bolus/infusion). No multiple-dose, urine (Excretion) or sparse (nca_sparse) case is in any of the 31 files. So no case must be excluded for those reasons.
+- Out of scope for the NCA kernel proper inside single-dose data:
+  * summary_cases "theoph-pknca-summary" (11 references): needs summarize (result layer), not the kernel.
+  * partial_cases "theoph-pknca-partial" (1 reference): needs `partial_auc` (a separate entry point, same trapezoid core, window [0,12.12], linear_log) - include only if the plan covers partial_auc.
+  * Indometh oral ("Wrong_Extravascular") scenarios treat IV data as oral: valid but the first sample t=0.25 > 0 so the inserted-zero-at-dose rule applies; same for Divoll1982_Fig1 and nan_values in test_reference (hence the adjustment).
+  * Parameters in the benchmark tables that depend on features beyond the point kernel: `*_pred` family, aumc/mrt/vss, span.ratio, c0 (back-extrapolation), tlag - these are in the single-dose kernel scope per CLAUDE.md, but check each compared column exists in the plan; only `tlag` of an infusion may be absent from the result (test_benchmark_datasets.py:89-92).
+  * test_reference.py uses TerminalMethod.ALL_AFTER_TMAX, whereas validation/benchmark use BEST_FIT with exclude_cmax: the kernel must implement both rules plus tie_tolerance (carry-forward.md:9), min_points 3.
+  * Multiple-dose result variables (`interval_*`, steady state, accumulation, TSS), urine and sparse (nca/urine.py, nca/sparse.py) and bioavailability have NO oracle in the vendored set; their gates (tests/nca/test_steady_state*, test_urine*, test_sparse*, tests/stats/*, test_crosswalk*, io readers) were not vendored and are out of the plan's scope.
