@@ -2,7 +2,7 @@
 
 The compiled non-compartmental analysis kernel of [pkpdutils](https://github.com/matthiaskoenig/pkpdutils), as a python extension module.
 
-This distribution is not a library to program against. It is the engine [`pkpdutils`](https://pypi.org/project/pkpdutils/) routes an eligible batch to, and its two functions take and return the shapes that package already holds in memory. Install `pkpdutils`; it depends on this and uses it where it can. The source is in [pkpdutils-core](https://github.com/matthiaskoenig/pkpdutils-core), a rust workspace, and the numbers it computes are held to Phoenix WinNonlin, PKNCA and NonCompart at a relative 1e-8 by the oracle gates of that repository.
+This distribution is not a library to program against. It is the compiled engine of [`pkpdutils`](https://pypi.org/project/pkpdutils/), which will take it as a dependency and send it the batches this build can analyse; install `pkpdutils` rather than this package. Its two functions take and return the shapes `pkpdutils` already holds in memory. The source is in [pkpdutils-core](https://github.com/matthiaskoenig/pkpdutils-core), a rust workspace, and the numbers it computes are held to Phoenix WinNonlin, PKNCA and NonCompart at a relative 1e-8 by the oracle gates of that repository.
 
 ```python
 import pkpdutils_core
@@ -26,7 +26,7 @@ Not carried today: the analysis of an effect curve, the multiple dose analysis (
 
 The wheels are built with the `parallel` feature of the kernel, so the row loop of a large batch is cut into contiguous shards which run on a [rayon](https://docs.rs/rayon) thread pool. The shard plan is `n_workers`: `None` lets the kernel plan it for the shape of the batch, `1` runs every row in the calling thread, and any other number is the most stretches the run may be cut into. The numbers are identical for every plan, down to the bit. The analysis releases the interpreter while it runs, so the threads of the caller run with it.
 
-That pool is why **a process forked after an analysis must not be expected to work**. `os.fork`, and a `multiprocessing` context or a pool with the `fork` start method, copy the parent's memory without its threads, so the rayon workers do not exist in the child while every lock they held is still locked there. A child which then analyses a batch can deadlock. Use the `forkserver` or the `spawn` start method, which is what `pkpdutils` itself does for its own process pools and for the same reason, and the question does not arise. A child which never calls into this module is unaffected.
+That pool is why **a process forked after an analysis must not be expected to work**. `os.fork`, and a `multiprocessing` context or a pool with the `fork` start method, copy the parent's memory without its threads, so the rayon workers do not exist in the child while every lock they held is still locked there. A child which then analyses a batch can deadlock. Use the `forkserver` or the `spawn` start method and the question does not arise; `pkpdutils` already starts its own process pools that way (`PROCESS_START_METHOD` of `pkpdutils.parallel`), to keep its own threads out of a `fork`. A child which never calls into this module is unaffected.
 
 ## Requirements
 

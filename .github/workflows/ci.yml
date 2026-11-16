@@ -74,11 +74,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
       - run: cargo clippy -p pkpdutils-python --all-targets --locked -- -D warnings
+      # and with the row shards, as `checks` lints the kernel both ways: the
+      # wheel below is built with `parallel`, so without this line the one
+      # configuration users install would be the one no lint has ever seen
+      - run: cargo clippy -p pkpdutils-python --all-targets --locked --features parallel -- -D warnings
       - run: cargo test -p pkpdutils-python --locked
       - run: RUSTDOCFLAGS="-D warnings" cargo doc -p pkpdutils-python --locked --no-deps
-      # the cargo commands above link libpython and take neither the
-      # `extension-module` feature nor the `parallel` one, so none of them
-      # builds the artifact a user installs. The wheel is built with both, it
+      # `license-files` of `pyproject.toml` may not reach out of the crate
+      # directory, so `crates/python/LICENSE` is a copy of the one at the root
+      # and the wheel ships the copy. Nothing else would notice the day the two
+      # differ, and the artifact it would be wrong in is a published one
+      - run: cmp LICENSE crates/python/LICENSE
+      # the cargo commands above link libpython, never take
+      # `extension-module` and assemble no wheel, so none of them produces the
+      # artifact a user installs. The wheel takes both features, it
       # is tagged `abi3` and it ships the module under a name which is not the
       # name of the lib target, and every one of those is decided here and
       # nowhere a rust test can see it. `crates/python/tests/` therefore runs

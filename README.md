@@ -54,7 +54,7 @@ Both sides take one shape at a time, so that a measured cell never carries the h
 
 ## The python binding and the `pkpdutils-core` distribution
 
-`pkpdutils-python` (`crates/python`) is the pyo3 binding, and the wheel built from it is the `pkpdutils-core` distribution on PyPI, which `pkpdutils` depends on and routes an eligible batch to. It is the only crate of the workspace which knows that python exists: it takes the numpy buffers of a batch and the fields of the options as plain dicts, copies them into the wire shapes of `pkpdutils-abi` and hands them to the kernel with the interpreter released. `analyze_batch` and `is_supported` are the two functions it exports, `UnsupportedError` is the refusal a host routes its own path on, and `crates/python/README.md`, which is also the long description of the distribution, is what a user of the wheel reads.
+`pkpdutils-python` (`crates/python`) is the pyo3 binding, and the wheel built from it is the `pkpdutils-core` distribution on PyPI, which `pkpdutils` will depend on and route an eligible batch to. It is the only crate of the workspace which knows that python exists: it takes the numpy buffers of a batch and the fields of the options as plain dicts, copies them into the wire shapes of `pkpdutils-abi` and hands them to the kernel with the interpreter released. `analyze_batch` and `is_supported` are the two functions it exports, `UnsupportedError` is the refusal a host routes its own path on, and `crates/python/README.md`, which is also the long description of the distribution, is what a user of the wheel reads.
 
 The crate is a workspace member and **not a default member**: pyo3 refuses to build against an interpreter older than its `abi3-py313` floor, so a crate in the default set would make a python 3.13 toolchain the price of `cargo test` on the kernel. `cargo test`, `cargo clippy` and `cargo doc` without a `-p` therefore build none of it, `--workspace` does reach it, which is why the wasm checks exclude it by name, and the `python` job of continuous integration is its gate.
 
@@ -145,13 +145,17 @@ The binding has a gate of its own, the `python` job, because none of the command
 
 ```bash
 cargo clippy -p pkpdutils-python --all-targets --locked -- -D warnings
+cargo clippy -p pkpdutils-python --all-targets --locked --features parallel -- -D warnings
 cargo test -p pkpdutils-python --locked
 RUSTDOCFLAGS="-D warnings" cargo doc -p pkpdutils-python --locked --no-deps
+cmp LICENSE crates/python/LICENSE
 maturin build --release --locked -m crates/python/Cargo.toml
 pip install --no-index --find-links target/wheels pkpdutils-core
 pytest crates/python/tests -q
 maturin build --release --sdist --out target/sdist -m crates/python/Cargo.toml
 ```
+
+The second clippy line is the configuration the wheel ships, which would otherwise be the one build users install and no lint has ever seen. `cmp` holds the two license files together: `license-files` of `pyproject.toml` may not reach out of the crate directory, so `crates/python/LICENSE` is a copy of the one at the root and the wheel ships the copy.
 
 The last line is the source distribution of the release, and maturin proves it by building a wheel out of it: a file the build needs and the sdist does not carry fails there instead of failing every source install after a release. It is a command of its own and without `--locked`, because the sdist carries a workspace maturin assembled out of the binding and the path dependencies it needs, which is not the workspace the committed `Cargo.lock` was resolved for, so cargo has to rewrite that lock. The wheel which is installed and tested is the `--locked` one, built from the checkout.
 

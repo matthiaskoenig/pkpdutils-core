@@ -261,14 +261,16 @@ def test_a_single_dose_batch_analyses() -> None:
 def test_the_shard_plan_does_not_change_the_numbers() -> None:
     """A sharded run gives the bits of a serial one.
 
-    The wheel is built with the `parallel` feature of the kernel, which is the one
-    configuration no rust test of this crate covers, so this is where `n_workers` is proven to
-    be a plan and not a result.
+    What this proves is that `n_workers` changes no number: the three plans agree down to the
+    bit, `NaN` included. What it cannot prove is that the shards ran on a pool at all, because
+    a wheel built without the `parallel` feature of the kernel answers every plan from the
+    calling thread and passes this test too. `test_the_wheel_carries_the_row_shards` is what
+    covers that half.
 
     The batch is 4000 rows rather than one on purpose. A plan is only a plan if it can be cut:
     a single row is one shard whatever `n_workers` says, and the automatic plan runs a batch
     of less work than the kernel's threshold in the calling thread, so a one row batch would
-    compare three serial runs with each other and pass however the wheel was built.
+    compare three serial runs with each other and say nothing about the sharded path.
     """
     batch = replicated_batch(4000)
     options = linear_options()
