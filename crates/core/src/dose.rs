@@ -19,7 +19,7 @@
 //! make `lambda_z` a function of itself: `c0` is extrapolated from the first two samples with a
 //! slope of its own, and the regression would then fit that slope as well as the data.
 
-use pkpdutils_abi::{C0Method, Dosing, Route};
+use pkpdutils_abi::{C0Method, Route};
 
 /// The one dose of the protocol of a row which the analysis is run against.
 #[derive(Debug, Clone, Copy)]
@@ -50,11 +50,21 @@ pub(crate) struct ReferenceDose {
 /// host can carry although `Timecourses` packs its doses to the front - picks a column which is
 /// not its last dose. That is what the python kernel picks, mirrored rather than corrected.
 ///
+/// The three arrays are the dose columns of the row as the batch carries them, `NaN` padding and
+/// all: the count is taken over every column, which is what makes a protocol with a hole in it
+/// read as it does. `durations` is `Some` for a batch which carries durations at all, which is
+/// every batch with doses, and `None` for one without.
+///
 /// Mirrors `reference_dose` of `src/pkpdutils/nca/nca.py`, for one row.
-pub(crate) fn reference_dose(dosing: &Dosing, last: bool) -> ReferenceDose {
-    let columns = dosing.amounts.len().min(dosing.times.len());
+pub(crate) fn reference_dose(
+    amounts: &[f64],
+    times: &[f64],
+    durations: Option<&[f64]>,
+    last: bool,
+) -> ReferenceDose {
+    let columns = amounts.len().min(times.len());
     let count = (0..columns)
-        .filter(|&j| dosing.amounts[j].is_finite() && dosing.times[j].is_finite())
+        .filter(|&j| amounts[j].is_finite() && times[j].is_finite())
         .count();
     let index = if last { count.saturating_sub(1) } else { 0 };
     let pick = |values: &[f64]| {
@@ -65,9 +75,9 @@ pub(crate) fn reference_dose(dosing: &Dosing, last: bool) -> ReferenceDose {
         }
     };
     ReferenceDose {
-        amount: pick(&dosing.amounts),
-        time: pick(&dosing.times),
-        duration: dosing.durations.as_deref().map(pick),
+        amount: pick(amounts),
+        time: pick(times),
+        duration: durations.map(pick),
     }
 }
 
@@ -173,6 +183,10 @@ pub(crate) struct Inserted {
     /// Whether a point was added at the dose time.
     pub inserted: bool,
     /// The value of the added point, `NaN` where none was added.
+    ///
+    /// The analysis of a row reads [`Inserted::inserted`] and the row the areas run on, never
+    /// the value by itself, so the tests of this module are its only caller.
+    #[allow(dead_code)]
     pub value: f64,
     /// The points of the row the areas run on.
     pub n: usize,
@@ -301,15 +315,12 @@ mod tests {
         );
     }
 
-    /// A dosing protocol of a row, without a unit and without a route.
-    fn dosing(amounts: &[f64], times: &[f64], durations: Option<&[f64]>) -> Dosing {
-        Dosing {
-            amounts: amounts.to_vec(),
-            times: times.to_vec(),
-            durations: durations.map(<[f64]>::to_vec),
-            unit: None,
-            route: None,
-        }
+    /// The dose columns of a row: the amounts, the times and the durations of the batch.
+    type Protocol<'a> = (&'a [f64], &'a [f64], Option<&'a [f64]>);
+
+    /// The reference dose of one protocol.
+    fn picked(protocol: Protocol<'_>, last: bool) -> ReferenceDose {
+        reference_dose(protocol.0, protocol.1, protocol.2, last)
     }
 
     /// The area row of one insertion, with the one column of room a caller leaves.
@@ -327,18 +338,18 @@ mod tests {
 
     #[test]
     fn the_reference_dose_is_the_first_of_the_protocol_and_the_last_at_steady_state() {
-        let protocol = dosing(&[100.0, 50.0, 25.0], &[0.0, 12.0, 24.0], None);
-        let first = reference_dose(&protocol, false);
+        let protocol: Protocol<'_> = (&[100.0, 50.0, 25.0], &[0.0, 12.0, 24.0], None);
+        let first = picked(protocol, false);
         assert_eq!((first.amount, first.time), (100.0, 0.0));
         assert_eq!(first.duration, None, "no durations without an infusion");
 
-        let last = reference_dose(&protocol, true);
+        let last = picked(protocol, true);
         assert_eq!((last.amount, last.time), (25.0, 24.0));
 
         // an infusion carries a duration per dose, which travels with the dose picked
-        let infusion = dosing(&[10.0, 10.0], &[0.0, 8.0], Some(&[0.25, 0.5]));
-        assert_eq!(reference_dose(&infusion, false).duration, Some(0.25));
-        assert_eq!(reference_dose(&infusion, true).duration, Some(0.5));
+        let infusion: Protocol<'_> = (&[10.0, 10.0], &[0.0, 8.0], Some(&[0.25, 0.5]));
+        assert_eq!(picked(infusion, false).duration, Some(0.25));
+        assert_eq!(picked(infusion, true).duration, Some(0.5));
     }
 
     #[test]
@@ -346,20 +357,21 @@ mod tests {
         // a dose counts only where its amount and its time are both finite, so a subject
         // whose dose records are missing has no reference dose at all and the parameters
         // which divide by it come out NaN
-        for protocol in [
-            dosing(&[], &[], None),
-            dosing(&[f64::NAN], &[0.0], None),
-            dosing(&[100.0], &[f64::NAN], None),
-            dosing(&[100.0], &[f64::INFINITY], None),
-        ] {
+        let missing: [Protocol<'_>; 4] = [
+            (&[], &[], None),
+            (&[f64::NAN], &[0.0], None),
+            (&[100.0], &[f64::NAN], None),
+            (&[100.0], &[f64::INFINITY], None),
+        ];
+        for protocol in missing {
             for last in [false, true] {
-                let reference = reference_dose(&protocol, last);
+                let reference = picked(protocol, last);
                 assert!(reference.amount.is_nan(), "{protocol:?} last {last}");
                 assert!(reference.time.is_nan(), "{protocol:?} last {last}");
             }
         }
         // the durations stay an array, with NaN in it, where the protocol has one
-        let duration = reference_dose(&dosing(&[], &[], Some(&[])), false).duration;
+        let duration = picked((&[], &[], Some(&[])), false).duration;
         assert_eq!(duration.map(f64::is_nan), Some(true));
     }
 
@@ -371,13 +383,13 @@ mod tests {
         // the front - which `Timecourses` never builds and the batch of a host can carry -
         // picks a column which is no dose at all. Two of these three columns are a dose,
         // so the steady state analysis reads column 1: a NaN amount at t = 12.
-        let holed = dosing(&[100.0, f64::NAN, 25.0], &[0.0, 12.0, 24.0], None);
-        let last = reference_dose(&holed, true);
+        let holed: Protocol<'_> = (&[100.0, f64::NAN, 25.0], &[0.0, 12.0, 24.0], None);
+        let last = picked(holed, true);
         assert!(last.amount.is_nan(), "not the 25.0 of the last column");
         assert_eq!(last.time, 12.0);
 
         // the first dose is the first column either way
-        let first = reference_dose(&holed, false);
+        let first = picked(holed, false);
         assert_eq!((first.amount, first.time), (100.0, 0.0));
     }
 

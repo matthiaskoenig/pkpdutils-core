@@ -196,6 +196,10 @@ pub(crate) struct TerminalFit {
     /// The time of the last point.
     pub t_last: f64,
     /// The packed index of the first point, `-1` without a window.
+    ///
+    /// Python reports it and the tests of this module read it; the parameters of a row are
+    /// built from the times of the window rather than from its index, so nothing else does.
+    #[allow(dead_code)]
     pub start: i64,
     /// The flags the regression raised.
     pub flags: NcaFlag,
@@ -237,9 +241,10 @@ impl TerminalFit {
 /// `TerminalMethod::Manual` regresses exactly the points of that mask, and nothing here reads
 /// `TerminalPhase::points`: its indices are indices into the curve as the host sent it, and only
 /// the caller can map them onto the packed row of a sample, so **the caller resolves them and
-/// hands over `regressable` with the manual mask already folded in**. The same holds for
-/// `TerminalPhase::windows`, the window of a single row, which this function does not take at
-/// all. The obligation is worth stating because failing it is silent: a caller which passes only
+/// hands over `regressable` with the manual mask already folded in**. `TerminalPhase::windows`,
+/// the window of a single row, this function does not take at all: a row which has one goes to
+/// [`fit_in_window`] instead, since its window replaces the rule rather than narrowing it.
+/// The obligation is worth stating because failing it is silent: a caller which passes only
 /// its own exclusions under `TerminalMethod::Manual` regresses the whole row, and a manual
 /// window carries no test on the sign of the slope and so raises no flag to show for it.
 ///
@@ -275,11 +280,7 @@ pub(crate) fn terminal_fit(
         // mirrors `_fit_selected`, where it cannot be told from a plain 0, since `collect`
         // snaps forward over the very mask this reads; the mirror stays so the two agree
         // whatever `collect` does later.
-        TerminalMethod::Manual => Chosen {
-            start: points.iter().position(|&p| p).unwrap_or(0),
-            has_fit: points.iter().any(|&p| p),
-            flags: NcaFlag::NONE,
-        },
+        TerminalMethod::Manual => chosen_from(&points),
         TerminalMethod::BestFit => best_fit(&stats, first_allowed, phase),
         TerminalMethod::LastN => last_n(&stats, first_allowed, last, phase),
         // always after the maximum, whatever `exclude_cmax` says
@@ -293,6 +294,65 @@ pub(crate) fn terminal_fit(
         fit.flags |= low_concentration(t, c, n_valid, &points, &fit, threshold);
     }
     fit
+}
+
+/// The terminal regression of one packed row over the window the row was given.
+///
+/// `TerminalPhase::windows` names a window `(t_first, t_last)` per sample, and a row which has
+/// one regresses the points of that window and nothing else: the rule of
+/// [`TerminalMethod`] decides nothing for it, `exclude_cmax` does not apply, and neither the
+/// sign of the slope nor the tie rule is tested, exactly as `TerminalMethod::Manual` is not
+/// tested. The window is inclusive at both ends.
+///
+/// The arguments are those of [`terminal_fit`] and mean the same, `tmax_idx` excepted, which no
+/// rule here reads. `regressable` carries the caller's own exclusions and **not** the manual
+/// mask: a row with a window ignores `TerminalPhase::points` as it ignores the method.
+///
+/// The narrowing happens before the statistics, which is the whole of the function: python's
+/// `_fit_selected` calls `window_statistics` again with `valid = selected`, so the origin of the
+/// sums and the suffix sums themselves are over the selected points. A port which read the
+/// statistics of the row and only moved the start would count the points behind the window and
+/// report a window which runs to the last regressable point of the row instead of to `t_last`.
+///
+/// Mirrors `_fit_selected` of `src/pkpdutils/nca/terminal.py` as `terminal_fit` calls it for a
+/// row whose window is given.
+pub(crate) fn fit_in_window(
+    t: &[f64],
+    c: &[f64],
+    n_valid: usize,
+    regressable: &[bool],
+    window: (f64, f64),
+    phase: &TerminalPhase,
+) -> TerminalFit {
+    let columns = t.len().min(c.len());
+    if columns == 0 {
+        return TerminalFit::no_fit(NcaFlag::TOO_FEW_POINTS);
+    }
+    let (t, c) = (&t[..columns], &c[..columns]);
+    // the selection, before any statistic is taken: a NaN time fails both comparisons
+    let selected: Vec<bool> = (0..columns)
+        .map(|j| {
+            regressable.get(j).copied().unwrap_or(false) && t[j] >= window.0 && t[j] <= window.1
+        })
+        .collect();
+    let (points, stats) = row_statistics(t, c, n_valid, &selected);
+    let mut fit = collect(t, &stats, &points, chosen_from(&points), phase);
+    if let Some(threshold) = phase.relative_warning {
+        fit.flags |= low_concentration(t, c, n_valid, &points, &fit, threshold);
+    }
+    fit
+}
+
+/// The window of a mask: the first point it holds, and whether it holds one at all.
+///
+/// The rule of a mask, which is what `TerminalMethod::Manual` and a given window share: no
+/// `first_allowed`, no test on the sign of the slope and no tie band, so the mask is the window.
+fn chosen_from(points: &[bool]) -> Chosen {
+    Chosen {
+        start: points.iter().position(|&p| p).unwrap_or(0),
+        has_fit: points.iter().any(|&p| p),
+        flags: NcaFlag::NONE,
+    }
 }
 
 /// The points of a row which may be regressed and every window of them.
@@ -516,6 +576,10 @@ fn low_concentration(
 }
 
 /// One window the selection may choose from.
+///
+/// The table of them reaches a result as the point variables of a batch of one row, which the
+/// assembly of the result writes; until it does, the tests of this module are its only caller.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Candidate {
     /// The time of the first point of the window.
@@ -541,6 +605,7 @@ pub(crate) struct Candidate {
 ///
 /// Mirrors `candidate_table` of `src/pkpdutils/nca/terminal.py`, without the row index of the
 /// batch, which the caller holds.
+#[allow(dead_code)]
 pub(crate) fn candidate_table(
     t: &[f64],
     c: &[f64],

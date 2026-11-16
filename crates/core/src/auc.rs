@@ -45,12 +45,36 @@ pub(crate) struct Areas {
 ///
 /// Mirrors `segment_areas` and the unmasked `auc_aumc` of `src/pkpdutils/nca/auc.py`.
 pub(crate) fn trapezoid(t: &[f64], c: &[f64], method: AucMethod) -> Areas {
+    sum_segments(t, c, method, |_| true)
+}
+
+/// Sum the trapezoids of the segments which end at or before `t_end`.
+///
+/// This is `auc_aumc(..., t_end=...)` of `src/pkpdutils/nca/auc.py`, which masks **whole
+/// segments** by the time of their end point rather than cutting the row at an index. The two
+/// are the same thing only while the times increase, and nothing in this kernel sorts a row
+/// (`areas.md` trap T1), so the mask is what `auc_last` needs: a row whose times fall back on
+/// themselves keeps the segments which end in the window wherever they sit, and drops the
+/// others.
+///
+/// A `NaN` `t_end` keeps no segment at all and gives zero, since a comparison against a `NaN`
+/// is false; that is the row which has no last measurable value, whose area the caller
+/// overwrites with `NaN` all the same.
+pub(crate) fn trapezoid_until(t: &[f64], c: &[f64], t_end: f64, method: AucMethod) -> Areas {
+    sum_segments(t, c, method, |end| end <= t_end)
+}
+
+/// Sum the trapezoids of the segments `keep` accepts, by the time of their end point.
+fn sum_segments(t: &[f64], c: &[f64], method: AucMethod, keep: impl Fn(f64) -> bool) -> Areas {
     let mut auc = 0.0;
     let mut aumc = 0.0;
     for (times, values) in t.windows(2).zip(c.windows(2)) {
         let (&[t1, t2], &[c1, c2]) = (times, values) else {
             break;
         };
+        if !keep(t2) {
+            continue;
+        }
         let dt = t2 - t1;
         // `c1 > 0.0` is false for a NaN, so neither value can be NaN at the comparison.
         let positive = c1 > 0.0 && c2 > 0.0 && c1 != c2;
