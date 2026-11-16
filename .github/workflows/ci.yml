@@ -65,15 +65,38 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      # the exact version, as the ruff of the job below is pinned: the tests of
+      # the exact versions, as the ruff of the job below is pinned: the tests of
       # the binding build real numpy arrays through the C API, so a numpy
-      # release must not be able to turn this job red with no change here
-      - run: python -m pip install numpy==2.5.5
+      # release must not be able to turn this job red with no change here, and
+      # the backend which assembles the published artifact is pinned for the
+      # same reason
+      - run: python -m pip install numpy==2.5.5 maturin==1.16.0 pytest==9.2.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
       - run: cargo clippy -p pkpdutils-python --all-targets --locked -- -D warnings
       - run: cargo test -p pkpdutils-python --locked
       - run: RUSTDOCFLAGS="-D warnings" cargo doc -p pkpdutils-python --locked --no-deps
+      # the cargo commands above link libpython and take neither the
+      # `extension-module` feature nor the `parallel` one, so none of them
+      # builds the artifact a user installs. The wheel is built with both, it
+      # is tagged `abi3` and it ships the module under a name which is not the
+      # name of the lib target, and every one of those is decided here and
+      # nowhere a rust test can see it. `crates/python/tests/` therefore runs
+      # against the installed wheel and never against the source tree
+      - run: maturin build --release --locked -m crates/python/Cargo.toml
+      # `--no-index`, so that the numpy pinned above is the numpy the tests run
+      # with and no release of the day can be pulled in beside it
+      - run: python -m pip install --no-index --find-links target/wheels pkpdutils-core
+      - run: python -m pytest crates/python/tests -q
+      # the source distribution of the release, which maturin proves by
+      # building a wheel from it: it carries a workspace of its own, assembled
+      # out of this crate and the path dependencies it needs, so a file the
+      # build needs and the sdist does not carry fails here instead of failing
+      # every source install after the release. It is a command of its own
+      # because that workspace is not the one the committed `Cargo.lock` was
+      # resolved for, so cargo has to rewrite the lock and `--locked` cannot be
+      # passed; the wheel which is installed above is the `--locked` one
+      - run: maturin build --release --sdist --out target/sdist -m crates/python/Cargo.toml
   ruff:
     runs-on: ubuntu-latest
     steps:

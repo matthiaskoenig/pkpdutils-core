@@ -52,6 +52,19 @@ cargo run --release --example kernel_timing -- 1000x200                  # one s
 
 Both sides take one shape at a time, so that a measured cell never carries the heap of the cell before it: `kernel_timing <shape>` on this side, `python_timing.py --shape 1000x200 --variant nca` on the other.
 
+## The python binding and the `pkpdutils-core` distribution
+
+`pkpdutils-python` (`crates/python`) is the pyo3 binding, and the wheel built from it is the `pkpdutils-core` distribution on PyPI, which `pkpdutils` depends on and routes an eligible batch to. It is the only crate of the workspace which knows that python exists: it takes the numpy buffers of a batch and the fields of the options as plain dicts, copies them into the wire shapes of `pkpdutils-abi` and hands them to the kernel with the interpreter released. `analyze_batch` and `is_supported` are the two functions it exports, `UnsupportedError` is the refusal a host routes its own path on, and `crates/python/README.md`, which is also the long description of the distribution, is what a user of the wheel reads.
+
+The crate is a workspace member and **not a default member**: pyo3 refuses to build against an interpreter older than its `abi3-py313` floor, so a crate in the default set would make a python 3.13 toolchain the price of `cargo test` on the kernel. `cargo test`, `cargo clippy` and `cargo doc` without a `-p` therefore build none of it, `--workspace` does reach it, which is why the wasm checks exclude it by name, and the `python` job of continuous integration is its gate.
+
+The wheel is built by [maturin](https://www.maturin.rs) from `crates/python/pyproject.toml`, where two settings are not conveniences:
+
+- `module-name = "pkpdutils_core"`. The `#[pymodule]` is named after the distribution and the lib target after the cargo package, so without it the extension ships under the wrong name and the import fails on a missing `PyInit_` symbol, on an installed wheel and nowhere earlier.
+- `features = ["extension-module", "parallel"]`. `extension-module` leaves libpython to the interpreter which loads the wheel, which an extension module must do and `cargo test` must not; `parallel` is the row shards above, without which `n_workers` would be inert and the measured speedup over the python kernel most of itself smaller. The hazard it carries is a rayon pool across `fork`, which `crates/python/README.md` warns about: `pkpdutils` starts its own process pools with `forkserver` or `spawn` and never with `fork`, for that same reason.
+
+`crates/python/tests/test_bindings.py` runs against the installed wheel and never against the source tree, because the module name, the `PyInit_` symbol, the `abi3` tag, the version the metadata claims and the presence of the row shards are all decided by the build and by nothing a rust test can see.
+
 ## The pint gate
 
 `crates/units/tests/data/pint_gate.json` is pint's answer for the unit strings the package uses and produces, written by `scripts/pint_gate.py` from the `pkpdutils` checkout this crate mirrors. The tests in `crates/units/tests/pint_gate.rs` compare `parse_unit`, `unit_str`, `short_unit` and `parameter_unit` against it character for character, so the gate runs in `cargo test` without Python.
@@ -120,13 +133,27 @@ cargo test --locked
 cargo clippy --locked --all-targets --features parallel -- -D warnings
 cargo test --locked --features parallel
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
-cargo check --locked --workspace --target wasm32-unknown-unknown
-cargo check --locked --workspace --target wasm32-wasip1
-cargo check --locked --workspace --no-default-features --target wasm32-unknown-unknown
-cargo check --locked --workspace --no-default-features --target wasm32-wasip1
+cargo check --locked --workspace --exclude pkpdutils-python --target wasm32-unknown-unknown
+cargo check --locked --workspace --exclude pkpdutils-python --target wasm32-wasip1
+cargo check --locked --workspace --exclude pkpdutils-python --no-default-features --target wasm32-unknown-unknown
+cargo check --locked --workspace --exclude pkpdutils-python --no-default-features --target wasm32-wasip1
 ```
 
-The `parallel` feature is checked and tested as well as left out: a feature which compiles in one configuration only is a break waiting for the first host which asks for it. The wasm targets are checked both ways for the same reason: `--no-default-features` is how a wasm host builds the kernel, and the plain check is the one which fails the day a default feature stops compiling for wasm.
+The `parallel` feature is checked and tested as well as left out: a feature which compiles in one configuration only is a break waiting for the first host which asks for it. The wasm targets are checked both ways for the same reason: `--no-default-features` is how a wasm host builds the kernel, and the plain check is the one which fails the day a default feature stops compiling for wasm. `--workspace` reaches the python binding, which pyo3 cannot build for wasm at all, so it is excluded there by name; nothing is lost, since the binding carries no numerics of its own and the kernel it binds is what those four lines check.
+
+The binding has a gate of its own, the `python` job, because none of the commands above builds the artifact a user installs. It needs a python 3.13 or newer on `PATH` with a real `libpython` (a standalone interpreter is not enough: numpy fails on `_contextvars` when it is embedded), and the lines after the cargo ones run in a virtual environment with `numpy`, `maturin` and `pytest`:
+
+```bash
+cargo clippy -p pkpdutils-python --all-targets --locked -- -D warnings
+cargo test -p pkpdutils-python --locked
+RUSTDOCFLAGS="-D warnings" cargo doc -p pkpdutils-python --locked --no-deps
+maturin build --release --locked -m crates/python/Cargo.toml
+pip install --no-index --find-links target/wheels pkpdutils-core
+pytest crates/python/tests -q
+maturin build --release --sdist --out target/sdist -m crates/python/Cargo.toml
+```
+
+The last line is the source distribution of the release, and maturin proves it by building a wheel out of it: a file the build needs and the sdist does not carry fails there instead of failing every source install after a release. It is a command of its own and without `--locked`, because the sdist carries a workspace maturin assembled out of the binding and the path dependencies it needs, which is not the workspace the committed `Cargo.lock` was resolved for, so cargo has to rewrite that lock. The wheel which is installed and tested is the `--locked` one, built from the checkout.
 
 Two fixtures are generated from a `pkpdutils` checkout instead of being written by hand, and each of their scripts compares the committed file with a fresh run and writes nothing. They need that checkout and so are not part of continuous integration, where the Rust gates carry the sizes and digests as their own constants instead; run both by hand whenever `pkpdutils` changes and before a release, from any working directory (`path/to/pkpdutils` is the checkout being mirrored). A non-zero exit means the fixture is stale and has to be regenerated with the same command without `--check`, never edited.
 

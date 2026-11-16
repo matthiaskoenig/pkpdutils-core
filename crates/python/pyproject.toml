@@ -1,0 +1,69 @@
+# The `pkpdutils-core` distribution: the kernel of `crates/core`, behind the binding of this
+# crate, as a wheel `pkpdutils` depends on. The build backend is maturin, which reads the cargo
+# manifest beside this file; everything cargo already states - the version, the license, the
+# authors, the repository - is taken from there rather than written twice.
+
+[build-system]
+requires = ["maturin>=1.16,<2"]
+build-backend = "maturin"
+
+[project]
+name = "pkpdutils-core"
+description = "The compiled non-compartmental analysis kernel of pkpdutils"
+readme = "README.md"
+# the floor of `pkpdutils` itself, and the floor pyo3 is built against (`abi3-py313`): one wheel
+# per platform therefore serves every python this package supports, including the ones released
+# after it
+requires-python = ">=3.13"
+license = "MIT"
+# a license file is relative to this directory and may not reach out of it, so `LICENSE` beside
+# this file is a copy of the one at the root of the repository: the artifact has to carry the
+# text, and `cargo publish` of this crate would want it in the same place
+license-files = ["LICENSE"]
+authors = [{ name = "Matthias König", email = "konigmatt@googlemail.com" }]
+maintainers = [{ name = "Matthias König", email = "konigmatt@googlemail.com" }]
+keywords = ["pharmacokinetics", "pharmacodynamics", "non-compartmental analysis"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Rust",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+# the batch arrives as numpy buffers and the result goes back as numpy arrays, so the module
+# cannot be imported without it. The floor is the one `pkpdutils` carries
+dependencies = ["numpy>=2.2.2"]
+# maturin reads it from the cargo manifest, which is the one place the version of this workspace
+# is written. `test_the_version_matches_the_crate` holds the built artifact to that
+dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/matthiaskoenig/pkpdutils-core"
+Issues = "https://github.com/matthiaskoenig/pkpdutils-core/issues"
+
+[tool.maturin]
+# the `#[pymodule]` of `src/lib.rs` is `pkpdutils_core`, after the distribution, while the lib
+# target is `pkpdutils_python`, after the cargo package, and the two have to be told apart. Get
+# this name wrong and maturin writes a wheel whose extension exports no `PyInit_` of that name:
+# it warns and builds anyway, and the failure is then an `ImportError` on an installed wheel,
+# which is the worst place to find it. Left out, maturin falls back to the name of the
+# distribution, `pkpdutils-core`, which is no python identifier, and that one fails the build
+module-name = "pkpdutils_core"
+# `extension-module` leaves libpython to the interpreter which loads the wheel, which is what an
+# extension module must do and what `cargo test` must not; `parallel` is the row shards of the
+# kernel. The shards are the point of the native build - without them `n_workers` is inert and
+# the speedup over the python kernel drops by most of itself - and the hazard they carry, a
+# rayon pool across `fork`, is named in `README.md`
+features = ["extension-module", "parallel"]
+# `locked = true` is deliberately not here, although every other check of this repository builds
+# `--locked`. A source distribution carries a workspace maturin assembled out of this crate and
+# the path dependencies it needs, which is not the workspace the committed `Cargo.lock` was
+# resolved for, so cargo has to rewrite that lock and `--locked` forbids it: the option would
+# make the sdist unbuildable, and that failure appears only when someone installs from it. The
+# wheel built straight from the checkout is built `--locked` by the command line instead, which
+# is where the lock being the committed one means anything.

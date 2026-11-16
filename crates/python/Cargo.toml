@@ -7,21 +7,35 @@ license.workspace = true
 authors.workspace = true
 description = "Python binding of the pkpdutils kernel: numpy buffers into the wire shapes of the abi"
 repository.workspace = true
-readme.workspace = true
+# not `readme.workspace = true`: the workspace entry is the README at the root of the
+# repository, and this crate has one of its own, which is also the long description of the
+# `pkpdutils-core` distribution on PyPI
+readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
+
+# the cdylib is the extension module a wheel ships; the rlib is what `cargo test`, `cargo doc`
+# and a rust caller take. The lib is `pkpdutils_python`, after this package, while the
+# `#[pymodule]` is `pkpdutils_core`, after the distribution, which is why `module-name` of
+# `pyproject.toml` has to say which of the two the wheel ships the extension under.
+[lib]
+crate-type = ["cdylib", "rlib"]
 
 [features]
 # the feature a wheel build asks for. It is not inherited from the workspace entry of pyo3 on
 # purpose: `extension-module` leaves libpython to the interpreter which loads the wheel, so a
 # binary built with it does not link and `cargo test` could not run at all.
 extension-module = ["pyo3/extension-module"]
+# the row shards of the kernel, which the wheel is built with (`[tool.maturin] features`). It is
+# a feature of this crate rather than a `pkpdutils-core/parallel` on the build command so that
+# the one configuration the wheel ships can also be asked for by name from cargo.
+parallel = ["pkpdutils-core/parallel"]
 
 [dependencies]
 # the wire shapes the conversion builds, and the kernel the analysis entry point calls. The
-# `parallel` feature of the kernel is deliberately not asked for here: which features a wheel
-# carries is settled where the wheel is built, and a build without it runs every shard plan in
-# the calling thread, which is the same numbers and one thread
+# `parallel` feature of the kernel is not enabled here by default: which features a wheel carries
+# is settled where the wheel is built, and a build without it runs every shard plan in the
+# calling thread, which is the same numbers and one thread
 pkpdutils-abi = { path = "../abi", version = "0.1.0" }
 pkpdutils-core = { path = "../core", version = "0.1.0" }
 pyo3 = { workspace = true }
