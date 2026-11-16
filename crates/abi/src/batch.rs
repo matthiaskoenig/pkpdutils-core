@@ -360,7 +360,8 @@ impl Batch {
     /// # Errors
     ///
     /// The field, the expected length and the length found, the overflow of a shape, or the row
-    /// and the column of a hole in a dose field.
+    /// and the column of a hole in a dose field, where the row is the flat sample index over
+    /// `sample_shape` and a host of more than one sample dimension unravels it itself.
     pub fn validate(&self) -> Result<(), String> {
         check_len(
             "sample_shape",

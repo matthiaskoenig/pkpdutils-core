@@ -1780,7 +1780,7 @@ pub(crate) mod tests {
         let error = analyze_batch(
             &with_protocol(
                 vec![f64::NAN, 50.0, f64::NAN],
-                vec![f64::NAN, 0.0, f64::NAN],
+                vec![f64::NAN, 5.0, f64::NAN],
             ),
             &linear(),
         )
@@ -1792,14 +1792,21 @@ pub(crate) mod tests {
         );
 
         // while the protocol of the same row, compacted to the front as a batch of this
-        // contract carries it, analyses and divides by its dose: `nca` of pkpdutils 1.4.0
-        // gives 2.5035866983344746 for `cl_f` of this curve, for the holed protocol and the
-        // compacted one alike
+        // contract carries it, analyses, shifts the row onto its dose and divides by its
+        // amount: `nca` of pkpdutils 1.4.0 gives `tmax` 2.0 and `cl_f` 2.5035866983344746
+        // for this curve, for the holed protocol and the compacted one alike. The dose at
+        // t = 5 is what pins the shift, and `cl_f` cannot: this row gives the same `cl_f`
+        // for a dose at t = 0, where `tmax` is 7.0.
         let packed = with_protocol(
             vec![50.0, f64::NAN, f64::NAN],
-            vec![0.0, f64::NAN, f64::NAN],
+            vec![5.0, f64::NAN, f64::NAN],
         );
         let result = run(&packed, &linear());
+        assert_eq!(
+            value(&result, "tmax"),
+            2.0,
+            "the row is shifted by its dose"
+        );
         close(value(&result, "cl_f"), 2.5035866983344746);
     }
 
