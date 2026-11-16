@@ -9,9 +9,9 @@
 //! carry and a number which differs are each a failure which names what was missing or by how
 //! much it differed.
 
+mod common;
+
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
-use std::path::PathBuf;
 
 use pkpdutils_abi::{
     AnalysisResult, AucMethod, BATCH_CONTRACT, Batch, NcaOptions, Route, TerminalMethod,
@@ -20,6 +20,8 @@ use pkpdutils_abi::{
 use pkpdutils_core::analyze_batch;
 use pkpdutils_units::{Unit, parse_unit};
 use serde_json::{Map, Value};
+
+use common::read_text;
 
 /// The number of cases of the oracle, an independent literal so that a truncated or mis-parsed
 /// file fails here instead of passing vacuously.
@@ -84,6 +86,23 @@ const REGRESSION_KEYS: &[&str] = &[
 /// The keys of one expected parameter.
 const PARAMETER_KEYS: &[&str] = &["magnitude", "unit"];
 
+/// The name of every case of the oracle.
+///
+/// The counts alone would not notice a file of nine cases in which one was replaced by a copy
+/// of another with the same shape, so the gate pins which curves it ran on and does not lean on
+/// the checksum of `oracles_present.rs` for that.
+const NAMES: [&str; 9] = [
+    "Benowitz1995_caffeine_2mgkg",
+    "Benowitz1995_caffeine_4mgkg",
+    "Benowitz1995_paraxanthine_2mgkg",
+    "Benowitz1995_paraxanthine_4mgkg",
+    "Divoll1982_Fig1",
+    "Kim2011_Fig2",
+    "midazolam",
+    "nan_values",
+    "synthetic_monoexp",
+];
+
 /// The two cases whose first sample comes after the dose, which the triangle correction of
 /// [`expected_parameters`] applies to.
 const CORRECTED: [&str; 2] = ["Divoll1982_Fig1", "nan_values"];
@@ -128,23 +147,6 @@ struct Case {
     regression: Regression,
     /// The expected parameters by their old name.
     parameters: BTreeMap<String, Expected>,
-}
-
-/// The vendored oracles, relative to this package.
-fn oracle_dir() -> PathBuf {
-    // cargo runs a test binary from the package root, so go up to the workspace
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/oracles")
-}
-
-/// Read a vendored file as text, after checking it is a regular file and no
-/// symlink: opening a FIFO would block forever instead of failing.
-fn read_text(rel: &str) -> String {
-    let path = oracle_dir().join(rel);
-    let kind = fs::symlink_metadata(&path)
-        .unwrap_or_else(|e| panic!("missing: {rel}: {e}"))
-        .file_type();
-    assert!(kind.is_file(), "not a regular file: {rel}");
-    fs::read_to_string(path).unwrap()
 }
 
 /// The object a value is, naming what was read instead.
@@ -237,10 +239,29 @@ fn unit_of(spelling: &str, what: &str) -> Unit {
 
 /// A magnitude in `from`, expressed in `to`.
 ///
-/// The two must have the same dimension, which a unit the kernel reports for a parameter of
-/// another dimension than the reference fails on by name rather than by a number which is out
-/// by a factor. This is `Quantity.to(unit)` of pint, which the python gate converts with
-/// (`test_reference.py:108`).
+/// This is `Quantity.to(unit)` of pint, which the python gate converts with
+/// (`test_reference.py:108`). The oracle writes every magnitude in a unit of its own, and the
+/// kernel reports the canonical normalized one, so an oracle gate cannot avoid converting.
+///
+/// Converting with the registry the kernel itself uses looks circular, and the dimension
+/// assertion below does not undo that: a dimension is a vector of exponents and a factor is a
+/// separate accumulation, so equal dimensions say nothing about a wrong factor. What makes the
+/// gate sound is that the expected magnitudes are fixed absolute numbers and that every factor
+/// which could hide an error cancels out of the comparison. Take the hardest case, the Divoll
+/// clearance: the kernel divides the raw `milligram * milliliter / (microgram * hour)` by the
+/// factor of `liter / hour` to report in `liter / hour`, and this function multiplies it back
+/// by that same factor before dividing by the factor of the oracle's `milliliter / hour`. The
+/// factor of `liter / hour` therefore appears once in each direction, `milliliter` cancels
+/// against the raw unit, and the compared number reduces to `raw * f_milligram / f_microgram`.
+/// The factors that cancel are exactly the ones the correct answer does not depend on either.
+/// What does not cancel is a ratio of two spellings of one dimension - `f_milligram /
+/// f_microgram` here, `f_mole / f_nanomole` for the synthetic curve, `f_milliliter / f_liter`
+/// for the volumes, `f_minute / f_hour` for the midazolam slope - and each of those is a plain
+/// prefix ratio whose error would be a power of ten, orders of magnitude outside the 1e-6 gate.
+///
+/// The dimension assertion is here for a different error: a unit the kernel reports for a
+/// parameter of another dimension than the reference then fails by name instead of as a number
+/// which is merely out by a factor.
 #[track_caller]
 fn in_unit(value: f64, from: &str, to: &str, what: &str) -> f64 {
     let from_unit = unit_of(from, what);
@@ -258,7 +279,15 @@ fn cases() -> Vec<Case> {
     let text_of_file = read_text("tests/data/reference/nca_reference.json");
     let document: Value = serde_json::from_str(&text_of_file).expect("the oracle is JSON");
     let array = document.as_array().expect("the oracle is a list of cases");
-    array.iter().map(case_of).collect()
+    let cases: Vec<Case> = array.iter().map(case_of).collect();
+    assert_eq!(NAMES.len(), CASES, "the two literals of the gate disagree");
+    let found: BTreeSet<&str> = cases.iter().map(|case| case.name.as_str()).collect();
+    assert_eq!(
+        found,
+        NAMES.into_iter().collect::<BTreeSet<&str>>(),
+        "the oracle does not carry the curves this gate was written against"
+    );
+    cases
 }
 
 /// One case of the oracle.
@@ -381,7 +410,10 @@ fn analysis_of(case: &Case) -> AnalysisResult {
 
 /// The expected parameters of a case, with the area before its first sample.
 ///
-/// The port of `expected_parameters` of `tests/nca/test_reference.py:52-81`, line for line.
+/// The port of `expected_parameters` of `tests/nca/test_reference.py:52-81`, with one
+/// deliberate difference: the `auc` entry of the oracle is looked up before the `t0 <= 0`
+/// return, where python's `or` short-circuits past it, so an oracle without an `auc` key fails
+/// here for a case python would have returned early from. Stricter, never looser.
 /// `pkdb_analysis` 0.3.1 started the area at the first sample, where `pkpdutils` inserts the
 /// value at the dose when the first sample comes later - 0 for an extravascular dose, as
 /// Phoenix WinNonlin does. The oracle predates that rule, so the expected area gains the
@@ -569,9 +601,20 @@ fn every_reference_case_reproduces_the_pkdb_analysis_results() {
     }
     // eight parameters of nine cases, of which the two paraxanthine curves have no terminal
     // phase and so no aucinf, kel, thalf, vd and cl
-    assert_eq!(compared + required_nan, CASES * MAPPING.len());
-    assert_eq!(required_nan, 10);
-    assert_eq!(compared, 62);
+    assert_eq!(
+        compared + required_nan,
+        CASES * MAPPING.len(),
+        "every case must contribute one comparison per mapped parameter"
+    );
+    assert_eq!(
+        required_nan, 10,
+        "the aucinf, kel, thalf, vd and cl of the two paraxanthine curves are the null \
+         magnitudes of the oracle, and nothing else is"
+    );
+    assert_eq!(
+        compared, 62,
+        "the magnitudes of the oracle which are numbers and were compared as numbers"
+    );
     assert_eq!(
         corrected,
         CORRECTED
@@ -590,7 +633,11 @@ fn the_reference_case_parameter_names_are_the_columns_this_kernel_produces() {
         .map(|(old, _)| *old)
         .chain(NOT_COMPARED.iter().copied())
         .collect();
-    assert_eq!(accounted.len(), MAPPING.len() + NOT_COMPARED.len());
+    assert_eq!(
+        accounted.len(),
+        MAPPING.len() + NOT_COMPARED.len(),
+        "a name is both mapped and declared as not compared"
+    );
     for case in &cases {
         let present: BTreeSet<&str> = case.parameters.keys().map(String::as_str).collect();
         assert_eq!(
@@ -646,7 +693,16 @@ fn the_terminal_regression_matches_the_reference_slope_and_intercept() {
         expect_close(actual, intercept, &format!("{}: the intercept", case.name));
         intercepts += 1;
     }
-    assert_eq!(slopes, 7);
-    assert_eq!(intercepts, 7);
-    assert_eq!(without_a_fit, 2);
+    assert_eq!(
+        slopes, 7,
+        "seven of the nine cases have a terminal regression with a slope"
+    );
+    assert_eq!(
+        intercepts, 7,
+        "and an intercept, compared on the natural logarithm scale"
+    );
+    assert_eq!(
+        without_a_fit, 2,
+        "the two paraxanthine curves have no terminal regression at all"
+    );
 }

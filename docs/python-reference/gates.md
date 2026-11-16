@@ -3,9 +3,9 @@
 Paths: PY = a checkout of the `pkpdutils` repository, RS = this repository, ORA = RS/testdata/oracles.
 Vendoring: ORA/MANIFEST.json:1-2 (source_commit bae69c15..., 31 files, sha256 each). Layout under ORA mirrors the PY repo-relative path
 (ORA/docs/data/benchmarks/..., ORA/tests/data/reference/..., ORA/tests/data/validation/...).
-Rust side today: RS/crates/oracles/tests/oracles_present.rs (MANIFEST_ENTRIES = 31 at :11, `oracle_dir()` at :13-16 = CARGO_MANIFEST_DIR/../../testdata/oracles,
-serde_json + sha2 only) checks presence/checksums. NO Rust test consumes an oracle value yet (no numerics exist, RS/docs/carry-forward.md:5).
-A kernel test consumes a vendored file the same way: `PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/oracles/<repo-relative path>")`, or from inside crates/oracles.
+Rust side today: RS/crates/oracles/tests/oracles_present.rs (MANIFEST_ENTRIES = 31 at :14) checks presence/checksums, and RS/crates/oracles/tests/reference.rs consumes gate 1a below,
+the first Rust test to compare an oracle value (72 parameters and 16 regression numbers over the 9 cases). `oracle_dir()` and `read_text()` are shared by every test binary of the crate
+in RS/crates/oracles/tests/common/mod.rs (:15 = CARGO_MANIFEST_DIR/../../testdata/oracles), which is how a kernel test reaches a vendored file: `mod common;` and `read_text("<repo-relative path>")`.
 Note: published crates cannot see ../../testdata (oracles/src/lib.rs:3-9), so numeric gates must live in the unpublished crate `pkpdutils-oracles` (or another publish=false crate).
 
 ## 1. The three gates

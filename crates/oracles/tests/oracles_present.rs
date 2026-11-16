@@ -1,30 +1,17 @@
 //! The vendored conformance oracles are present, intact and complete.
 
+mod common;
+
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::fs;
-use std::path::PathBuf;
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use common::{oracle_dir, read_text};
+
 const MANIFEST_ENTRIES: usize = 31;
-
-fn oracle_dir() -> PathBuf {
-    // cargo runs a test binary from the package root, so go up to the workspace
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/oracles")
-}
-
-/// Read a vendored file as text, after checking it is a regular file and no
-/// symlink: opening a FIFO would block forever instead of failing.
-fn read_text(rel: &str) -> String {
-    let path = oracle_dir().join(rel);
-    let kind = fs::symlink_metadata(&path)
-        .unwrap_or_else(|e| panic!("missing: {rel}: {e}"))
-        .file_type();
-    assert!(kind.is_file(), "not a regular file: {rel}");
-    fs::read_to_string(path).unwrap()
-}
 
 fn json(rel: &str) -> Value {
     let text = read_text(rel);
