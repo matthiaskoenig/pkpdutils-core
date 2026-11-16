@@ -82,7 +82,9 @@ fn optional<'py>(obj: &Bound<'py, PyDict>, key: &str) -> PyResult<Option<Bound<'
 ///
 /// A dict has no stack to point at: without the key, a wrong dtype reads as `type mismatch:
 /// from=float32, to=float64` and leaves the caller to guess which of the ten arrays it was.
-fn at_key(py: Python<'_>, key: &str, err: PyErr) -> PyErr {
+/// `crate::options` names the keys of the options the same way, which is why this is the one
+/// helper of this module the rest of the crate shares.
+pub(crate) fn at_key(py: Python<'_>, key: &str, err: PyErr) -> PyErr {
     PyErr::from_type(
         err.get_type(py).clone(),
         format!("{key}: {}", err.value(py)),

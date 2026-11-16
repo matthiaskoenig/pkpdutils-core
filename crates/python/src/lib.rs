@@ -12,3 +12,4 @@
 //! from the wasm gates by name; the kernel it binds is checked there as before.
 
 mod convert;
+mod options;

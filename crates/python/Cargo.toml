@@ -27,6 +27,10 @@ numpy = { workspace = true }
 # the tests build their numpy arrays in a real interpreter, which `auto-initialize` starts on the
 # first `Python::attach`; it is a dev-dependency only, so no wheel ever carries it
 pyo3 = { workspace = true, features = ["auto-initialize"] }
+# the kernel, so that `the_predicate_agrees_with_the_kernel` of `options.rs` can ask it the same
+# questions the support predicate answers and compare the two texts. A list which is only as
+# good as the eye of its reader is the one failure that design is built to prevent
+pkpdutils-core = { path = "../core", version = "0.1.0" }
 
 [lints]
 workspace = true
