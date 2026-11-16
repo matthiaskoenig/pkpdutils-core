@@ -1,0 +1,32 @@
+[package]
+name = "pkpdutils-python"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Python binding of the pkpdutils kernel: numpy buffers into the wire shapes of the abi"
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+# the feature a wheel build asks for. It is not inherited from the workspace entry of pyo3 on
+# purpose: `extension-module` leaves libpython to the interpreter which loads the wheel, so a
+# binary built with it does not link and `cargo test` could not run at all.
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+# the wire shapes the conversion builds; the numerics are reached through them and not from here
+pkpdutils-abi = { path = "../abi", version = "0.1.0" }
+pyo3 = { workspace = true }
+numpy = { workspace = true }
+
+[dev-dependencies]
+# the tests build their numpy arrays in a real interpreter, which `auto-initialize` starts on the
+# first `Python::attach`; it is a dev-dependency only, so no wheel ever carries it
+pyo3 = { workspace = true, features = ["auto-initialize"] }
+
+[lints]
+workspace = true

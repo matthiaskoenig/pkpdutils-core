@@ -10,6 +10,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install the toolchain of rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
+      # `pkpdutils-python` binds pyo3 against the stable ABI from python 3.13
+      # on, and pyo3 refuses to build against an interpreter older than that
+      # floor, whatever the runner image happens to ship; its tests build real
+      # numpy arrays, so the interpreter it links needs numpy as well. Every
+      # cargo step of this job builds the whole workspace, so the interpreter
+      # is set up once, here
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install numpy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
       # --locked, so that the committed Cargo.lock is what is checked and a
@@ -40,13 +50,17 @@ jobs:
       # the default features are what `cargo check --target wasm32-...` takes
       # without being told otherwise, so they are checked as well: a default
       # which stops compiling for wasm is the regression this job exists for
-      - run: cargo check --locked --workspace --target wasm32-unknown-unknown
-      - run: cargo check --locked --workspace --target wasm32-wasip1
+      # `pkpdutils-python` is excluded by name: pyo3 does not build for wasm at
+      # all, and a wasm host does not go through python anyway. Nothing is lost
+      # by leaving it out, since the binding carries no numerics of its own and
+      # the kernel it binds is what these four lines check
+      - run: cargo check --locked --workspace --exclude pkpdutils-python --target wasm32-unknown-unknown
+      - run: cargo check --locked --workspace --exclude pkpdutils-python --target wasm32-wasip1
       # and `--no-default-features` is how a wasm host builds the kernel: rayon
       # compiles for both wasm targets but reports one thread there, so the
       # `parallel` feature is a dependency a wasm instance cannot use
-      - run: cargo check --locked --workspace --no-default-features --target wasm32-unknown-unknown
-      - run: cargo check --locked --workspace --no-default-features --target wasm32-wasip1
+      - run: cargo check --locked --workspace --exclude pkpdutils-python --no-default-features --target wasm32-unknown-unknown
+      - run: cargo check --locked --workspace --exclude pkpdutils-python --no-default-features --target wasm32-wasip1
   ruff:
     runs-on: ubuntu-latest
     steps:

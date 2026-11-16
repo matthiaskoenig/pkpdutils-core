@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/abi", "crates/core", "crates/oracles", "crates/units"]
+members = ["crates/abi", "crates/core", "crates/oracles", "crates/python", "crates/units"]
 # the throwaway package of the first spike sits at the repository root and is not a member
 exclude = ["spike"]
 
@@ -28,3 +28,11 @@ sha2 = "0.11"
 # the row shards of the kernel, behind the `parallel` feature of `pkpdutils-core`, which is off
 # by default: it compiles for both wasm targets but has no thread to run a shard on there
 rayon = "1.12"
+# the python binding, `pkpdutils-python` and nothing else in the workspace. `abi3-py313` builds
+# against the stable ABI from python 3.13 on, the floor of `pkpdutils`, so one wheel per platform
+# serves every python it supports. `extension-module` is deliberately not here: a crate which
+# takes `pyo3 = { workspace = true }` would inherit it, and a build with that feature does not
+# link libpython, so every test binary of such a crate would fail to link. It is an optional
+# feature of `pkpdutils-python`, which a wheel build asks for and `cargo test` does not.
+pyo3 = { version = "0.30.1", features = ["abi3-py313"] }
+numpy = "0.30.0"
