@@ -10,6 +10,9 @@
 //! much it differed.
 
 mod common;
+// the unit helpers of the numeric gates, which `tests/oracles_present.rs` does not declare
+#[path = "common/units.rs"]
+mod units;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -18,10 +21,10 @@ use pkpdutils_abi::{
     TerminalPhase,
 };
 use pkpdutils_core::analyze_batch;
-use pkpdutils_units::{Unit, parse_unit};
 use serde_json::{Map, Value};
 
 use common::read_text;
+use units::{in_unit, unit_of};
 
 /// The number of cases of the oracle, an independent literal so that a truncated or mis-parsed
 /// file fails here instead of passing vacuously.
@@ -229,49 +232,6 @@ fn maybe_numbers(map: &Map<String, Value>, key: &str, what: &str) -> Vec<Option<
             ),
         })
         .collect()
-}
-
-/// A unit of the oracle or of a result, naming what could not be read.
-#[track_caller]
-fn unit_of(spelling: &str, what: &str) -> Unit {
-    parse_unit(spelling).unwrap_or_else(|e| panic!("{what}: {spelling} is no unit: {e}"))
-}
-
-/// A magnitude in `from`, expressed in `to`.
-///
-/// This is `Quantity.to(unit)` of pint, which the python gate converts with
-/// (`test_reference.py:108`). The oracle writes every magnitude in a unit of its own, and the
-/// kernel reports the canonical normalized one, so an oracle gate cannot avoid converting.
-///
-/// Converting with the registry the kernel itself uses looks circular, and the dimension
-/// assertion below does not undo that: a dimension is a vector of exponents and a factor is a
-/// separate accumulation, so equal dimensions say nothing about a wrong factor. What makes the
-/// gate sound is that the expected magnitudes are fixed absolute numbers and that every factor
-/// which could hide an error cancels out of the comparison. Take the hardest case, the Divoll
-/// clearance: the kernel divides the raw `milligram * milliliter / (microgram * hour)` by the
-/// factor of `liter / hour` to report in `liter / hour`, and this function multiplies it back
-/// by that same factor before dividing by the factor of the oracle's `milliliter / hour`. The
-/// factor of `liter / hour` therefore appears once in each direction, `milliliter` cancels
-/// against the raw unit, and the compared number reduces to `raw * f_milligram / f_microgram`.
-/// The factors that cancel are exactly the ones the correct answer does not depend on either.
-/// What does not cancel is a ratio of two spellings of one dimension - `f_milligram /
-/// f_microgram` here, `f_mole / f_nanomole` for the synthetic curve, `f_milliliter / f_liter`
-/// for the volumes, `f_minute / f_hour` for the midazolam slope - and each of those is a plain
-/// prefix ratio whose error would be a power of ten, orders of magnitude outside the 1e-6 gate.
-///
-/// The dimension assertion is here for a different error: a unit the kernel reports for a
-/// parameter of another dimension than the reference then fails by name instead of as a number
-/// which is merely out by a factor.
-#[track_caller]
-fn in_unit(value: f64, from: &str, to: &str, what: &str) -> f64 {
-    let from_unit = unit_of(from, what);
-    let to_unit = unit_of(to, what);
-    assert_eq!(
-        from_unit.dimension(),
-        to_unit.dimension(),
-        "{what}: the kernel reports {from}, whose dimension is not that of the reference unit {to}"
-    );
-    value * from_unit.factor() / to_unit.factor()
 }
 
 /// The nine cases of the oracle, with every key of the file accounted for.

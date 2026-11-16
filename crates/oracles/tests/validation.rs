@@ -20,6 +20,9 @@
 //! by how much it differed.
 
 mod common;
+// the unit helpers of the numeric gates, which `tests/oracles_present.rs` does not declare
+#[path = "common/units.rs"]
+mod units;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -28,10 +31,10 @@ use pkpdutils_abi::{
     TerminalPhase,
 };
 use pkpdutils_core::analyze_batch;
-use pkpdutils_units::{Unit, parse_unit};
 use serde::Deserialize;
 
 use common::read_text;
+use units::in_unit;
 
 /// The oracle, repo-relative as the vendoring mirrors it.
 const REFERENCE: &str = "tests/data/validation/reference.json";
@@ -71,13 +74,23 @@ const NUMBERS_SKIPPED: usize = 12;
 /// instead of passing vacuously.
 const NUMBERS_COMPARED: usize = 1043;
 
-/// Every reference of the file, the 1055 of `TOTAL_REFERENCES`
-/// (`tests/nca/test_validation.py:127`), which the two literals above have to add up to.
-const TOTAL_REFERENCES: usize = NUMBERS_COMPARED + NUMBERS_SKIPPED;
+/// Every reference of the file, `TOTAL_REFERENCES` of `tests/nca/test_validation.py:127` and of
+/// `docs/python-reference/gates.md` section 1b, written as the number both of them name rather
+/// than derived from the two literals above.
+const TOTAL_REFERENCES: usize = 1055;
+
+/// The compared and the skipped numbers have to account for every reference of the file, which
+/// holds when the gate is built and not only when it has read the oracle.
+const _: () = assert!(NUMBERS_COMPARED + NUMBERS_SKIPPED == TOTAL_REFERENCES);
 
 /// The subjects of the compared groups: twelve theophylline profiles twice, six indomethacin
 /// profiles three times and the two subjects the PKNCA vignette prints.
 const SUBJECTS_COMPARED: usize = 44;
+
+/// How many deviating numbers the failure names. The gate compares every number before it
+/// fails, so a kernel which has drifted lists what drifted rather than the first of it, and a
+/// kernel which is broken does not print a thousand lines to say so.
+const FAILURES_SHOWN: usize = 10;
 
 /// The tolerance every reference of a group carries, which the gate asserts rather than reads,
 /// so that a loosened oracle fails instead of hiding a deviation.
@@ -340,42 +353,6 @@ fn deviation(expected: f64, value: f64) -> f64 {
         return value.abs();
     }
     (value - expected).abs() / expected.abs()
-}
-
-/// A unit of the oracle or of a result, naming what could not be read.
-#[track_caller]
-fn unit_of(spelling: &str, what: &str) -> Unit {
-    parse_unit(spelling).unwrap_or_else(|e| panic!("{what}: {spelling} is no unit: {e}"))
-}
-
-/// A magnitude in `from`, expressed in `to`.
-///
-/// The oracle writes every number in the unit the python analysis reports for it, which is not
-/// always the unit this kernel reports: the indomethacin profiles are measured in `ug/mL` and
-/// the published numbers are written in the `mg/L` the comparators declared, the same quantity
-/// under another spelling. So an oracle gate cannot avoid converting.
-///
-/// Converting with the registry the kernel itself uses is sound here for the reason the same
-/// function of `tests/reference.rs` sets out at length: the expected magnitudes are fixed
-/// absolute numbers, and every factor which could hide an error appears once in each direction
-/// and cancels. What does not cancel is a ratio of two spellings of one dimension, and here
-/// there are only two of those - `microgram / milliliter` against `milligram / liter`, and the
-/// `liter` and `liter / hour` the kernel normalizes a volume and a clearance to against the
-/// `liter` and `liter / hour` the oracle writes, which is the same spelling. Each is a power of
-/// ten whose error would be orders of magnitude outside the tightest tolerance of this gate.
-///
-/// The dimension assertion catches a different error: a unit of another dimension than the
-/// reference then fails by name rather than as a number which is merely out by a factor.
-#[track_caller]
-fn in_unit(value: f64, from: &str, to: &str, what: &str) -> f64 {
-    let from_unit = unit_of(from, what);
-    let to_unit = unit_of(to, what);
-    assert_eq!(
-        from_unit.dimension(),
-        to_unit.dimension(),
-        "{what}: the kernel reports {from}, whose dimension is not that of the reference unit {to}"
-    );
-    value * from_unit.factor() / to_unit.factor()
 }
 
 /// The oracle, with the structure this gate was written against asserted on the way in.
@@ -659,6 +636,10 @@ fn run(document: &Document) -> Tally {
     let tolerances: BTreeMap<&str, f64> = TOLERANCES.into_iter().collect();
     let mut parameters: BTreeSet<String> = BTreeSet::new();
     let mut total = 0usize;
+    // every number which deviates, not just the first: a systematic divergence is then one run
+    // and not one edit and run per number. Only the numbers are collected this way; a malformed
+    // oracle still fails where it is read, since nothing sensible follows it.
+    let mut failures: Vec<String> = Vec::new();
     for (key, group) in groups {
         let entries = entries(key, group);
         total += entries.len();
@@ -736,13 +717,15 @@ fn run(document: &Document) -> Tally {
             let what = format!("{key}, subject {subject}, {parameter}");
             let value = converted(&result, parameter, row, &reference.unit, &what);
             let relative = deviation(reference.value, value);
-            assert!(
-                relative <= tolerance,
-                "{what}: {value:?} against {} {} of {}, deviation {relative:?} above {tolerance:e}",
-                reference.value,
-                reference.unit,
-                reference.source
-            );
+            // `deviation` returns 0, an infinity or a finite non-negative number and never a
+            // NaN, so this is the exact negation of the `<=` the python gate asserts
+            if relative > tolerance {
+                failures.push(format!(
+                    "{what}: {value:?} against {} {} of {}, deviation {relative:?} above \
+                     {tolerance:e}",
+                    reference.value, reference.unit, reference.source
+                ));
+            }
             if relative > worst.0 {
                 worst = (relative, format!("subject {subject}, {parameter}"));
             }
@@ -785,6 +768,23 @@ fn run(document: &Document) -> Tally {
         PARAMETERS,
         "the compared groups do not reference the parameters this gate was written against"
     );
+    assert!(
+        failures.is_empty(),
+        "{} of {} published numbers deviate by more than their tolerance{}:\n{}",
+        failures.len(),
+        tally.compared,
+        if failures.len() > FAILURES_SHOWN {
+            format!(", the first {FAILURES_SHOWN} of them")
+        } else {
+            String::new()
+        },
+        failures
+            .iter()
+            .take(FAILURES_SHOWN)
+            .cloned()
+            .collect::<Vec<String>>()
+            .join("\n")
+    );
     tally
 }
 
@@ -816,6 +816,9 @@ fn every_published_parameter_of_the_validation_datasets_is_reproduced() {
         GROUPS_COMPARED,
         "every group the gate ran reports its largest deviation"
     );
+    // cargo captures the output of a test which passes, so this is read on a failure or under
+    // `cargo test -- --nocapture`, and nothing the gate decides depends on it being seen: what
+    // has to fail does so in an assertion above
     println!("{NUMBERS_COMPARED} numbers compared over {GROUPS_COMPARED} groups:");
     for (key, worst, what) in &tally.worst {
         println!("  {key}: worst deviation {worst:e} on {what}");
