@@ -7,10 +7,10 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - name: Install the toolchain of rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.3
       - run: cargo fmt --check
       # --locked, so that the committed Cargo.lock is what is checked and a
       # resolver change is a failure here and not a silent difference
@@ -27,12 +27,12 @@ jobs:
   wasm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       # rust-toolchain.toml pins both wasm targets, which rustup installs with
       # the toolchain
       - name: Install the toolchain of rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.3
       # the core is compiled to wasm from plan 7 on, and the libraries compile
       # for both targets today; checking them from the start names the commit
       # which adds a dependency that is not wasm safe, instead of leaving it to
@@ -54,7 +54,7 @@ jobs:
   python:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - name: Install the toolchain of rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
       # `pkpdutils-python` is no default member of the workspace, so the cargo
@@ -62,7 +62,7 @@ jobs:
       # pyo3 refuses to build against an interpreter older than its
       # `abi3-py313` floor, and the runner image ships an older one as
       # `python3`, so the interpreter is named here
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.13"
       # the exact versions, as the ruff of the job below is pinned: the tests of
@@ -71,7 +71,7 @@ jobs:
       # the backend which assembles the published artifact is pinned for the
       # same reason
       - run: python -m pip install numpy==2.5.5 maturin==1.16.0 pytest==9.2.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.3
       - run: cargo fmt --check
       - run: cargo clippy -p pkpdutils-python --all-targets --locked -- -D warnings
       # and with the row shards, as `checks` lints the kernel both ways: the
@@ -109,7 +109,7 @@ jobs:
   ruff:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       # the python of `scripts/` had no gate at all until `ruff.toml`, which is
       # how both of these were red without anyone noticing: `ruff.toml` pins
       # what is checked and the version here pins who checks it, so that

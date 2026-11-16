@@ -1,0 +1,221 @@
+# The release of the `pkpdutils-core` distribution on PyPI.
+#
+# The filename matters: PyPI's pending publisher for this project names `release.yml` and the
+# environment `pypi`, and the OIDC token the publish job presents carries both as claims. Rename
+# this file or that environment and the upload fails with a message which does not say why.
+#
+# Nothing here holds a token. Trusted Publishing exchanges the job's OIDC identity for an upload
+# token at the moment of the upload, which is why the publish job needs `id-token: write` and why
+# there is no secret to leak, rotate or forget.
+#
+# `workflow_dispatch` builds the whole matrix and publishes nothing, since `publish` runs only for
+# a tag. That is how the matrix is exercised, and the artifacts inspected, before a release depends
+# on it.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# checkout needs no more than this; the publish job asks for `id-token: write` of its own
+permissions:
+  contents: read
+
+# a release is never superseded: `cancel-in-progress: true`, which the `ci` workflow of this
+# repository wants, would be able to kill a run between the upload of one file and the next
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  wheels:
+    name: wheel ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # one platform failing should not hide whether the others build
+      fail-fast: false
+      matrix:
+        include:
+          # `manylinux: '2014'` is the glibc 2.17 floor, and it is written here rather than left to
+          # the action's `auto` because it is the reach of every linux wheel we ship. Measured in
+          # containers before this file was written: the kernel and rust 1.100 build in
+          # manylinux2014, the resulting extension references no symbol above GLIBC_2.16, and the
+          # same build in manylinux_2_28 references GLIBC_2.28 and reaches strictly fewer systems
+          # for no measured gain. glibc 2.17 covers RHEL 8 (2.28), RHEL 9 (2.34) and every current
+          # Debian and Ubuntu.
+          - name: linux-x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            manylinux: '2014'
+            # the wheel is loadable on the runner, so the suite runs against the real artifact
+            smoke: true
+          - name: linux-aarch64
+            runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            manylinux: '2014'
+            # cross compiled in a container on an x86_64 runner: nothing here can load it
+            smoke: false
+          # the macOS wheel tag comes from the deployment target of the rust target (11.0 for
+          # arm64, 10.12 for x86_64) and not from the runner's OS, so the floating label cannot
+          # change what is shipped. A pinned `macos-15` could be retired, and a retired label
+          # fails a release at the worst possible moment.
+          - name: macos-arm64
+            runner: macos-latest
+            target: aarch64-apple-darwin
+            manylinux: auto
+            smoke: true
+          - name: macos-x86_64
+            runner: macos-latest
+            target: x86_64-apple-darwin
+            manylinux: auto
+            # built on an arm64 runner against the x86_64 slice of the SDK: not loadable here
+            smoke: false
+          - name: windows-x64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            manylinux: auto
+            smoke: true
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # Before the build, and on every platform rather than only where the smoke test runs. On
+      # macOS and windows maturin runs on the runner itself and probes the python it finds on
+      # PATH; pyo3 refuses to build against an interpreter older than its `abi3-py313` floor, and
+      # the runner images ship an older `python3`. That is the same reason the `python` job of
+      # `ci.yml` names the interpreter. On linux the build happens inside the manylinux container,
+      # which carries its own cp313, so there this step only serves the smoke test below.
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.13'
+
+      # `--locked`, so the committed Cargo.lock is what every published wheel was built from.
+      # `features = ["extension-module", "parallel"]` of `crates/python/pyproject.toml` is read on
+      # every one of these builds, which is why no platform can quietly lose the row shards; the
+      # smoke test below asserts it at runtime wherever the wheel can be loaded.
+      - name: Build the wheel
+        uses: PyO3/maturin-action@v1.51.0
+        with:
+          command: build
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --locked --out dist -m crates/python/Cargo.toml
+
+      # the pinned versions of the `python` job of `ci.yml`, for the same reason: a numpy release
+      # of the day must not be able to decide whether a release goes out
+      - name: Install the test dependencies
+        if: matrix.smoke
+        run: python -m pip install numpy==2.5.5 pytest==9.2.0
+
+      # `--no-index`, so the wheel under test is the one just built and nothing is fetched
+      - name: Install the built wheel
+        if: matrix.smoke
+        run: python -m pip install --no-index --find-links dist pkpdutils-core
+
+      # every command is a step of its own: a `run:` block of several lines reports only the exit
+      # code of its last line under pwsh, which would hide a failed install on windows
+      - name: Test the installed wheel
+        if: matrix.smoke
+        run: python -m pytest crates/python/tests -q
+
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: dist-${{ matrix.name }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # maturin reads the pyo3 bindings configuration even for an sdist, and the runner's own
+      # `python3` is older than the `abi3-py313` floor
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.13'
+
+      # `command: sdist` and not `build --sdist`. The latter also builds a wheel from the unpacked
+      # sdist, under the same filename as the wheel of the linux job and without `--locked`, and
+      # two files of one name in one upload is a published artifact nobody chose. `maturin sdist`
+      # writes the tarball and nothing else.
+      # No `--locked`: the sdist carries a workspace maturin assembles out of this crate and its
+      # path dependencies, which is not the workspace the committed lock was resolved for.
+      - name: Build the source distribution
+        uses: PyO3/maturin-action@v1.51.0
+        with:
+          command: sdist
+          args: --out dist -m crates/python/Cargo.toml
+
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: dist-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: publish to PyPI
+    # A pushed tag and nothing else. `workflow_dispatch` builds everything above and stops here,
+    # which is how this workflow is tested without spending a version number.
+    # `github.event_name == 'push'` is not redundant beside the ref test: `workflow_dispatch` can
+    # be aimed at a tag as readily as at a branch, and the ref test alone would then publish from
+    # a dialog, which is one dropdown between a person and an upload that cannot be taken back.
+    # The release path is pushing a tag; a failed upload is re-run from that run.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: [wheels, sdist]
+    runs-on: ubuntu-latest
+    # the name PyPI's pending publisher was registered with. It is also where a required reviewer
+    # belongs, if the upload is to have a human gate.
+    environment: pypi
+    permissions:
+      # Trusted Publishing: the only credential in this workflow, and it lives for one upload
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+
+      # The count is the guard. Six jobs upload one file each under six different names, so a
+      # duplicate filename cannot survive `merge-multiple` without replacing another file and
+      # taking the count below six. A wrong wheel therefore cannot be uploaded quietly: it has to
+      # show up as a missing one.
+      - name: Six artifacts, five wheels and one sdist
+        run: |
+          set -euo pipefail
+          ls -l dist
+          wheels=$(find dist -maxdepth 1 -name '*.whl' | wc -l)
+          sdists=$(find dist -maxdepth 1 -name '*.tar.gz' | wc -l)
+          others=$(find dist -maxdepth 1 -type f ! -name '*.whl' ! -name '*.tar.gz' | wc -l)
+          echo "wheels=$wheels sdists=$sdists others=$others"
+          test "$wheels" -eq 5
+          test "$sdists" -eq 1
+          test "$others" -eq 0
+
+      # A tag which does not name the version in the artifacts means the version was not bumped,
+      # or the wrong commit was tagged. Either way the upload would spend a version number on
+      # something nobody meant to release, and PyPI never gives a filename back.
+      - name: The tag names the version of the artifacts
+        run: |
+          set -euo pipefail
+          sdist=$(find dist -maxdepth 1 -name 'pkpdutils_core-*.tar.gz')
+          version=$(basename "$sdist" .tar.gz)
+          version=${version#pkpdutils_core-}
+          echo "tag=${GITHUB_REF_NAME} artifact version=${version}"
+          test "${GITHUB_REF_NAME}" = "v${version}"
+          for wheel in dist/*.whl; do
+            case "$(basename "$wheel")" in
+              "pkpdutils_core-${version}-"*) ;;
+              *) echo "$wheel is not version ${version}"; exit 1 ;;
+            esac
+          done
+
+      - uses: pypa/gh-action-pypi-publish@v1.14.3
+        with:
+          packages-dir: dist
+          # the digest of every uploaded file in the log, so what was published is on the record
+          print-hash: true
+          # PEP 740 attestations, signed with the same OIDC identity as the upload
+          attestations: true
