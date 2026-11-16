@@ -282,27 +282,40 @@ mod tests {
     use numpy::{PyArray1, PyArray2};
     use pyo3::types::PyList;
 
-    /// A dict of two subjects of three points and one oral dose each, every key filled.
-    fn batch_dict(py: Python<'_>) -> Bound<'_, PyDict> {
+    /// One coordinate over `subject`, its values under the dtype tag `tag`.
+    fn coord_dict<'py, V>(py: Python<'py>, name: &str, tag: &str, values: V) -> Bound<'py, PyDict>
+    where
+        V: IntoPyObject<'py>,
+    {
+        let tagged = PyDict::new(py);
+        tagged.set_item(tag, values).unwrap();
         let coord = PyDict::new(py);
-        coord.set_item("name", "subject").unwrap();
+        coord.set_item("name", name).unwrap();
         coord.set_item("dims", ["subject"]).unwrap();
-        let labels = PyDict::new(py);
-        labels.set_item("str", ["A", "B"]).unwrap();
-        coord.set_item("values", &labels).unwrap();
+        coord.set_item("values", tagged).unwrap();
+        coord
+    }
+
+    /// A `(2, 3)` array of the numbers given row by row.
+    fn points_array<'py>(py: Python<'py>, first: [f64; 3], second: [f64; 3]) -> Bound<'py, PyAny> {
+        PyArray2::from_vec2(py, &[first.to_vec(), second.to_vec()])
+            .unwrap()
+            .into_any()
+    }
+
+    /// A dict of two subjects of three points and one oral dose each, every required key filled.
+    fn batch_dict(py: Python<'_>) -> Bound<'_, PyDict> {
+        let coord = coord_dict(py, "subject", "str", ["A", "B"]);
 
         let dict = PyDict::new(py);
         dict.set_item("sample_dims", ["subject"]).unwrap();
         dict.set_item("sample_shape", [2usize]).unwrap();
         dict.set_item("n_time", 3usize).unwrap();
-        dict.set_item(
-            "times",
-            PyArray2::from_vec2(py, &[vec![0.0, 1.0, 2.0], vec![0.0, 1.0, 2.0]]).unwrap(),
-        )
-        .unwrap();
+        dict.set_item("times", points_array(py, [0.0, 1.0, 2.0], [0.0, 1.0, 2.0]))
+            .unwrap();
         dict.set_item(
             "values",
-            PyArray2::from_vec2(py, &[vec![10.0, 5.0, 2.0], vec![12.0, 6.0, f64::NAN]]).unwrap(),
+            points_array(py, [10.0, 5.0, 2.0], [12.0, 6.0, f64::NAN]),
         )
         .unwrap();
         dict.set_item("sd", py.None()).unwrap();
@@ -375,6 +388,118 @@ mod tests {
         // the conversion does not validate, so the test does: a dict which converts has to be a
         // batch the kernel accepts, or the conversion built a shape nothing can read
         assert_eq!(batch.validate(), Ok(()));
+    }
+
+    #[test]
+    fn the_optional_arrays_and_the_per_sample_columns_are_read() {
+        let batch = Python::attach(|py| {
+            let dict = batch_dict(py);
+            dict.set_item("sd", points_array(py, [1.0, 0.5, 0.2], [1.2, 0.6, 0.3]))
+                .unwrap();
+            dict.set_item("se", points_array(py, [0.5, 0.25, 0.1], [0.6, 0.3, 0.15]))
+                .unwrap();
+            dict.set_item("n", points_array(py, [4.0, 4.0, 4.0], [4.0, 4.0, 3.0]))
+                .unwrap();
+            dict.set_item(
+                "nominal_time",
+                points_array(py, [0.0, 1.0, 2.0], [0.0, 1.0, 2.0]),
+            )
+            .unwrap();
+            // a mixed batch names its substance and its route per sample instead of once
+            dict.set_item("substance", py.None()).unwrap();
+            dict.set_item("route", py.None()).unwrap();
+            dict.set_item("substances", ["caffeine", "paraxanthine"])
+                .unwrap();
+            dict.set_item("routes", ["oral", "iv_infusion"]).unwrap();
+            batch_from_python(py, &dict).unwrap()
+        });
+
+        assert_eq!(
+            batch.sd.as_deref(),
+            Some([1.0, 0.5, 0.2, 1.2, 0.6, 0.3].as_slice())
+        );
+        assert_eq!(
+            batch.se.as_deref(),
+            Some([0.5, 0.25, 0.1, 0.6, 0.3, 0.15].as_slice())
+        );
+        assert_eq!(
+            batch.n.as_deref(),
+            Some([4.0, 4.0, 4.0, 4.0, 4.0, 3.0].as_slice())
+        );
+        assert_eq!(
+            batch.nominal_time.as_deref(),
+            Some([0.0, 1.0, 2.0, 0.0, 1.0, 2.0].as_slice())
+        );
+        assert_eq!(batch.substance, None);
+        assert_eq!(
+            batch.substances,
+            Some(vec!["caffeine".to_string(), "paraxanthine".to_string()])
+        );
+        assert_eq!(batch.route, None);
+        assert_eq!(batch.routes, Some(vec![Route::Oral, Route::IvInfusion]));
+        assert_eq!(batch.validate(), Ok(()));
+    }
+
+    #[test]
+    fn every_coordinate_tag_keeps_its_dtype() {
+        let batch = Python::attach(|py| {
+            let dict = batch_dict(py);
+            let coords = PyList::new(
+                py,
+                [
+                    coord_dict(py, "subject", "str", ["A", "B"]),
+                    coord_dict(py, "period", "int", [1i64, 2]),
+                    coord_dict(py, "weight", "float", [70.0, 80.5]),
+                    coord_dict(py, "fasted", "bool", [true, false]),
+                ],
+            )
+            .unwrap();
+            dict.set_item("coords", coords).unwrap();
+            batch_from_python(py, &dict).unwrap()
+        });
+
+        let names: Vec<&str> = batch.coords.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["subject", "period", "weight", "fasted"]);
+        assert_eq!(
+            batch.coords[0].values,
+            Coordinate::Str(vec!["A".to_string(), "B".to_string()])
+        );
+        assert_eq!(batch.coords[1].values, Coordinate::Int(vec![1, 2]));
+        assert_eq!(batch.coords[2].values, Coordinate::Float(vec![70.0, 80.5]));
+        assert_eq!(batch.coords[3].values, Coordinate::Bool(vec![true, false]));
+        assert_eq!(batch.validate(), Ok(()));
+    }
+
+    #[test]
+    fn an_unknown_route_is_refused_by_name() {
+        let message = Python::attach(|py| {
+            let dict = batch_dict(py);
+            dict.set_item("route", "intramuscular").unwrap();
+            let err = batch_from_python(py, &dict).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            err.to_string()
+        });
+
+        assert!(message.contains("route"), "{message}");
+        assert!(message.contains("intramuscular"), "{message}");
+    }
+
+    #[test]
+    fn a_coordinate_without_a_dtype_tag_is_refused() {
+        let message = Python::attach(|py| {
+            let dict = batch_dict(py);
+            // `text` is no tag of `batch/1`, so the dtype of the values is unstated
+            let coord = coord_dict(py, "subject", "text", ["A", "B"]);
+            dict.set_item("coords", PyList::new(py, [coord]).unwrap())
+                .unwrap();
+            let err = batch_from_python(py, &dict).unwrap_err();
+            assert!(err.is_instance_of::<PyKeyError>(py), "{err}");
+            err.to_string()
+        });
+
+        assert!(message.contains("coords[0]"), "{message}");
+        assert!(message.contains("values"), "{message}");
+        assert!(message.contains("`str`"), "{message}");
     }
 
     #[test]

@@ -10,16 +10,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install the toolchain of rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
-      # `pkpdutils-python` binds pyo3 against the stable ABI from python 3.13
-      # on, and pyo3 refuses to build against an interpreter older than that
-      # floor, whatever the runner image happens to ship; its tests build real
-      # numpy arrays, so the interpreter it links needs numpy as well. Every
-      # cargo step of this job builds the whole workspace, so the interpreter
-      # is set up once, here
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - run: python -m pip install numpy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
       # --locked, so that the committed Cargo.lock is what is checked and a
@@ -61,6 +51,29 @@ jobs:
       # `parallel` feature is a dependency a wasm instance cannot use
       - run: cargo check --locked --workspace --exclude pkpdutils-python --no-default-features --target wasm32-unknown-unknown
       - run: cargo check --locked --workspace --exclude pkpdutils-python --no-default-features --target wasm32-wasip1
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the toolchain of rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      # `pkpdutils-python` is no default member of the workspace, so the cargo
+      # commands of `checks` build none of it and this is the only gate it has.
+      # pyo3 refuses to build against an interpreter older than its
+      # `abi3-py313` floor, and the runner image ships an older one as
+      # `python3`, so the interpreter is named here
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # the exact version, as the ruff of the job below is pinned: the tests of
+      # the binding build real numpy arrays through the C API, so a numpy
+      # release must not be able to turn this job red with no change here
+      - run: python -m pip install numpy==2.5.5
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy -p pkpdutils-python --all-targets --locked -- -D warnings
+      - run: cargo test -p pkpdutils-python --locked
+      - run: RUSTDOCFLAGS="-D warnings" cargo doc -p pkpdutils-python --locked --no-deps
   ruff:
     runs-on: ubuntu-latest
     steps:
