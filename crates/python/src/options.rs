@@ -51,11 +51,6 @@ use crate::convert::at_key;
 /// field reads, by its path inside the options (`terminal.min_points`), a `TypeError` naming
 /// the key whose value has the wrong type, or a `ValueError` naming an enumeration value, a
 /// window label type or a duplicate window label the contract does not spell.
-#[allow(
-    dead_code,
-    reason = "the analysis entry point which calls it is the next slice of the binding; the \
-              tests of this module are its only caller today"
-)]
 pub(crate) fn options_from_python(obj: &Bound<'_, PyDict>) -> PyResult<NcaOptions> {
     let options = Fields::root(obj);
     options.deny_unknown(&OPTION_KEYS)?;
@@ -125,11 +120,6 @@ const OPTION_KEYS: [&str; 24] = [
 /// are not is what `the_predicate_agrees_with_the_kernel` exists to catch: a predicate wider
 /// than the kernel turns into an exception at the user's call site, and a narrower one sends
 /// work this build carries down the slow path for good.
-#[allow(
-    dead_code,
-    reason = "the analysis entry point which calls it is the next slice of the binding; the \
-              tests of this module are its only caller today"
-)]
 pub(crate) fn unsupported_reason(batch: &Batch, options: &NcaOptions) -> Option<String> {
     let reason = |what: &str| Some(what.to_string());
     if options.kind == Kind::Effect {

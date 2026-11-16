@@ -30,11 +30,6 @@ use pyo3::types::PyDict;
 /// A `KeyError` naming a required key the dict does not carry, a `TypeError` naming the key
 /// whose value has the wrong type - a `float32` array where the batch is `float64`, a 1-D array
 /// where it is 2-D - or a `ValueError` naming a route the contract does not spell.
-#[allow(
-    dead_code,
-    reason = "the analysis entry point which calls it is the next slice of the binding; the \
-              tests of this module are its only caller today"
-)]
 pub(crate) fn batch_from_python(py: Python<'_>, obj: &Bound<'_, PyDict>) -> PyResult<Batch> {
     Ok(Batch {
         contract: BATCH_CONTRACT.to_string(),

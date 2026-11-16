@@ -18,8 +18,12 @@ categories.workspace = true
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
-# the wire shapes the conversion builds; the numerics are reached through them and not from here
+# the wire shapes the conversion builds, and the kernel the analysis entry point calls. The
+# `parallel` feature of the kernel is deliberately not asked for here: which features a wheel
+# carries is settled where the wheel is built, and a build without it runs every shard plan in
+# the calling thread, which is the same numbers and one thread
 pkpdutils-abi = { path = "../abi", version = "0.1.0" }
+pkpdutils-core = { path = "../core", version = "0.1.0" }
 pyo3 = { workspace = true }
 numpy = { workspace = true }
 
@@ -27,10 +31,6 @@ numpy = { workspace = true }
 # the tests build their numpy arrays in a real interpreter, which `auto-initialize` starts on the
 # first `Python::attach`; it is a dev-dependency only, so no wheel ever carries it
 pyo3 = { workspace = true, features = ["auto-initialize"] }
-# the kernel, so that `the_predicate_agrees_with_the_kernel` of `options.rs` can ask it the same
-# questions the support predicate answers and compare the two texts. A list which is only as
-# good as the eye of its reader is the one failure that design is built to prevent
-pkpdutils-core = { path = "../core", version = "0.1.0" }
 
 [lints]
 workspace = true
