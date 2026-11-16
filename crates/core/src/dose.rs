@@ -186,12 +186,13 @@ pub(crate) struct Inserted {
 /// row; a shorter pair is cut to what fits, as [`crate::pack::pack_valid`] cuts, and the slots
 /// behind the points written are filled with `NaN`.
 ///
-/// A point goes in only where the row has two points at all and its first sample lies strictly
+/// A point goes in only where the row has two points at all, its first sample lies strictly
 /// after the dose, since a row which starts at or before the dose needs no estimate of what
-/// happened in between. A `NaN` value - a bolus whose `c0` is not a number - inserts nothing
-/// either. [`Inserted::inserted`] is the answer to that question and the caller reads it rather
-/// than the value, because the fractions which are back-extrapolated are `0.0` and not `NaN`
-/// for a row which had nothing inserted (`areas.md` section 3.8 and trap T3).
+/// happened in between, and the buffers have room for it. A `NaN` value - a bolus whose `c0` is
+/// not a number - inserts nothing either. [`Inserted::inserted`] says whether a point really
+/// went in, and the caller reads it rather than the value, because the fractions which are
+/// back-extrapolated are `0.0` and not `NaN` for a row which had nothing inserted (`areas.md`
+/// section 3.8 and trap T3).
 ///
 /// The python `insert_point` concatenates the new point to the row and stable-sorts the whole of
 /// it by time, which reorders a row that arrived out of time order although `pack_valid` left it
@@ -212,8 +213,12 @@ pub(crate) fn insert_dose_value(
     let n_valid = n_valid.min(t.len()).min(c.len());
     let width = t_area.len().min(c_area.len());
     let first_time = t.first().copied().unwrap_or(f64::NAN);
-    // `n_valid >= 2` is `has_data`, and a NaN first time fails the comparison
-    let inserted = value.is_some_and(f64::is_finite) && n_valid >= 2 && first_time > 0.0;
+    // `n_valid >= 2` is `has_data` and a NaN first time fails the comparison; `n_valid < width`
+    // is the room for one point more than the row, which the caller leaves and python always
+    // has. Without it the row alone is written, so `inserted` never claims a point the area row
+    // does not carry.
+    let inserted =
+        value.is_some_and(f64::is_finite) && n_valid >= 2 && first_time > 0.0 && n_valid < width;
     let mut n = 0usize;
     while n < n_valid && n < width {
         t_area[n] = t[n];
@@ -221,24 +226,17 @@ pub(crate) fn insert_dose_value(
         n += 1;
     }
     let ordered = t_area[..n].windows(2).all(|pair| pair[0] <= pair[1]);
-    if inserted
-        && width > 0
-        && let Some(value) = value
-    {
+    if inserted && let Some(value) = value {
         // the stable position of a point at the dose time: behind every point whose time is not
         // later, which is the front of a row in order. A row out of order is appended to and
         // sorted below, which is what python does to every row it inserts into.
         let position = if ordered {
-            (0..n)
-                .find(|&j| t_area[j] > 0.0)
-                .unwrap_or(n)
-                .min(width - 1)
+            (0..n).find(|&j| t_area[j] > 0.0).unwrap_or(n)
         } else {
-            n.min(width - 1)
+            n
         };
-        if n < width {
-            n += 1;
-        }
+        // `n` is `n_valid`, which is below `width`, so the row grows into room it has
+        n += 1;
         for j in (position + 1..n).rev() {
             t_area[j] = t_area[j - 1];
             c_area[j] = c_area[j - 1];
@@ -397,12 +395,22 @@ mod tests {
         // areas.md trap T7: the expression keeps `ln(c1)` and `ln(c2)` apart, where the
         // logarithmic trapezoid takes the logarithm of one ratio, and the two are not the
         // same double. The python kernel gives 15.999999999999991 for this row and the
-        // ratio form gives 15.999999999999998, so this is what holds the two apart; a libm
-        // which rounds `ln` or `exp` differently would move both and this assertion with
-        // them.
-        assert_eq!(c0.value, 15.999_999_999_999_991);
-        let ratio_form = (c[0].ln() + (c[0] / c[1]).ln() / (t[1] - t[0]) * t[0]).exp();
-        assert_ne!(c0.value, ratio_form, "the ratio form is a different double");
+        // ratio form gives 15.999999999999998, which is the only thing that holds the two
+        // forms apart: they differ by a last place or two and the benchmark gate compares
+        // at a relative 1e-8.
+        //
+        // Neither `f64::ln` nor `f64::exp` is correctly rounded or specified bit for bit,
+        // so the exact doubles hold where the standard library calls the same glibc as
+        // CPython does. A build on macOS, on Windows or against musl may round the last
+        // place differently with the expression right, so the pin is taken there only.
+        // The gate goes away the day the two are correctly rounded, or the day the kernel
+        // carries a logarithm of its own.
+        #[cfg(all(target_os = "linux", target_env = "gnu"))]
+        {
+            assert_eq!(c0.value, 15.999_999_999_999_991);
+            let ratio_form = (c[0].ln() + (c[0] / c[1]).ln() / (t[1] - t[0]) * t[0]).exp();
+            assert_ne!(c0.value, ratio_form, "the ratio form is a different double");
+        }
 
         let (t_area, c_area, inserted) =
             area_row(&t, &c, 3, dose_value(Some(Route::IvBolus), true, c0.value));
@@ -466,7 +474,6 @@ mod tests {
 
         let before = bolus_c0(&[-1.0, 1.0], &[8.0, 4.0], 2, C0Method::LogBackExtrapolation);
         close(before.value, 32.0_f64.sqrt());
-        close(before.value, 5.656_854_249_492_379);
         assert_eq!(before.method, C0Method::CODE_BACK_EXTRAPOLATION);
     }
 
@@ -655,23 +662,44 @@ mod tests {
     fn a_short_buffer_is_cut_and_never_indexed_past_its_end() {
         // The shapes come from a host: a row longer than the buffer it is written into is
         // cut like `pack_valid` cuts, and a count which claims more points than the row
-        // has reads only the row.
+        // has reads only the row. A buffer without room for the point at the dose time
+        // takes the row alone, and says so: `inserted` means a point really went in, so a
+        // caller which reads it for the back-extrapolated fraction is never told of a
+        // segment the area row does not carry.
         let t = [1.0, 2.0, 4.0];
         let c = [8.0, 4.0, 1.0];
         let mut t_area = [0.0; 2];
         let mut c_area = [0.0; 2];
-        let inserted = insert_dose_value(&t, &c, 3, Some(16.0), &mut t_area, &mut c_area);
-        assert!(inserted.inserted);
-        assert_eq!(inserted.n, 2, "the buffer holds two of the four points");
-        assert_eq!(t_area, [0.0, 1.0]);
-        assert_eq!(c_area, [16.0, 8.0]);
+        let cut = insert_dose_value(&t, &c, 3, Some(16.0), &mut t_area, &mut c_area);
+        assert!(!cut.inserted, "the buffer has no room for a fourth point");
+        assert!(cut.value.is_nan());
+        assert_eq!(cut.n, 2, "the buffer holds two of the three points");
+        assert_eq!(t_area, [1.0, 2.0], "the row alone, and no point at t = 0");
+        assert_eq!(c_area, [8.0, 4.0]);
+
+        // a buffer of exactly the row is one short as well
+        let mut t_area = [0.0; 3];
+        let mut c_area = [0.0; 3];
+        let exact = insert_dose_value(&t, &c, 3, Some(16.0), &mut t_area, &mut c_area);
+        assert!(!exact.inserted);
+        assert_eq!(exact.n, 3);
+        assert_eq!(t_area, t);
+        assert_eq!(c_area, c);
+
+        // while the one column of room a caller leaves is enough
+        let (t_area, _, room) = area_row(&t, &c, 3, Some(16.0));
+        assert!(room.inserted);
+        assert_eq!(room.n, 4);
+        assert_eq!(&t_area[..4], &[0.0, 1.0, 2.0, 4.0]);
 
         let (_, _, over) = area_row(&t, &c, 9, Some(16.0));
         assert_eq!(over.n, 4, "three points and the inserted one");
+        assert!(over.inserted);
 
         let mut empty: [f64; 0] = [];
         let mut empty_values: [f64; 0] = [];
         let none = insert_dose_value(&t, &c, 3, Some(16.0), &mut empty, &mut empty_values);
+        assert!(!none.inserted);
         assert_eq!(none.n, 0, "a buffer of no room writes no point");
     }
 }

@@ -401,7 +401,7 @@ mod tests {
 
         // unless the rules let them in: `BlqRules::terminal_regression` is the one switch
         // which hands the same points to the regression, and the three from t = 4 on lie
-        // on the line c = 16 * 2^(-t/4), whose rate is ln(2) / 4
+        // on the line c = 8 * 2^(-t/4), whose rate is ln(2) / 4
         let regressed = terminal_fit(&tp, &cp, n_valid, &[true; 5], imax, &phase);
         assert_eq!(regressed.n_points, 3.0);
         assert_eq!(regressed.t_first, 4.0);
