@@ -14,12 +14,18 @@
 //! correcting it.
 
 // Each module is one finished piece of the analysis pipeline and the row loop which calls them
-// - pack the row, integrate its segments, regress its terminal phase - is not written yet. The
-// terminal phase is handed a row which is already packed and never integrates, so it is no
-// caller of the two before it. Until that loop exists their own tests are the only caller and
-// the lint fires on every item in them; the allow goes away with the first real caller.
+// - apply the rules for the values below the limit, pack the row, pick the dose and insert its
+// value, integrate the segments, regress the terminal phase - is not written yet. The modules
+// are no callers of each other: the terminal phase is handed a row which is already packed and
+// never integrates, and the dose is read before the areas and never by them. Until that loop
+// exists their own tests are the only caller and the lint fires on every item in them; the
+// allows go away together with the first real caller.
 #[allow(dead_code)]
 mod auc;
+#[allow(dead_code)]
+mod blq;
+#[allow(dead_code)]
+mod dose;
 #[allow(dead_code)]
 mod pack;
 #[allow(dead_code)]
