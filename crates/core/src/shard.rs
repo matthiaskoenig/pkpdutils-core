@@ -328,11 +328,15 @@ mod tests {
     /// The option sets the identity assertion runs over, named.
     ///
     /// The default is the best fit regression of a batch with no limit of quantification; the
-    /// others take the three other paths through a row which depend on something outside the
+    /// others take the four other paths through a row which depend on something outside the
     /// row's own numbers, since those are the ones a shard boundary could get wrong: the manual
-    /// point indices, which are resolved against the length of each row, the window of a single
-    /// sample, which is looked up by the label of the row, and a limit of quantification, whose
-    /// rule walks the row against its peak.
+    /// point indices and the last n points, which are resolved against the length of each row,
+    /// the window of a single sample, which is looked up by the label of the row, and a limit of
+    /// quantification, whose rule walks the row against its peak. Each set changes exactly one
+    /// of those row dependent paths, so the assertion that a set computes something other than
+    /// the default pins that path and not a bundle of them. The linear up log down rule rides
+    /// along with the last n set because it is row independent: every row takes it the same way,
+    /// which is not something a shard boundary could get wrong.
     fn option_sets(n_samples: usize) -> Vec<(&'static str, NcaOptions)> {
         let mut manual = NcaOptions::default();
         manual.terminal.method = TerminalMethod::Manual;
@@ -354,17 +358,19 @@ mod tests {
         }
         let mut by_label = NcaOptions::default();
         by_label.terminal.windows = Some(windows);
-        by_label.lloq = Some(1.0);
-        by_label.blq = Blq::Handling(BlqHandling::ZeroBeforeTmax);
+
+        let below_limit = NcaOptions {
+            lloq: Some(1.0),
+            blq: Blq::Handling(BlqHandling::ZeroBeforeTmax),
+            ..NcaOptions::default()
+        };
 
         vec![
             ("the default options", NcaOptions::default()),
             ("manual point indices", manual),
             ("the last four points, linear up log down", last_n),
-            (
-                "a window per sample and a limit of quantification",
-                by_label,
-            ),
+            ("a window per sample", by_label),
+            ("a limit of quantification, zero before tmax", below_limit),
         ]
     }
 

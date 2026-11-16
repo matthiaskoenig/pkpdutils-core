@@ -28,7 +28,13 @@ from this repository's environment:
 ```bash
 uv run --no-sync python path/to/pkpdutils-core/scripts/python_timing.py
 uv run --no-sync python path/to/pkpdutils-core/scripts/python_timing.py --shape 1000x200
+uv run --no-sync python path/to/pkpdutils-core/scripts/python_timing.py \
+    --shape 1000x200 --variant nca
 ```
+
+`--shape` and `--variant` are what the measurement of `BENCHMARKS.md` uses: one
+process per shape and variant, as the rust side runs one process per shape and
+mode, so that no cell carries the allocator history of the cells before it.
 
 The `pkpdutils` logger is set to `ERROR` while the calls are timed: the kernel
 has no logging at all, and one `logger.warning` inside a timed call would be
@@ -197,7 +203,16 @@ def main() -> int:
         metavar="ROWSxPOINTS",
         help="one shape to time, repeatable; all four of BENCHMARKS.md by default",
     )
+    parser.add_argument(
+        "--variant",
+        action="append",
+        choices=["nca", "nca-explicit", "run-rows"],
+        help="one variant to time, repeatable; all three by default. One variant"
+        " per process is how the rust side is measured, one process per shape and"
+        " mode, so that no cell inherits the allocator history of another",
+    )
     args = parser.parse_args()
+    variants = set(args.variant or ["nca", "nca-explicit", "run-rows"])
     shapes = SHAPES
     if args.shape:
         shapes = [
@@ -243,14 +258,17 @@ def main() -> int:
             )
             return float(np.nansum(out["auc_last"]))
 
-        report("nca, default", rows, points, front_end)
-        report(
-            f"nca, n_workers={workers}",
-            rows,
-            points,
-            lambda options=explicit: front_end(options),
-        )
-        report("run_rows, n_workers=1", rows, points, core)
+        if "nca" in variants:
+            report("nca, default", rows, points, front_end)
+        if "nca-explicit" in variants:
+            report(
+                f"nca, n_workers={workers}",
+                rows,
+                points,
+                lambda options=explicit: front_end(options),
+            )
+        if "run-rows" in variants:
+            report("run_rows, n_workers=1", rows, points, core)
     print(
         f"\npeak RSS: {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss} kB\n"
         f"load average: {os.getloadavg()[0]:.2f}"
