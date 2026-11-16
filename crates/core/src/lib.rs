@@ -13,6 +13,7 @@
 //! is the same bit for bit where it can be, and pins an upstream oddity with a test rather than
 //! correcting it.
 
+mod assemble;
 mod auc;
 mod blq;
 mod dose;
@@ -21,18 +22,20 @@ mod parameters;
 mod terminal;
 
 use pkpdutils_abi::{
-    ANALYSIS_CONTRACT, AnalysisRequest, AnalysisResult, Attributes, BATCH_CONTRACT, Batch,
-    Coordinate, Kind, NcaOptions, ParameterColumn, Route, TerminalMethod, UncertaintyMethod,
-    WindowLabel, check_contract,
+    ANALYSIS_CONTRACT, AnalysisRequest, AnalysisResult, BATCH_CONTRACT, Batch, Coordinate, Kind,
+    NcaOptions, TerminalMethod, UncertaintyMethod, WindowLabel, check_contract,
 };
 
+use crate::assemble::{resolved_uncertainty, result_of};
 use crate::dose::{ReferenceDose, reference_dose};
-use crate::parameters::{PARAMETERS, Parameter, RowInput, RowParameters, Scratch, compute_row};
+use crate::parameters::{RowInput, Scratch, compute_row};
+use crate::terminal::Candidate;
 
 /// Why a batch could not be analysed.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum KernelError {
-    /// The batch itself is malformed, with the reason `pkpdutils_abi::Batch::validate` gave.
+    /// The batch itself is malformed, with the reason `pkpdutils_abi::Batch::validate` gave,
+    /// or one of its units is no unit, which that check does not cover (`crate::assemble`).
     #[error("the batch is not analysable: {0}")]
     Batch(String),
     /// The options are malformed or contradict each other.
@@ -56,31 +59,34 @@ pub enum KernelError {
 /// Analyse the batch of a request, after checking that the peer speaks this contract.
 ///
 /// The contract of the request and the contract of its batch are both checked, since a host may
-/// build the two separately.
+/// build the two separately; the batch is checked by [`analyze_batch`], which is an entry of its
+/// own and does not trust a caller to have done it.
 ///
 /// # Errors
 ///
 /// [`KernelError::Contract`] for a foreign contract, and whatever [`analyze_batch`] refuses.
 pub fn analyze(request: &AnalysisRequest) -> Result<AnalysisResult, KernelError> {
     check_contract(&request.contract, ANALYSIS_CONTRACT)?;
-    check_contract(&request.batch.contract, BATCH_CONTRACT)?;
     analyze_batch(&request.batch, &request.options)
 }
 
 /// The single dose non-compartmental analysis of every row of a batch.
 ///
-/// The batch and the options are validated before a row runs, an analysis this build does not
-/// carry is refused by name, and only then are the rows computed, each one independent of the
-/// others (`parameters::compute_row`). The result carries one column per parameter the rows
-/// report, the flags of every row and the coordinates of the batch.
+/// The contract, the batch and the options are checked before a row runs, an analysis this build
+/// does not carry is refused by name, and only then are the rows computed, each one independent
+/// of the others (`parameters::compute_row`). The result carries one column per parameter the
+/// rows report in its reported unit, the flags of every row, the acceptance variables and the
+/// coordinates of the batch (`assemble::result_of`).
 ///
 /// # Errors
 ///
-/// [`KernelError::Batch`] and [`KernelError::Options`] for a malformed input, naming the field,
-/// and [`KernelError::Unsupported`] for an analysis of another plan: an effect curve, a multiple
+/// [`KernelError::Contract`] for a batch of another contract, [`KernelError::Batch`] and
+/// [`KernelError::Options`] for a malformed input, naming the field, and
+/// [`KernelError::Unsupported`] for an analysis of another plan: an effect curve, a multiple
 /// dose protocol, a partial area, the acceptance criteria, the propagation of an uncertainty and
 /// the unit conversion of the result.
 pub fn analyze_batch(batch: &Batch, options: &NcaOptions) -> Result<AnalysisResult, KernelError> {
+    check_contract(&batch.contract, BATCH_CONTRACT)?;
     batch.validate().map_err(KernelError::Batch)?;
     options.validate().map_err(KernelError::Options)?;
     refuse_what_is_not_carried(batch, options)?;
@@ -89,6 +95,10 @@ pub fn analyze_batch(batch: &Batch, options: &NcaOptions) -> Result<AnalysisResu
     let manual = manual_columns(batch, options)?;
     let windows = sample_windows(batch, options)?;
     let has_dose = batch.max_doses > 0;
+    // only an analysis of a single row reports the windows the selection could have chosen from
+    // (`candidate_variables` of `nca.py`), so only such a row is asked for them
+    let mut candidates: Vec<Candidate> = Vec::new();
+    let wants_candidates = options.terminal.keep_candidates && n_samples == 1;
     let mut scratch = Scratch::new(batch.n_time);
     let mut rows = Vec::with_capacity(n_samples);
     for row in 0..n_samples {
@@ -103,19 +113,11 @@ pub fn analyze_batch(batch: &Batch, options: &NcaOptions) -> Result<AnalysisResu
             window: windows.as_ref().and_then(|w| w.get(row).copied().flatten()),
             manual: manual.as_deref(),
         };
-        rows.push((route, compute_row(&input, options, &mut scratch)));
+        let table = wants_candidates.then_some(&mut candidates);
+        rows.push((route, compute_row(&input, options, &mut scratch, table)));
     }
 
-    let result = AnalysisResult {
-        parameters: columns_of(&rows, has_dose),
-        flags: rows.iter().map(|(_, p)| p.flags.bits()).collect(),
-        coords: batch.coords.clone(),
-        ..AnalysisResult::new(
-            batch.sample_dims.clone(),
-            batch.sample_shape.clone(),
-            Attributes::of(batch, options.clone()),
-        )
-    };
+    let result = result_of(batch, options, &rows, &candidates)?;
     // unreachable after `batch.validate`, which is what every length here comes from, and kept
     // because a result the host cannot read is worth a named error rather than a surprise. The
     // batch validated, so the error names this build and not the input.
@@ -150,13 +152,7 @@ fn refuse_what_is_not_carried(batch: &Batch, options: &NcaOptions) -> Result<(),
     }
     // a batch which carries a spread resolves to the bootstrap on its own, so the refusal is of
     // what the options resolve to and not of what they say (`resolve_uncertainty` of `options.py`)
-    let spread = batch.sd.is_some() || batch.se.is_some();
-    let uncertainty = options.uncertainty.unwrap_or(if spread {
-        UncertaintyMethod::Bootstrap
-    } else {
-        UncertaintyMethod::None
-    });
-    if uncertainty != UncertaintyMethod::None {
+    if resolved_uncertainty(batch, options) != UncertaintyMethod::None {
         return unsupported("the propagation of the uncertainty of a group curve");
     }
     if !options.units.is_empty() {
@@ -363,43 +359,6 @@ fn dimension_labels(batch: &Batch, dim: &str, size: usize) -> Vec<WindowLabel> {
             .map(|i| WindowLabel::Int(i64::try_from(i).unwrap_or(i64::MAX)))
             .collect(),
     }
-}
-
-/// The parameter columns of a batch, one per parameter any of its rows reports.
-///
-/// A batch of one route reports exactly the parameters of that route, in the order
-/// [`parameters::PARAMETERS`] lists them. A batch which mixes routes reports the union of
-/// theirs, and a row which does not carry a parameter contributes a `NaN` to its column, as
-/// `merge_rows` of `nca.py` fills it.
-///
-/// The unit of every column is empty here: the units are derived from those of the batch when
-/// the result is assembled.
-fn columns_of(rows: &[(Option<Route>, RowParameters)], has_dose: bool) -> Vec<ParameterColumn> {
-    let mut routes: Vec<Option<Route>> = Vec::new();
-    for (route, _) in rows {
-        if !routes.contains(route) {
-            routes.push(*route);
-        }
-    }
-    let reported = |p: &Parameter| routes.iter().any(|&r| p.reported_by(r, has_dose));
-    PARAMETERS
-        .iter()
-        .filter(|p| reported(p))
-        .map(|p| ParameterColumn {
-            name: p.name.to_string(),
-            unit: String::new(),
-            values: rows
-                .iter()
-                .map(|(route, values)| {
-                    if p.reported_by(*route, has_dose) {
-                        (p.read)(values)
-                    } else {
-                        p.missing()
-                    }
-                })
-                .collect(),
-        })
-        .collect()
 }
 
 #[cfg(test)]

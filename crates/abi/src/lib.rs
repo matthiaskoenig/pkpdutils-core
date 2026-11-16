@@ -13,7 +13,10 @@ pub use enums::{
     NcaFlag, Route, TerminalMethod, UncertaintyMethod,
 };
 pub use options::{Acceptance, Blq, BlqRules, BlqSetting, NcaOptions, TerminalPhase};
-pub use result::{AnalysisRequest, AnalysisResult, Attributes, ParameterColumn, PointVariable};
+pub use result::{
+    AnalysisRequest, AnalysisResult, Attributes, BooleanColumn, ParameterColumn, PointVariable,
+    TextColumn,
+};
 pub use window::WindowLabel;
 
 /// The contract of an analysis request and its result.

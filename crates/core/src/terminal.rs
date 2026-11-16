@@ -568,9 +568,10 @@ fn low_concentration(
 
 /// One window the selection may choose from.
 ///
-/// The table of them reaches a result as the point variables of a batch of one row, which the
-/// assembly of the result writes; until it does, the tests of this module are its only caller.
-#[allow(dead_code)]
+/// The table of them reaches a result as the point variables `candidate_t_first`,
+/// `candidate_n_points` and `candidate_r2_adj` of a batch of one row ([`crate::assemble`]),
+/// which is every column python's `candidate_variables` reads. Python's table carries the slope
+/// of a window as well, which no variable of a result reports, so it is not here.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Candidate {
     /// The time of the first point of the window.
@@ -579,8 +580,6 @@ pub(crate) struct Candidate {
     pub n: f64,
     /// The adjusted coefficient of determination.
     pub r2_adj: f64,
-    /// The slope of `ln c` against `t`.
-    pub slope: f64,
 }
 
 /// Every window the terminal selection may choose from, in the order of their start.
@@ -595,8 +594,7 @@ pub(crate) struct Candidate {
 /// The arguments are those of [`terminal_fit`] and mean the same.
 ///
 /// Mirrors `candidate_table` of `src/pkpdutils/nca/terminal.py`, without the row index of the
-/// batch, which the caller holds.
-#[allow(dead_code)]
+/// batch, which the caller holds, and without the slope, which no result reports.
 pub(crate) fn candidate_table(
     t: &[f64],
     c: &[f64],
@@ -624,7 +622,6 @@ pub(crate) fn candidate_table(
                 start_time,
                 n: window.n,
                 r2_adj: window.r2_adj,
-                slope: window.slope,
             })
         })
         .collect()
@@ -1094,9 +1091,10 @@ mod tests {
         let table = candidate_table(&t, &c, t.len(), &permitted, 1, &phase);
 
         assert_eq!(table.len(), 3);
+        // the window of every point is in the table although the curve rises into its maximum
+        // at t = 1, which no selection rule would regress
         assert_eq!(table[0].start_time, 0.0);
         assert_eq!(table[0].n, 5.0);
-        assert!(table[0].slope > 0.0, "the rising window is in the table");
         close(table[0].r2_adj, -0.128_334_840_056_201_88);
         assert_eq!(table[1].start_time, 1.0);
         assert_eq!(table[1].n, 4.0);

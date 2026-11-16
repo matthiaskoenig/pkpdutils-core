@@ -15,6 +15,7 @@ categories.workspace = true
 # the version is what a published `pkpdutils-core` resolves against; the path is
 # what the workspace builds
 pkpdutils-abi = { path = "../abi", version = "0.1.0" }
+pkpdutils-units = { path = "../units", version = "0.1.0" }
 thiserror.workspace = true
 
 [lints]

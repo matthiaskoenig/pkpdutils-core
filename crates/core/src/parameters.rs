@@ -25,7 +25,7 @@ use crate::auc::{Areas, trapezoid, trapezoid_until};
 use crate::blq::{apply_blq, packed_mask, resolve_lloq};
 use crate::dose::{ReferenceDose, bolus_c0, dose_value, insert_dose_value};
 use crate::pack::pack_valid;
-use crate::terminal::{self, TerminalFit};
+use crate::terminal::{self, Candidate, TerminalFit};
 
 /// Every parameter of one row, whether its route carries it or not.
 ///
@@ -235,11 +235,15 @@ impl Presence {
     }
 }
 
-/// One reported parameter: its name, the field it reads and the rows which carry it.
+/// One reported parameter: its name, its unit, the field it reads and the rows which carry it.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Parameter {
     /// The name of the variable, exactly the python one.
     pub name: &'static str,
+    /// The unit expression of the variable, exactly the entry of `PARAMETER_UNITS` of
+    /// `src/pkpdutils/nca/nca.py`, with the placeholders `{unit}`, `{time}` and `{dose}` which
+    /// the units of a batch resolve ([`crate::assemble`]).
+    pub unit: &'static str,
     /// The field of [`RowParameters`] it reports.
     pub read: fn(&RowParameters) -> f64,
     /// The rows which carry it.
@@ -259,103 +263,248 @@ pub(crate) struct Parameter {
 /// `flags` is not here: it has its own section in `pkpdutils_abi::AnalysisResult` and is not a
 /// parameter column.
 pub(crate) const PARAMETERS: &[Parameter] = &[
-    Parameter::new("cmax", |p| p.cmax, Presence::Always),
-    Parameter::new("tmax", |p| p.tmax, Presence::Always),
-    Parameter::new("cmin", |p| p.cmin, Presence::Always),
-    Parameter::new("tmin", |p| p.tmin, Presence::Always),
-    Parameter::new("clast", |p| p.clast, Presence::Always),
-    Parameter::new("clast_pred", |p| p.clast_pred, Presence::Always),
-    Parameter::new("tlast", |p| p.tlast, Presence::Always),
-    Parameter::new("auc_last", |p| p.auc_last, Presence::Always),
-    Parameter::new("auc_all", |p| p.auc_all, Presence::Always),
-    Parameter::new("auc_inf_obs", |p| p.auc_inf_obs, Presence::Always),
-    Parameter::new("auc_inf_pred", |p| p.auc_inf_pred, Presence::Always),
+    Parameter::new("cmax", "{unit}", |p| p.cmax, Presence::Always),
+    Parameter::new("tmax", "{time}", |p| p.tmax, Presence::Always),
+    Parameter::new("cmin", "{unit}", |p| p.cmin, Presence::Always),
+    Parameter::new("tmin", "{time}", |p| p.tmin, Presence::Always),
+    Parameter::new("clast", "{unit}", |p| p.clast, Presence::Always),
+    Parameter::new("clast_pred", "{unit}", |p| p.clast_pred, Presence::Always),
+    Parameter::new("tlast", "{time}", |p| p.tlast, Presence::Always),
+    Parameter::new(
+        "auc_last",
+        "({unit}) * ({time})",
+        |p| p.auc_last,
+        Presence::Always,
+    ),
+    Parameter::new(
+        "auc_all",
+        "({unit}) * ({time})",
+        |p| p.auc_all,
+        Presence::Always,
+    ),
+    Parameter::new(
+        "auc_inf_obs",
+        "({unit}) * ({time})",
+        |p| p.auc_inf_obs,
+        Presence::Always,
+    ),
+    Parameter::new(
+        "auc_inf_pred",
+        "({unit}) * ({time})",
+        |p| p.auc_inf_pred,
+        Presence::Always,
+    ),
     Parameter::new(
         "auc_extrap_fraction",
+        "dimensionless",
         |p| p.auc_extrap_fraction,
         Presence::Always,
     ),
     Parameter::new(
         "auc_extrap_fraction_pred",
+        "dimensionless",
         |p| p.auc_extrap_fraction_pred,
         Presence::Always,
     ),
-    Parameter::new("aumc_last", |p| p.aumc_last, Presence::Always),
-    Parameter::new("aumc_all", |p| p.aumc_all, Presence::Always),
-    Parameter::new("aumc_inf", |p| p.aumc_inf, Presence::Always),
-    Parameter::new("aumc_inf_pred", |p| p.aumc_inf_pred, Presence::Always),
+    Parameter::new(
+        "aumc_last",
+        "({unit}) * ({time}) ** 2",
+        |p| p.aumc_last,
+        Presence::Always,
+    ),
+    Parameter::new(
+        "aumc_all",
+        "({unit}) * ({time}) ** 2",
+        |p| p.aumc_all,
+        Presence::Always,
+    ),
+    Parameter::new(
+        "aumc_inf",
+        "({unit}) * ({time}) ** 2",
+        |p| p.aumc_inf,
+        Presence::Always,
+    ),
+    Parameter::new(
+        "aumc_inf_pred",
+        "({unit}) * ({time}) ** 2",
+        |p| p.aumc_inf_pred,
+        Presence::Always,
+    ),
     Parameter::new(
         "aumc_extrap_fraction",
+        "dimensionless",
         |p| p.aumc_extrap_fraction,
         Presence::Always,
     ),
     Parameter::new(
         "aumc_extrap_fraction_pred",
+        "dimensionless",
         |p| p.aumc_extrap_fraction_pred,
         Presence::Always,
     ),
-    Parameter::new("mrt", |p| p.mrt, Presence::Always),
-    Parameter::new("mrt_last", |p| p.mrt_last, Presence::Always),
-    Parameter::new("mrt_pred", |p| p.mrt_pred, Presence::Always),
-    Parameter::new("thalf_eff", |p| p.thalf_eff, Presence::Always),
-    Parameter::new("lambda_z", |p| p.lambda_z, Presence::Always),
-    Parameter::new("lambda_z_stderr", |p| p.lambda_z_stderr, Presence::Always),
+    Parameter::new("mrt", "{time}", |p| p.mrt, Presence::Always),
+    Parameter::new("mrt_last", "{time}", |p| p.mrt_last, Presence::Always),
+    Parameter::new("mrt_pred", "{time}", |p| p.mrt_pred, Presence::Always),
+    Parameter::new("thalf_eff", "{time}", |p| p.thalf_eff, Presence::Always),
+    Parameter::new("lambda_z", "1 / ({time})", |p| p.lambda_z, Presence::Always),
+    Parameter::new(
+        "lambda_z_stderr",
+        "1 / ({time})",
+        |p| p.lambda_z_stderr,
+        Presence::Always,
+    ),
     Parameter::new(
         "lambda_z_intercept",
+        "dimensionless",
         |p| p.lambda_z_intercept,
         Presence::Always,
     ),
-    Parameter::new("lambda_z_r2", |p| p.lambda_z_r2, Presence::Always),
-    Parameter::new("lambda_z_r2_adj", |p| p.lambda_z_r2_adj, Presence::Always),
+    Parameter::new(
+        "lambda_z_r2",
+        "dimensionless",
+        |p| p.lambda_z_r2,
+        Presence::Always,
+    ),
+    Parameter::new(
+        "lambda_z_r2_adj",
+        "dimensionless",
+        |p| p.lambda_z_r2_adj,
+        Presence::Always,
+    ),
     Parameter::new(
         "lambda_z_n_points",
+        "dimensionless",
         |p| p.lambda_z_n_points,
         Presence::Always,
     ),
-    Parameter::new("lambda_z_t_first", |p| p.lambda_z_t_first, Presence::Always),
-    Parameter::new("lambda_z_t_last", |p| p.lambda_z_t_last, Presence::Always),
-    Parameter::new("lambda_z_span", |p| p.lambda_z_span, Presence::Always),
-    Parameter::new("thalf", |p| p.thalf, Presence::Always),
-    Parameter::new("c0", |p| p.c0, Presence::Bolus),
-    Parameter::integer("c0_method", |p| p.c0_method, Presence::Bolus),
+    Parameter::new(
+        "lambda_z_t_first",
+        "{time}",
+        |p| p.lambda_z_t_first,
+        Presence::Always,
+    ),
+    Parameter::new(
+        "lambda_z_t_last",
+        "{time}",
+        |p| p.lambda_z_t_last,
+        Presence::Always,
+    ),
+    Parameter::new(
+        "lambda_z_span",
+        "dimensionless",
+        |p| p.lambda_z_span,
+        Presence::Always,
+    ),
+    Parameter::new("thalf", "{time}", |p| p.thalf, Presence::Always),
+    Parameter::new("c0", "{unit}", |p| p.c0, Presence::Bolus),
+    Parameter::integer(
+        "c0_method",
+        "dimensionless",
+        |p| p.c0_method,
+        Presence::Bolus,
+    ),
     Parameter::new(
         "auc_back_extrap_fraction",
+        "dimensionless",
         |p| p.auc_back_extrap_fraction,
         Presence::Bolus,
     ),
     Parameter::new(
         "auc_back_extrap_fraction_pred",
+        "dimensionless",
         |p| p.auc_back_extrap_fraction_pred,
         Presence::Bolus,
     ),
     Parameter::new(
         "aumc_back_extrap_fraction",
+        "dimensionless",
         |p| p.aumc_back_extrap_fraction,
         Presence::Bolus,
     ),
-    Parameter::new("tlag", |p| p.tlag, Presence::Oral),
-    Parameter::new("cmax_half", |p| p.cmax_half, Presence::Oral),
-    Parameter::new("tmax_half", |p| p.tmax_half, Presence::Oral),
-    Parameter::new("cl", |p| p.cl, Presence::DoseIv),
-    Parameter::new("cl_f", |p| p.cl, Presence::DoseExtravascular),
-    Parameter::new("vz", |p| p.vz, Presence::DoseIv),
-    Parameter::new("vz_f", |p| p.vz, Presence::DoseExtravascular),
-    Parameter::new("cl_pred", |p| p.cl_pred, Presence::DoseIv),
-    Parameter::new("cl_f_pred", |p| p.cl_pred, Presence::DoseExtravascular),
-    Parameter::new("vz_pred", |p| p.vz_pred, Presence::DoseIv),
-    Parameter::new("vz_f_pred", |p| p.vz_pred, Presence::DoseExtravascular),
-    Parameter::new("vss", |p| p.vss, Presence::DoseIv),
-    Parameter::new("vss_pred", |p| p.vss_pred, Presence::DoseIv),
-    Parameter::new("auc_inf_dn", |p| p.auc_inf_dn, Presence::Dose),
-    Parameter::new("auc_inf_pred_dn", |p| p.auc_inf_pred_dn, Presence::Dose),
-    Parameter::new("cmax_dn", |p| p.cmax_dn, Presence::Dose),
+    Parameter::new("tlag", "{time}", |p| p.tlag, Presence::Oral),
+    Parameter::new("cmax_half", "{unit}", |p| p.cmax_half, Presence::Oral),
+    Parameter::new("tmax_half", "{time}", |p| p.tmax_half, Presence::Oral),
+    Parameter::new(
+        "cl",
+        "({dose}) / (({unit}) * ({time}))",
+        |p| p.cl,
+        Presence::DoseIv,
+    ),
+    Parameter::new(
+        "cl_f",
+        "({dose}) / (({unit}) * ({time}))",
+        |p| p.cl,
+        Presence::DoseExtravascular,
+    ),
+    Parameter::new("vz", "({dose}) / ({unit})", |p| p.vz, Presence::DoseIv),
+    Parameter::new(
+        "vz_f",
+        "({dose}) / ({unit})",
+        |p| p.vz,
+        Presence::DoseExtravascular,
+    ),
+    Parameter::new(
+        "cl_pred",
+        "({dose}) / (({unit}) * ({time}))",
+        |p| p.cl_pred,
+        Presence::DoseIv,
+    ),
+    Parameter::new(
+        "cl_f_pred",
+        "({dose}) / (({unit}) * ({time}))",
+        |p| p.cl_pred,
+        Presence::DoseExtravascular,
+    ),
+    Parameter::new(
+        "vz_pred",
+        "({dose}) / ({unit})",
+        |p| p.vz_pred,
+        Presence::DoseIv,
+    ),
+    Parameter::new(
+        "vz_f_pred",
+        "({dose}) / ({unit})",
+        |p| p.vz_pred,
+        Presence::DoseExtravascular,
+    ),
+    Parameter::new("vss", "({dose}) / ({unit})", |p| p.vss, Presence::DoseIv),
+    Parameter::new(
+        "vss_pred",
+        "({dose}) / ({unit})",
+        |p| p.vss_pred,
+        Presence::DoseIv,
+    ),
+    Parameter::new(
+        "auc_inf_dn",
+        "(({unit}) * ({time})) / ({dose})",
+        |p| p.auc_inf_dn,
+        Presence::Dose,
+    ),
+    Parameter::new(
+        "auc_inf_pred_dn",
+        "(({unit}) * ({time})) / ({dose})",
+        |p| p.auc_inf_pred_dn,
+        Presence::Dose,
+    ),
+    Parameter::new(
+        "cmax_dn",
+        "({unit}) / ({dose})",
+        |p| p.cmax_dn,
+        Presence::Dose,
+    ),
 ];
 
 impl Parameter {
     /// One entry of [`PARAMETERS`], a float of the result.
-    const fn new(name: &'static str, read: fn(&RowParameters) -> f64, presence: Presence) -> Self {
+    const fn new(
+        name: &'static str,
+        unit: &'static str,
+        read: fn(&RowParameters) -> f64,
+        presence: Presence,
+    ) -> Self {
         Self {
             name,
+            unit,
             read,
             presence,
             fill: f64::NAN,
@@ -369,11 +518,13 @@ impl Parameter {
     /// (`INTEGER_VARIABLES` and `merge_rows` of `nca.py`).
     const fn integer(
         name: &'static str,
+        unit: &'static str,
         read: fn(&RowParameters) -> f64,
         presence: Presence,
     ) -> Self {
         Self {
             name,
+            unit,
             read,
             presence,
             fill: 0.0,
@@ -470,12 +621,17 @@ pub(crate) struct RowInput<'a> {
 /// answers a short row with `None`. A malformed row is `NaN` parameters and the flag `NO_DATA`,
 /// never a panic.
 ///
+/// `candidates`, where it is given, is filled with the windows the terminal selection could
+/// have chosen from (`terminal::candidate_table`), which only an analysis of a single row
+/// reports; the caller decides whether it wants them, as python's `candidate_variables` does.
+///
 /// Mirrors `compute_parameters` of `src/pkpdutils/nca/nca.py` for one row, with
 /// `single_dose=True`.
 pub(crate) fn compute_row(
     input: &RowInput<'_>,
     options: &NcaOptions,
     scratch: &mut Scratch,
+    candidates: Option<&mut Vec<Candidate>>,
 ) -> RowParameters {
     let mut out = RowParameters::EMPTY;
     let Scratch {
@@ -612,6 +768,12 @@ pub(crate) fn compute_row(
         permitted,
     };
     let fit = regress(input, options, &packed, &time[..columns], &value[..columns]);
+    if let Some(table) = candidates {
+        // the table is of the rule's own candidates and of the whole regressable row: neither
+        // a window of the sample nor the manual mask narrows it (`terminal_fit` of terminal.py,
+        // which builds it from `regressable` and `tmax_idx` whatever the method decided)
+        *table = terminal::candidate_table(tp, cp, n_valid, permitted, imax, &options.terminal);
+    }
     if has_data {
         out.flags |= fit.flags;
     }
@@ -894,7 +1056,7 @@ pub(crate) mod tests {
     /// origin the regression shifts its sums by and the libm of `ln` and `exp` may move the
     /// last bits.
     #[track_caller]
-    fn close(actual: f64, expected: f64) {
+    pub(crate) fn close(actual: f64, expected: f64) {
         let tolerance = 1e-12 * expected.abs().max(1.0);
         assert!(
             (actual - expected).abs() <= tolerance,
@@ -906,7 +1068,7 @@ pub(crate) mod tests {
     ///
     /// The samples are labelled `A`, `B`, ... by the coordinate of their dimension, which is
     /// what a terminal window is keyed by.
-    fn many(times: &[&[f64]], values: &[&[f64]]) -> Batch {
+    pub(crate) fn many(times: &[&[f64]], values: &[&[f64]]) -> Batch {
         let n_samples = times.len();
         let n_time = times.first().map_or(0, |row| row.len());
         let labels = (0..n_samples)
@@ -949,12 +1111,12 @@ pub(crate) mod tests {
     }
 
     /// A batch of one sample, without doses and without a route.
-    fn one(times: &[f64], values: &[f64]) -> Batch {
+    pub(crate) fn one(times: &[f64], values: &[f64]) -> Batch {
         many(&[times], &[values])
     }
 
     /// `batch` with one dose of `amount` at `time` per sample, given by `route`.
-    fn dosed(batch: Batch, route: Route, amount: f64, time: f64) -> Batch {
+    pub(crate) fn dosed(batch: Batch, route: Route, amount: f64, time: f64) -> Batch {
         let n_samples = batch.sample_shape.iter().product();
         Batch {
             max_doses: 1,
@@ -977,18 +1139,18 @@ pub(crate) mod tests {
 
     /// The analysis of a batch which is expected to run.
     #[track_caller]
-    fn run(batch: &Batch, options: &NcaOptions) -> AnalysisResult {
+    pub(crate) fn run(batch: &Batch, options: &NcaOptions) -> AnalysisResult {
         analyze_batch(batch, options).expect("the batch is analysable")
     }
 
     /// The names of the parameter columns, in the order they are reported.
-    fn names(result: &AnalysisResult) -> Vec<&str> {
+    pub(crate) fn names(result: &AnalysisResult) -> Vec<&str> {
         result.parameters.iter().map(|p| p.name.as_str()).collect()
     }
 
     /// One parameter of one sample.
     #[track_caller]
-    fn at(result: &AnalysisResult, name: &str, row: usize) -> f64 {
+    pub(crate) fn at(result: &AnalysisResult, name: &str, row: usize) -> f64 {
         let column = result
             .parameters
             .iter()
@@ -999,7 +1161,7 @@ pub(crate) mod tests {
 
     /// One parameter of the first sample.
     #[track_caller]
-    fn value(result: &AnalysisResult, name: &str) -> f64 {
+    pub(crate) fn value(result: &AnalysisResult, name: &str) -> f64 {
         at(result, name, 0)
     }
 
