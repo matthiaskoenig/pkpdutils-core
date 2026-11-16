@@ -234,9 +234,15 @@ impl TerminalFit {
 /// A zero, a negative value and a point behind `n_valid` are therefore never regressed, and a
 /// zero in the middle of a window is skipped rather than ending it.
 ///
-/// `TerminalMethod::Manual` reads that same mask and regresses exactly what is in it: the
-/// indices of `TerminalPhase::points` are indices into the curve as the host sent it, which only
-/// the caller can map onto the packed row, so it maps them and intersects them here.
+/// `TerminalMethod::Manual` regresses exactly the points of that mask, and nothing here reads
+/// `TerminalPhase::points`: its indices are indices into the curve as the host sent it, and only
+/// the caller can map them onto the packed row of a sample, so **the caller resolves them and
+/// hands over `regressable` with the manual mask already folded in**. The same holds for
+/// `TerminalPhase::windows`, the window of a single row, which this function does not take at
+/// all. The obligation is worth stating because failing it is silent: a caller which passes only
+/// its own exclusions under `TerminalMethod::Manual` regresses the whole row, and a manual
+/// window carries no test on the sign of the slope and so raises no flag to show for it.
+///
 /// With `TerminalPhase::relative_warning` the fit also carries `TERMINAL_LOW_CONCENTRATION`
 /// where a regressed point lies far below the peak of the row, which never changes the window.
 /// A row of no columns at all, and `TerminalMethod::LastN` without `n_points`, which
@@ -265,7 +271,10 @@ pub(crate) fn terminal_fit(
     };
     let last = columns - 1;
     let chosen = match phase.method {
-        // no slope test, no tie rule, no `first_allowed`: the mask is the window
+        // No slope test, no tie rule, no `first_allowed`: the mask is the window. The start
+        // mirrors `_fit_selected`, where it cannot be told from a plain 0, since `collect`
+        // snaps forward over the very mask this reads; the mirror stays so the two agree
+        // whatever `collect` does later.
         TerminalMethod::Manual => Chosen {
             start: points.iter().position(|&p| p).unwrap_or(0),
             has_fit: points.iter().any(|&p| p),
@@ -822,11 +831,7 @@ mod tests {
         let t = [0.0, 1.0, 2.0, 3.0];
         let c: Vec<f64> = [1.0_f64, 2.0, 3.0, 4.0].iter().map(|y| y.exp()).collect();
 
-        let manual = TerminalPhase {
-            points: Some(vec![0, 1, 2, 3]),
-            ..method(TerminalMethod::Manual)
-        };
-        let fit = fit_of(&t, &c, &manual);
+        let fit = fit_of(&t, &c, &method(TerminalMethod::Manual));
         assert_eq!(fit.start, 0);
         assert_eq!(fit.n_points, 4.0);
         assert_eq!(fit.t_first, 0.0);
@@ -852,6 +857,36 @@ mod tests {
         );
         assert_eq!(refused.start, -1);
         assert_eq!(refused.flags, NcaFlag::POSITIVE_SLOPE);
+    }
+
+    #[test]
+    fn a_manual_mask_narrower_than_the_row_regresses_only_its_points() {
+        // The manual window is the mask and nothing else: `TerminalPhase::points` is resolved
+        // by the caller, which folds it into `regressable`, so the regression has to follow
+        // the mask and not the row. The first two samples lie far above the terminal line
+        // here, so a window which took them in would be a different fit altogether.
+        let t = [0.0, 1.0, 2.0, 3.0, 4.0];
+        let c = [100.0, 50.0, 8.0, 4.0, 2.0];
+        let masked = [false, false, true, true, true];
+        let phase = method(TerminalMethod::Manual);
+        let fit = terminal_fit(&t, &c, 5, &masked, 0, &phase);
+
+        assert_eq!(fit.start, 2, "the first point of the mask, not of the row");
+        assert_eq!(fit.n_points, 3.0);
+        assert_eq!(fit.t_first, 2.0);
+        assert_eq!(fit.t_last, 4.0);
+        close(fit.slope, -0.693_147_180_559_945_4);
+        close(fit.intercept, 3.465_735_902_799_727);
+        close(fit.r2, 1.0);
+        assert_eq!(fit.flags, NcaFlag::NONE);
+
+        // the same row with every point permitted, which is what a caller that forgot to fold
+        // the mask in would get: five points from t = 0 and a slope half again as steep
+        let whole = fit_of(&t, &c, &phase);
+        assert_eq!(whole.start, 0);
+        assert_eq!(whole.n_points, 5.0);
+        assert_eq!(whole.t_first, 0.0);
+        close(whole.slope, -1.034_977_465_516_455_2);
     }
 
     #[test]
