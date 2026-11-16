@@ -57,6 +57,22 @@ python3 scripts/vendor_oracles.py --source path/to/pkpdutils
 
 The set of files is read from `git ls-files` of the source, so it is the set the recorded commit tracks. When a manifest exists and the set differs from it, the script prints the added and removed paths and refuses unless `--accept-changes` is passed. `python3 scripts/vendor_oracles.py --check` copies nothing and checks only the vendored files against the manifest, including a file under `testdata/oracles/` the manifest does not list. `python3 scripts/vendor_oracles.py --check --source path/to/pkpdutils` also compares the source files and its commit with the manifest; either form exits non-zero, naming the files, on any difference. `cargo test` (`crates/oracles/tests/oracles_present.rs`, a crate which is never published, since the oracles live at the root of the workspace and cargo packages only what is inside a crate's own directory) proves the vendored files match the manifest and that no reference case was dropped, but CI has no `pkpdutils` checkout and cannot compare against the source. Run `--check --source` by hand before a release and whenever the Python oracles change. Never edit the vendored files by hand.
 
+## The crosswalk
+
+`crates/oracles/tests/data/crosswalk.json` is the map from the variables of `pkpdutils` to the column names of Phoenix WinNonlin, PKNCA and NonCompart, written by `scripts/crosswalk_gate.py` from the same checkout. `crates/oracles/tests/benchmarks.rs` compares the eight scenarios of `testdata/oracles/docs/data/benchmarks/scenarios.csv` against the result table of each of the three tools, and every one of those 24 tables is written in the names of its own tool (`AUCINF_obs`, `aucinf.obs` and `AUCIFO` are the one parameter `auc_inf_obs`). The map which translates them is `src/pkpdutils/crosswalk.py`, which is source and no oracle, so it was never vendored: without this fixture nothing here can read the tables at all.
+
+Nothing in it is hand written. The script imports `pkpdutils.crosswalk` and writes two sections: `tools`, for each tool the name map, the map of the names which depend on the route, the columns which carry a percentage where `pkpdutils` reports a fraction and the columns no variable corresponds to (`Corr_XY`, `CORRXY`, `b0`); and `pknca_rules`, what reading the long PKNCA table needs beyond the names, which is its columns, the two sets which decide whether `cl.obs` is `cl` or `cl_f`, and the rules which recognize the route from the parameters PKNCA reports. Those rules are read from the source of `_pknca_route` and then verified against the function itself for every parameter of the maps and every pair of them, so an extraction which has drifted fails instead of being written.
+
+The `provenance` header records the `pkpdutils` version, its source (`checkout` or `release`), the commit of a clean checkout, a digest of the two sections and their sizes. The gate carries the version, the digest and the column count as its own constants and recomputes the digest from the sections themselves, so a fixture edited by hand fails there even when the numbers happen to agree. Update the constants deliberately together with the fixture, never to make a failing gate pass.
+
+Regenerate it against the checkout being mirrored with
+
+```bash
+uv run --with-editable path/to/pkpdutils python scripts/crosswalk_gate.py
+```
+
+The script writes the committed fixture by default, from any working directory; `-o PATH` writes another file instead. `--check` (the same command with `--check` added) writes nothing, compares the version, the digest, the sizes and both sections with the committed fixture, checks the committed header against the committed sections as well, and exits non-zero when anything differs. It also exits non-zero if a tool names two variables with one column, if a route leaves the PKNCA names ambiguous, or if the route rules no longer answer as `_pknca_route` does. Never edit the fixture by hand: if Rust disagrees, fix the gate. Regeneration is needed whenever `crosswalk.py` changes and whenever the checkout moves ahead of the version recorded in the fixture.
+
 ## Toolchain
 
 Stable Rust 1.100.0 with `rustfmt` and `clippy`, and the targets `wasm32-unknown-unknown` and `wasm32-wasip1`, pinned in `rust-toolchain.toml`.
@@ -72,6 +88,15 @@ cargo test --locked
 cargo check --locked --workspace --target wasm32-unknown-unknown
 cargo check --locked --workspace --target wasm32-wasip1
 ```
+
+Two fixtures are generated from a `pkpdutils` checkout instead of being written by hand, and each of their scripts compares the committed file with a fresh run and writes nothing. They need that checkout and so are not part of continuous integration, where the Rust gates carry the sizes and digests as their own constants instead; run both by hand whenever `pkpdutils` changes and before a release, from any working directory (`path/to/pkpdutils` is the checkout being mirrored). A non-zero exit means the fixture is stale and has to be regenerated with the same command without `--check`, never edited.
+
+```bash
+uv run --with-editable path/to/pkpdutils python scripts/pint_gate.py --check
+uv run --with-editable path/to/pkpdutils python scripts/crosswalk_gate.py --check
+```
+
+`scripts/pint_gate.py` writes `crates/units/tests/data/pint_gate.json`, pint's answer for every unit spelling of the package and every derived parameter unit, and `scripts/crosswalk_gate.py` writes `crates/oracles/tests/data/crosswalk.json`, the map from the variables of `pkpdutils` to the column names of the three NCA tools; the sections above describe both. `scripts/vendor_oracles.py --check` is the third, and it needs no checkout unless `--source` is given.
 
 ## License
 

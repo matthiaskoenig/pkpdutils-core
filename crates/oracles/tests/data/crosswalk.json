@@ -1,0 +1,299 @@
+{
+"provenance": {
+"pkpdutils_version": "1.4.0",
+"pkpdutils_source": "checkout",
+"source_commit": "bae69c15d72a613296e0de074207644e56e6fff6",
+"crosswalk_digest": "3524e6436f407329",
+"n_tools": 3,
+"n_names": {
+"noncompart": 40,
+"pknca": 42,
+"winnonlin": 43
+},
+"n_names_by_route": {
+"noncompart": 3,
+"pknca": 6,
+"winnonlin": 0
+},
+"n_percent": {
+"noncompart": 6,
+"pknca": 2,
+"winnonlin": 6
+},
+"n_unmapped": {
+"noncompart": 2,
+"pknca": 0,
+"winnonlin": 1
+},
+"n_columns": 136,
+"n_route_rules": 3
+},
+"tools": {
+"noncompart": {
+"reader": "wide",
+"names": {
+"auc_all": "AUCALL",
+"auc_back_extrap_fraction": "AUCPBEO",
+"auc_back_extrap_fraction_pred": "AUCPBEP",
+"auc_extrap_fraction": "AUCPEO",
+"auc_extrap_fraction_pred": "AUCPEP",
+"auc_inf_dn": "AUCIFOD",
+"auc_inf_obs": "AUCIFO",
+"auc_inf_pred": "AUCIFP",
+"auc_inf_pred_dn": "AUCIFPD",
+"auc_last": "AUCLST",
+"aumc_extrap_fraction": "AUMCPEO",
+"aumc_extrap_fraction_pred": "AUMCPEP",
+"aumc_inf": "AUMCIFO",
+"aumc_inf_pred": "AUMCIFP",
+"aumc_last": "AUMCLST",
+"c0": "C0",
+"cl": "CLO",
+"cl_f": "CLFO",
+"cl_f_pred": "CLFP",
+"cl_pred": "CLP",
+"clast": "CLST",
+"clast_pred": "CLSTP",
+"cmax": "CMAX",
+"cmax_dn": "CMAXD",
+"lambda_z": "LAMZ",
+"lambda_z_n_points": "LAMZNPT",
+"lambda_z_r2": "R2",
+"lambda_z_r2_adj": "R2ADJ",
+"lambda_z_t_first": "LAMZLL",
+"lambda_z_t_last": "LAMZUL",
+"thalf": "LAMZHL",
+"tlag": "TLAG",
+"tlast": "TLST",
+"tmax": "TMAX",
+"vss": "VSSO",
+"vss_pred": "VSSP",
+"vz": "VZO",
+"vz_f": "VZFO",
+"vz_f_pred": "VZFP",
+"vz_pred": "VZP"
+},
+"names_by_route": {
+"mrt": {
+"iv_bolus": "MRTIVIFO",
+"iv_infusion": "MRTIVIFO",
+"oral": "MRTEVIFO"
+},
+"mrt_last": {
+"iv_bolus": "MRTIVLST",
+"iv_infusion": "MRTIVLST",
+"oral": "MRTEVLST"
+},
+"mrt_pred": {
+"iv_bolus": "MRTIVIFP",
+"iv_infusion": "MRTIVIFP",
+"oral": "MRTEVIFP"
+}
+},
+"percent": [
+"AUCPBEO",
+"AUCPBEP",
+"AUCPEO",
+"AUCPEP",
+"AUMCPEO",
+"AUMCPEP"
+],
+"unmapped": [
+"CORRXY",
+"b0"
+]
+},
+"pknca": {
+"reader": "long",
+"names": {
+"auc_all": "aucall",
+"auc_all_dn": "aucall.dn",
+"auc_extrap_fraction": "aucpext.obs",
+"auc_extrap_fraction_pred": "aucpext.pred",
+"auc_inf_dn": "aucinf.obs.dn",
+"auc_inf_obs": "aucinf.obs",
+"auc_inf_pred": "aucinf.pred",
+"auc_inf_pred_dn": "aucinf.pred.dn",
+"auc_last": "auclast",
+"auc_last_dn": "auclast.dn",
+"aumc_all": "aumcall",
+"aumc_inf": "aumcinf.obs",
+"aumc_inf_pred": "aumcinf.pred",
+"aumc_last": "aumclast",
+"c0": "c0",
+"cavg": "cav",
+"cl": "cl.obs",
+"cl_f": "cl.obs",
+"cl_f_pred": "cl.pred",
+"cl_pred": "cl.pred",
+"clast": "clast.obs",
+"clast_pred": "clast.pred",
+"cmax": "cmax",
+"cmax_dn": "cmax.dn",
+"cmin": "cmin",
+"ctrough": "ctrough",
+"lambda_z": "lambda.z",
+"lambda_z_n_points": "lambda.z.n.points",
+"lambda_z_r2": "r.squared",
+"lambda_z_r2_adj": "adj.r.squared",
+"lambda_z_span": "span.ratio",
+"lambda_z_t_first": "lambda.z.time.first",
+"lambda_z_t_last": "lambda.z.time.last",
+"ptr": "ptr",
+"thalf": "half.life",
+"tlag": "tlag",
+"tlast": "tlast",
+"tmax": "tmax",
+"vz": "vz.obs",
+"vz_f": "vz.obs",
+"vz_f_pred": "vz.pred",
+"vz_pred": "vz.pred"
+},
+"names_by_route": {
+"mrt": {
+"iv_bolus": "mrt.iv.obs",
+"iv_infusion": "mrt.iv.obs",
+"oral": "mrt.obs"
+},
+"mrt_last": {
+"iv_bolus": "mrt.iv.last",
+"iv_infusion": "mrt.iv.last",
+"oral": "mrt.last"
+},
+"mrt_pred": {
+"iv_bolus": "mrt.iv.pred",
+"iv_infusion": "mrt.iv.pred",
+"oral": "mrt.pred"
+},
+"thalf_eff": {
+"iv_bolus": "thalf.eff.iv.obs",
+"iv_infusion": "thalf.eff.iv.obs",
+"oral": "thalf.eff.obs"
+},
+"vss": {
+"iv_bolus": "vss.iv.obs",
+"iv_infusion": "vss.iv.obs"
+},
+"vss_pred": {
+"iv_bolus": "vss.iv.pred",
+"iv_infusion": "vss.iv.pred"
+}
+},
+"percent": [
+"aucpext.obs",
+"aucpext.pred"
+],
+"unmapped": []
+},
+"winnonlin": {
+"reader": "wide",
+"names": {
+"auc_all": "AUCall",
+"auc_back_extrap_fraction": "AUC_%Back_Ext_obs",
+"auc_back_extrap_fraction_pred": "AUC_%Back_Ext_pred",
+"auc_extrap_fraction": "AUC_%Extrap_obs",
+"auc_extrap_fraction_pred": "AUC_%Extrap_pred",
+"auc_inf_dn": "AUCINF_D_obs",
+"auc_inf_obs": "AUCINF_obs",
+"auc_inf_pred": "AUCINF_pred",
+"auc_inf_pred_dn": "AUCINF_D_pred",
+"auc_last": "AUClast",
+"aumc_extrap_fraction": "AUMC_%Extrap_obs",
+"aumc_extrap_fraction_pred": "AUMC_%Extrap_pred",
+"aumc_inf": "AUMCINF_obs",
+"aumc_inf_pred": "AUMCINF_pred",
+"aumc_last": "AUMClast",
+"c0": "C0",
+"cl": "Cl_obs",
+"cl_f": "Cl_F_obs",
+"cl_f_pred": "Cl_F_pred",
+"cl_pred": "Cl_pred",
+"clast": "Clast",
+"clast_pred": "Clast_pred",
+"cmax": "Cmax",
+"cmax_dn": "Cmax_D",
+"lambda_z": "Lambda_z",
+"lambda_z_n_points": "No_points_lambda_z",
+"lambda_z_r2": "Rsq",
+"lambda_z_r2_adj": "Rsq_adjusted",
+"lambda_z_t_first": "Lambda_z_lower",
+"lambda_z_t_last": "Lambda_z_upper",
+"mrt": "MRTINF_obs",
+"mrt_last": "MRTlast",
+"mrt_pred": "MRTINF_pred",
+"thalf": "HL_Lambda_z",
+"tlag": "Tlag",
+"tlast": "Tlast",
+"tmax": "Tmax",
+"vss": "Vss_obs",
+"vss_pred": "Vss_pred",
+"vz": "Vz_obs",
+"vz_f": "Vz_F_obs",
+"vz_f_pred": "Vz_F_pred",
+"vz_pred": "Vz_pred"
+},
+"names_by_route": {},
+"percent": [
+"AUC_%Back_Ext_obs",
+"AUC_%Back_Ext_pred",
+"AUC_%Extrap_obs",
+"AUC_%Extrap_pred",
+"AUMC_%Extrap_obs",
+"AUMC_%Extrap_pred"
+],
+"unmapped": [
+"Corr_XY"
+]
+}
+},
+"pknca_rules": {
+"columns": [
+"start",
+"end",
+"PPTESTCD",
+"PPORRES",
+"exclude"
+],
+"intravenous_only": [
+"cl",
+"cl_pred",
+"vz",
+"vz_pred"
+],
+"extravascular_only": [
+"cl_f",
+"cl_f_pred",
+"vz_f",
+"vz_f_pred"
+],
+"route_rules": [
+{
+"route": "iv_bolus",
+"codes": [
+"c0"
+],
+"prefixes": []
+},
+{
+"route": "iv_infusion",
+"codes": [],
+"prefixes": [
+"mrt.iv.",
+"thalf.eff.iv.",
+"vss.iv."
+]
+},
+{
+"route": "oral",
+"codes": [
+"mrt.last",
+"mrt.obs",
+"mrt.pred",
+"thalf.eff.obs",
+"tlag"
+],
+"prefixes": []
+}
+]
+}
+}
