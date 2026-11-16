@@ -11,7 +11,14 @@
 //! off by default. A wasm instance has no threads to run a shard on, so a wasm build takes the
 //! kernel without the feature (`cargo build --no-default-features`) and the host runs one kernel
 //! instance per Web Worker instead; with the feature on a wasm target rayon reports one thread
-//! and runs every shard in the calling thread, which is measured in `BENCHMARKS.md`. Without the
+//! and runs every shard in the calling thread, which is measured in `BENCHMARKS.md`. That is
+//! rayon's own fallback: a pool which cannot spawn a thread, which is what a wasm runtime
+//! answers with `io::ErrorKind::Unsupported`, is replaced by a one-thread pool that runs the
+//! work in the caller (`rayon-core/src/registry.rs`). Rayon's comment on it warns that the
+//! fallback "probably won't work for non-blocking calls like `spawn` or `broadcast_spawn`",
+//! which is the boundary this module stays inside: [`in_parallel`] only ever calls
+//! `into_par_iter().collect_into_vec()`, a blocking call which has finished before
+//! [`rows_of`] returns, and the kernel never spawns anything which outlives it. Without the
 //! feature the shards of a plan run one after the other here, which computes the same numbers
 //! and is what the identity assertion compares against in a build that has no pool at all.
 //!
@@ -33,11 +40,16 @@ use crate::parameters::Scratch;
 /// The figure is measured, not guessed: `crates/core/examples/kernel_timing.rs` times the
 /// sharded against the serial path over a sweep of shapes and `BENCHMARKS.md` records the run it
 /// comes from. On that machine the shards lose below about 1 200 observations, win by a fifth at
-/// 2 400, by a third at 4 000 and by more than two from 10 000 on; 4 096 sits inside that ramp,
-/// above the crossing rather than at it, so that a batch which is only just worth sharding does
-/// not spend the whole pool on a tenth of a gain. Python's `NCA_WORKER_THRESHOLD` is 20 000 rows
-/// and counts no points at all, which leaves a thousand curves of two hundred points - 56 ms of
-/// work there, 6x off what the shards do here - in a single thread.
+/// 2 400, by a third at 4 000 and by more than two from 10 000 on. 4 096 is above that crossing
+/// and not at it, and the reason is the size of what is given up: between 2 400 and 4 096
+/// observations the shards do win, but by 0.027 and 0.049 ms, while a batch of 1 200
+/// observations pays 0.035 ms for a pool it cannot fill. Shapes that small move by about that
+/// much between runs - the sweep reads 10 x 12 at 0.131 ms where a fresh pinned process reads
+/// 0.056 - so a threshold above the noisy part of the ramp costs a batch just below it a few
+/// hundredths of a millisecond and buys every batch below that the certainty of never starting
+/// the pool at all. Python's `NCA_WORKER_THRESHOLD` is 20 000 rows and counts no points at all,
+/// which leaves a thousand curves of two hundred points - 56 ms of work there, 6x off what the
+/// shards do here - in a single thread.
 pub const SHARD_WORK_THRESHOLD: usize = 4_096;
 
 /// How many shards the automatic plan asks for per thread of the pool.
@@ -47,8 +59,11 @@ pub const SHARD_WORK_THRESHOLD: usize = 4_096;
 /// finishes last. A few shards per thread let the pool steal the rest, and the only cost of a
 /// shard is one set of row buffers, which is a handful of vectors the width of a row.
 ///
-/// Measured like the threshold, in the shard sweep of `BENCHMARKS.md`.
-pub const SHARDS_PER_THREAD: usize = 4;
+/// Measured like the threshold, in the shard sweep of `BENCHMARKS.md`. It is not public: a host
+/// chooses a plan by calling [`automatic_shards`] or by passing a count of its own, and the
+/// figure a count of its own is compared against is the one in `BENCHMARKS.md`, not a constant
+/// to compute with.
+pub(crate) const SHARDS_PER_THREAD: usize = 4;
 
 /// The number of threads the shards of a plan would run on.
 ///
@@ -73,23 +88,28 @@ pub(crate) fn threads() -> usize {
 /// is below [`SHARD_WORK_THRESHOLD`] is one shard, and so is every batch in a build without the
 /// `parallel` feature, which has no second thread to run one on.
 ///
-/// Above the threshold it is the whole pool at once, [`SHARDS_PER_THREAD`] shards per thread of
-/// it and never more shards than there are rows. A plan which grows with the work instead - two
-/// shards at the threshold, twenty at ten times it - was measured against this one and was
-/// slower everywhere in between: a batch of twelve thousand observations runs in 0.47 ms over
-/// four shards and in 0.26 ms over eighty, because the shards are not equally expensive and the
-/// pool steals what a thread has left over.
+/// Above the threshold it is the whole pool at once, four shards per thread of it
+/// (`SHARDS_PER_THREAD`) and never more shards than there are rows. A plan which grows with the
+/// work instead - two shards at the threshold, twenty at ten times it - was measured against
+/// this one and was slower everywhere in between: a batch of twelve thousand observations runs
+/// in 0.47 ms over four shards and in 0.26 ms over eighty, because the shards are not equally
+/// expensive and the pool steals what a thread has left over.
+///
+/// The work is tested before the pool is asked how large it is, so a batch below the threshold
+/// never starts the pool: `rayon::current_num_threads` builds the global pool, and a host which
+/// only ever sends small batches should not find twenty threads in its process because it asked
+/// for a plan.
 ///
 /// ```
 /// # use pkpdutils_core::automatic_shards;
 /// assert_eq!(automatic_shards(1, 12), 1);
 /// ```
 pub fn automatic_shards(n_samples: usize, n_time: usize) -> usize {
-    let threads = threads();
-    if threads <= 1 {
+    if n_samples.saturating_mul(n_time) < SHARD_WORK_THRESHOLD {
         return 1;
     }
-    if n_samples.saturating_mul(n_time) < SHARD_WORK_THRESHOLD {
+    let threads = threads();
+    if threads <= 1 {
         return 1;
     }
     threads
@@ -170,12 +190,18 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use pkpdutils_abi::{
-        AnalysisResult, BATCH_CONTRACT, Batch, Coordinate, NcaOptions, Route, SampleCoordinate,
+        AnalysisResult, AucMethod, BATCH_CONTRACT, Batch, Blq, BlqHandling, Coordinate, NcaOptions,
+        Route, SampleCoordinate, TerminalMethod, WindowLabel,
     };
 
+    use crate::assemble::RowResult;
+    use crate::parameters::RowParameters;
     use crate::shard::{
-        SHARD_WORK_THRESHOLD, SHARDS_PER_THREAD, automatic_shards, shard_rows, threads,
+        SHARD_WORK_THRESHOLD, SHARDS_PER_THREAD, automatic_shards, rows_of, shard_rows, threads,
     };
     use crate::{analyze_batch, analyze_batch_in_shards};
 
@@ -299,6 +325,49 @@ mod tests {
         out
     }
 
+    /// The option sets the identity assertion runs over, named.
+    ///
+    /// The default is the best fit regression of a batch with no limit of quantification; the
+    /// others take the three other paths through a row which depend on something outside the
+    /// row's own numbers, since those are the ones a shard boundary could get wrong: the manual
+    /// point indices, which are resolved against the length of each row, the window of a single
+    /// sample, which is looked up by the label of the row, and a limit of quantification, whose
+    /// rule walks the row against its peak.
+    fn option_sets(n_samples: usize) -> Vec<(&'static str, NcaOptions)> {
+        let mut manual = NcaOptions::default();
+        manual.terminal.method = TerminalMethod::Manual;
+        manual.terminal.points = Some(vec![-5, -4, -3, -2, -1]);
+
+        let mut last_n = NcaOptions::default();
+        last_n.terminal.method = TerminalMethod::LastN;
+        last_n.terminal.n_points = Some(4);
+        last_n.terminal.exclude_cmax = false;
+        last_n.auc_method = AucMethod::LinearLog;
+
+        let mut windows = BTreeMap::new();
+        for row in (0..n_samples).step_by(3) {
+            let first = if row % 2 == 0 { 6.0 } else { 10.0 };
+            windows.insert(
+                WindowLabel::Int(i64::try_from(row).unwrap_or(-1)),
+                (first, 24.0),
+            );
+        }
+        let mut by_label = NcaOptions::default();
+        by_label.terminal.windows = Some(windows);
+        by_label.lloq = Some(1.0);
+        by_label.blq = Blq::Handling(BlqHandling::ZeroBeforeTmax);
+
+        vec![
+            ("the default options", NcaOptions::default()),
+            ("manual point indices", manual),
+            ("the last four points, linear up log down", last_n),
+            (
+                "a window per sample and a limit of quantification",
+                by_label,
+            ),
+        ]
+    }
+
     #[test]
     fn the_parallel_and_the_serial_path_produce_the_same_bits() {
         // Compared by `to_bits` deliberately: a parameter of a row whose route has none is a
@@ -307,30 +376,51 @@ mod tests {
         // every value: a shard which wrote its rows anywhere but where they belong fails here.
         let batch = above_the_threshold();
         let n_samples = batch.sample_shape[0];
-        let options = NcaOptions::default();
-        let serial = analyze_batch_in_shards(&batch, &options, 1).expect("one shard runs");
-        let left = floats(&serial);
-        assert!(!left.is_empty(), "the serial run reports no numbers at all");
-        for shards in [2usize, 3, 7, 16, 64, n_samples] {
-            let sharded =
-                analyze_batch_in_shards(&batch, &options, shards).expect("the shards run");
-            let right = floats(&sharded);
-            assert_eq!(
-                left.len(),
-                right.len(),
-                "{shards} shards report another number of values"
-            );
-            for ((name, row, a), (_, _, b)) in left.iter().zip(&right) {
+        let mut reference: Option<Vec<(String, usize, f64)>> = None;
+        for (set, options) in option_sets(n_samples) {
+            let serial = analyze_batch_in_shards(&batch, &options, 1)
+                .unwrap_or_else(|err| panic!("one shard runs {set}: {err:?}"));
+            let left = floats(&serial);
+            assert!(!left.is_empty(), "{set}: the serial run reports no numbers");
+            // a set which computes what the default computes would widen nothing
+            match &reference {
+                None => reference = Some(left.clone()),
+                Some(first) => assert!(
+                    first.len() != left.len()
+                        || first
+                            .iter()
+                            .zip(&left)
+                            .any(|((_, _, a), (_, _, b))| a.to_bits() != b.to_bits()),
+                    "{set} analyses the batch exactly as the default options do"
+                ),
+            }
+            for shards in [2usize, 3, 7, 16, 64, n_samples] {
+                let sharded = analyze_batch_in_shards(&batch, &options, shards)
+                    .unwrap_or_else(|err| panic!("{shards} shards run {set}: {err:?}"));
+                let right = floats(&sharded);
                 assert_eq!(
-                    a.to_bits(),
-                    b.to_bits(),
-                    "{name} of row {row} is {b} over {shards} shards and {a} serially"
+                    left.len(),
+                    right.len(),
+                    "{set}: {shards} shards report another number of values"
+                );
+                for ((name, row, a), (_, _, b)) in left.iter().zip(&right) {
+                    assert_eq!(
+                        a.to_bits(),
+                        b.to_bits(),
+                        "{set}: {name} of row {row} is {b} over {shards} shards and {a} serially"
+                    );
+                }
+                // the flags, the boolean and the text sections, the coordinates and the
+                // attributes; `AnalysisResult` compares the floats of its columns by the bits
+                assert_eq!(
+                    serial.flags, sharded.flags,
+                    "{set}: {shards} shards, the flags"
+                );
+                assert_eq!(
+                    serial, sharded,
+                    "{set}: {shards} shards report another result"
                 );
             }
-            // the flags, the boolean and the text sections, the coordinates and the attributes;
-            // `AnalysisResult` compares the floats of its columns by the bits as well
-            assert_eq!(serial.flags, sharded.flags, "{shards} shards, the flags");
-            assert_eq!(serial, sharded, "{shards} shards report another result");
         }
     }
 
@@ -351,17 +441,38 @@ mod tests {
 
     #[test]
     fn a_batch_below_the_threshold_runs_serially() {
-        // one shard, whatever the build and however many threads it has: the dispatch of a
-        // small batch costs more than its rows do
+        // the plan is one shard, whatever the build and however many threads it has: the
+        // dispatch of a small batch costs more than its rows do
         assert_eq!(automatic_shards(1, 12), 1);
         assert_eq!(automatic_shards(1, 0), 1);
         assert_eq!(automatic_shards(0, 12), 1);
-        assert_eq!(
-            automatic_shards((SHARD_WORK_THRESHOLD - 1) / N_TIME, N_TIME),
-            1
-        );
+        let rows = (SHARD_WORK_THRESHOLD - 1) / N_TIME;
+        assert_eq!(automatic_shards(rows, N_TIME), 1);
         // and a batch whose work overflows is one shard per thread and not one per row
         assert!(automatic_shards(usize::MAX, usize::MAX) <= threads() * SHARDS_PER_THREAD);
+
+        // and so is the path, which this observes rather than infers: every row of that plan
+        // records the thread it ran on, and all of them are the thread which asked. In a build
+        // with the feature this is the assertion that the pool is not reached at all below the
+        // threshold; in a build without one there is no pool to reach.
+        let here = std::thread::current().id();
+        let elsewhere = AtomicUsize::new(0);
+        let computed = rows_of(rows, N_TIME, automatic_shards(rows, N_TIME), |_, _| {
+            if std::thread::current().id() != here {
+                elsewhere.fetch_add(1, Ordering::Relaxed);
+            }
+            RowResult {
+                route: None,
+                dose_amount: f64::NAN,
+                parameters: RowParameters::EMPTY,
+            }
+        });
+        assert_eq!(computed.len(), rows, "a row of the plan was not computed");
+        assert_eq!(
+            elsewhere.load(Ordering::Relaxed),
+            0,
+            "rows of a one shard plan ran on another thread"
+        );
     }
 
     #[test]

@@ -37,7 +37,12 @@ jobs:
       # for both targets today; checking them from the start names the commit
       # which adds a dependency that is not wasm safe, instead of leaving it to
       # be found at the end
-      # `--no-default-features` is how a wasm host builds the kernel: rayon
+      # the default features are what `cargo check --target wasm32-...` takes
+      # without being told otherwise, so they are checked as well: a default
+      # which stops compiling for wasm is the regression this job exists for
+      - run: cargo check --locked --workspace --target wasm32-unknown-unknown
+      - run: cargo check --locked --workspace --target wasm32-wasip1
+      # and `--no-default-features` is how a wasm host builds the kernel: rayon
       # compiles for both wasm targets but reports one thread there, so the
       # `parallel` feature is a dependency a wasm instance cannot use
       - run: cargo check --locked --workspace --no-default-features --target wasm32-unknown-unknown

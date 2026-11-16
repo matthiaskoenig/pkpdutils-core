@@ -27,7 +27,7 @@ use pkpdutils_abi::{
     NcaOptions, TerminalMethod, UncertaintyMethod, WindowLabel, check_contract,
 };
 
-pub use crate::shard::{SHARD_WORK_THRESHOLD, SHARDS_PER_THREAD, automatic_shards};
+pub use crate::shard::{SHARD_WORK_THRESHOLD, automatic_shards};
 
 use crate::assemble::{RowResult, resolved_uncertainty, result_of};
 use crate::dose::{ReferenceDose, reference_dose};
@@ -105,14 +105,18 @@ pub fn analyze_batch(batch: &Batch, options: &NcaOptions) -> Result<AnalysisResu
 /// batch of more work than [`SHARD_WORK_THRESHOLD`] gets from [`automatic_shards`]. `0` and `1`
 /// are one shard, a count above the number of rows is one shard per row, and the shards run on
 /// the rayon pool with the `parallel` feature and one after the other in the calling thread
-/// without it; the pool decides how many of them one thread takes, so the count is what it may
-/// not fall below and not a promise of that many stretches. Every shard reads the batch and writes its own rows, so the plan changes nothing
-/// about the result: it is the same bits for any count, which
+/// without it. The count fixes the smallest stretch the pool may cut, `rows / shards` rows, so
+/// it is the most stretches the run can have and not the fewest: an idle pool splits them all,
+/// a busy one runs longer stretches on fewer threads, and a build without the feature runs the
+/// whole plan in the caller. Every shard reads the batch and writes its own rows, so the plan
+/// changes nothing about the result: it is the same bits for any count, which
 /// `the_parallel_and_the_serial_path_produce_the_same_bits` asserts.
 ///
 /// A host which runs the kernel on a pool of its own - a web worker per instance, a thread per
 /// request - takes `1` and parallelizes outside, since a shard inside the pool of the host then
-/// competes with the host's own work.
+/// competes with the host's own work. The function is public for that host and for
+/// `crates/core/examples/kernel_timing.rs`, which times the two paths against each other from
+/// outside the crate and therefore cannot reach a private one.
 ///
 /// # Errors
 ///

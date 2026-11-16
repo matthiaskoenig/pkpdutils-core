@@ -1,6 +1,6 @@
 # Benchmarks
 
-What the port bought, measured against the python package it is a port of. Every number here comes from a run on one machine on 2026-11-16 and is reproducible with the commands below; nothing is scaled, extrapolated or rounded in the flattering direction.
+What the port bought, measured against the python package it is a port of. Every number here was measured on one machine on 2026-11-16 and is reproducible with the commands below; each table says which run it comes from, and nothing is scaled, extrapolated or rounded in the flattering direction.
 
 ## What is inside each timing
 
@@ -25,13 +25,19 @@ Both sides analyse **the same numbers**. The batch generator of `crates/core/exa
 | OS | Linux 7.0.0-43-generic |
 | rust | rustc 1.100.0, `--release` with the default profile of this workspace (`opt-level = 3`, no LTO, 16 codegen units), rayon 1.12.0 |
 | python | CPython 3.14.10, numpy 2.5.4, `pkpdutils` 1.4.0 |
-| load | `mpstat` read the machine 89 to 90 percent idle before and after the runs, which is one and a half of the twenty logical CPUs busy with an unrelated video call; the one minute load average read 2.4 to 4.8 during them and that figure includes the runs themselves. That is the quietest the machine was: a first pass taken at load 15 to 19 earlier the same day was discarded, as the spike's own first pass at load 57 was. |
+| load | `mpstat` read the machine 92 to 94 percent idle before and after the runs of the table below, which is one to one and a half of the twenty logical CPUs busy with unrelated work; the one minute load average read 2.2 to 3.4 during them and that figure includes the runs themselves. The machine is shared and is not always that quiet, so every table here says which window it comes from: a pass taken at load 15 to 19 earlier the same day was discarded, a later window in which an unrelated job took the load to 15 and the same serial 1 000 x 200 call from 7.9 to 16 ms was discarded as well, and so was the spike's own first pass at load 57. |
 
 The serial rust runs are pinned to one performance core with `taskset -c 2`, the sharded runs are not pinned and use the whole machine, which is the spike's protocol. The python runs are not pinned either, which is the friendlier setting for them.
 
 ## The protocol
 
-Three warm up calls, then three rounds of twenty timed calls; the median of each round, and the median of the three round medians is the number of a process. Every shape and mode runs in a process of its own, so its peak resident set size (`VmHWM`) is its own, and the whole measurement is repeated three times: the tables report the median of the three process medians. The spread between the three processes of a cell was below one percent except on 100 000 x 12, where it was six percent serially; over the whole session, which took more runs of that shape, it ranged from 104 to 132 ms serially and from 50 to 61 ms sharded, so its ratio carries about a tenth of uncertainty either way.
+Three warm up calls, then three rounds of twenty timed calls; the median of each round, and the median of the three round medians is the number of a process. Every shape and mode runs in a process of its own, so its peak resident set size (`VmHWM`) is its own, and the whole measurement is repeated three times: the tables report the median of the three process medians.
+
+The spread between the three processes of a cell was under two percent on the pinned serial runs and up to eleven percent on the unpinned sharded ones (10.72, 11.92 and 10.71 ms at 10 000 x 200), so a sharded ratio carries about a tenth of uncertainty either way. Two cells had one outlying process each and the median is what the table reports: the serial 1 x 12 read 0.0742 ms once against 0.0478 and 0.0481, the first call of a binary just built, and over the whole session the 100 000 x 12 shape ranged from 104 to 132 ms serially and from 50 to 61 ms sharded.
+
+The rust table was taken twice, before and after the last change to `automatic_shards`, in two quiet windows; what is reported is the second pass, so that every number comes from the code as it is committed. The two passes agree within five percent on every cell (serial 0.0479 against 0.0481, 7.9145 against 7.9452, 80.4993 against 80.3194 and 107.7013 against 105.4011; sharded 1.0740 against 1.1147, 11.0489 against 10.7247 and 55.7648 against 52.7586), and the one section which still compares against the first pass, the LTO profile, says so where it does. The python column is the first window's and was not taken again, since nothing on the python side changed between them; that five percent is also what the change of window can be doing to the ratios of the table.
+
+One asymmetry of the protocol is named here because it favours python: `scripts/python_timing.py` calls `gc.collect()` before every timed call, outside the timer, so a collection the previous call made due does not land inside the next one. The kernel has no garbage collector and nothing on the rust side corresponds to it. A python caller pays that cost eventually; this measurement does not charge it to python.
 
 The two builds write the same binary, so each is run before the other is built:
 
@@ -56,51 +62,59 @@ Milliseconds per call, median of medians as above.
 
 | rows x points | work | rust serial | rust sharded | shards | python `nca` | python `nca`, `n_workers=20` | python `run_rows`, serial |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| 1 x 12 | 12 | 0.0479 | 0.0479 | 1 | 2.9447 | 2.9392 | 0.7961 |
-| 1 000 x 200 | 200 000 | 7.9145 | 1.0740 | 80 | 55.7415 | 55.8386 | 53.5569 |
-| 10 000 x 200 | 2 000 000 | 80.4993 | 11.0489 | 80 | 554.3993 | 294.9913 | 546.5306 |
-| 100 000 x 12 | 1 200 000 | 107.7013 | 55.7648 | 80 | 139.9280 | 202.5560 | 292.1922 |
+| 1 x 12 | 12 | 0.0481 | 0.0481 | 1 | 2.9447 | 2.9392 | 0.7961 |
+| 1 000 x 200 | 200 000 | 7.9452 | 1.1147 | 80 | 55.7415 | 55.8386 | 53.5569 |
+| 10 000 x 200 | 2 000 000 | 80.3194 | 10.7247 | 80 | 554.3993 | 294.9913 | 546.5306 |
+| 100 000 x 12 | 1 200 000 | 105.4011 | 52.7586 | 80 | 139.9280 | 202.5560 | 292.1922 |
 
-The ratios of the same numbers:
+The 1 x 12 shape is below the threshold, so `automatic_shards` plans one shard there and the sharded column is the serial number of the same code path, not a second measurement of it: the sharded build run unpinned on that shape read 0.048 to 0.077 ms depending on which core it landed on, which says more about the core than about the kernel, and the pinned number is the one worth reading.
 
-| rows x points | `nca` / rust serial | `nca` / rust sharded | `run_rows` / rust serial | rust serial / rust sharded |
-|---|---:|---:|---:|---:|
-| 1 x 12 | 61x | 61x | 17x | 1.0x (one shard, below the threshold) |
-| 1 000 x 200 | 7.0x | 52x | 6.8x | 7.4x |
-| 10 000 x 200 | 6.9x | 50x | 6.8x | 7.3x |
-| 100 000 x 12 | 1.3x | 2.5x | 2.7x | 1.9x |
+The ratios of the same numbers. `nca` best is whichever of the two python front end columns is faster at that shape, so that the kernel is never divided by a python configuration python itself would not choose:
+
+| rows x points | `nca` / rust serial | `nca` / rust sharded | `nca` best / rust sharded | `run_rows` / rust serial | rust serial / rust sharded |
+|---|---:|---:|---:|---:|---:|
+| 1 x 12 | 61.2x | 61.2x | 61.1x (`n_workers=20`) | 16.6x | 1.0x (one shard, below the threshold) |
+| 1 000 x 200 | 7.0x | 50.0x | 50.0x (default) | 6.7x | 7.1x |
+| 10 000 x 200 | 6.9x | 51.7x | 27.5x (`n_workers=20`) | 6.8x | 7.5x |
+| 100 000 x 12 | 1.3x | 2.7x | 2.7x (default) | 2.8x | 2.0x |
+
+The one shape where the two sharded ratios differ is 10 000 x 200, where python's thread pool really does help: 51.7x is against the default `nca`, which leaves the pool out at that shape, and **27.5x is against python's own best**, which is `nca(n_workers=20)`. 27.5x is the number to quote for a host which would tune python, 51.7x the one for a host which would not.
 
 Peak resident set size of the process, one process per shape and mode:
 
 | rows x points | rust serial | rust sharded | python |
 |---|---:|---:|---:|
-| 1 x 12 | 2.8 MB | 3.4 MB | |
-| 1 000 x 200 | 6.4 MB | 6.8 MB | |
-| 10 000 x 200 | 41.3 MB | 41.4 MB | |
-| 100 000 x 12 | 101.8 MB | 101.4 MB | 425 MB |
+| 1 x 12 | 2.8 MB | 2.8 MB | |
+| 1 000 x 200 | 6.5 MB | 6.8 MB | |
+| 10 000 x 200 | 41.3 MB | 41.3 MB | |
+| 100 000 x 12 | 101.8 MB | 101.1 MB | 425 MB |
+
+The sharded build costs the 1 x 12 shape nothing because it never starts the pool there: `automatic_shards` tests the work of the batch before it asks rayon how many threads it has, so a process which only ever sends small batches stays at one thread and 2.8 MB. The first pass of this table, taken before that order was fixed, read 3.4 MB on that shape, which was twenty thread stacks the kernel had no use for. Measured with `ps -o nlwp`: one thread over 300 batches of 300 x 12, twenty one over a batch of 1 000 x 200.
 
 The python figure is `scripts/benchmark.py nca-large` in a fresh interpreter, which is the one python process of this measurement that held a single shape; the four shape process of the table peaked at 791 MB.
 
-That benchmark of the package itself is also the independent check on the harness here: `nca-large` is 100 000 curves of 12 points through `nca`, on its own data (a numpy generator with normal noise) and with its own three repeats, and it reported 143 ms where the matched run above reports 139.9 ms. Two percent apart on a shape where the process to process spread is six percent, so the python column is measuring what the package's own benchmark measures.
+That benchmark of the package itself is also the independent check on the harness here: `nca-large` is 100 000 curves of 12 points through `nca`, on its own data (a numpy generator with normal noise) and with its own three repeats, and it reported 143 ms where the matched run above reports 139.9 ms. Two percent apart on a shape where the python processes of that cell spread by six percent, so the python column is measuring what the package's own benchmark measures.
 
 ### What the table says
 
-- On dense curves the kernel is **7x the python front end serially and about 50x with its shards**, and the shards are worth 7.4x of that on twenty logical CPUs.
-- On 100 000 short curves it is **1.3x serially and 2.5x sharded**, which is the weakest result of the port and the honest one: python's own thread pool engages at that shape (`NCA_WORKER_THRESHOLD` is 20 000 rows) while the kernel stops being bound by its arithmetic. One row of parameters is about 420 bytes, so the row loop of this batch writes 42 MB and the columns of the result another 38 MB, next to the 19 MB of the batch itself: that is the 102 MB the process peaks at, and that traffic is what the shards cannot divide. The row loop needs 0.58 us for a row of twelve points at a thousand rows and 1.08 us at a hundred thousand, and the difference is the memory.
-- A single curve costs the kernel 48 us against the front end's 2.9 ms, which is **61x**, but almost none of that 48 us is the curve: the fixed cost of a call is about 41 us and the curve itself about 0.6 us (see below). A host which analyses one curve at a time is paying for the assembly of the result, not for the analysis.
-- `nca` with `n_workers=20` is no faster than the default at 1 000 x 200, because `split_rows` keeps a slice at `min_rows` = 1 000 rows or more and a thousand rows are therefore one slice and one worker. It is 1.9x faster at 10 000 x 200 (ten slices, 1.9x of them, since only the numpy calls release the GIL) and **slower** than the default at 100 000 x 12, where the automatic setting takes eight workers (`max_workers`) and twenty of them contend for the same interpreter. Python's parallelism is bounded by `min_rows`, by `chunk_rows` and by the GIL, not by the machine.
+- On dense curves the kernel is **7x the python front end serially and about 50x with its shards**, and the shards are worth 7.1x to 7.5x of that on twenty logical CPUs. The 50x is against `nca` as a caller gets it; against python's own best configuration it is 50x at 1 000 x 200, where python's pool cannot engage, and 27.5x at 10 000 x 200, where it can.
+- On 100 000 short curves it is **1.3x serially and 2.7x sharded**, which is the weakest result of the port and the honest one: python's own thread pool engages at that shape (`NCA_WORKER_THRESHOLD` is 20 000 rows) while the kernel stops being bound by its arithmetic. One row of parameters is about 420 bytes, so the row loop of this batch writes 42 MB and the columns of the result another 38 MB, next to the 19 MB of the batch itself: that is the 102 MB the process peaks at, and that traffic is what the shards cannot divide. The row loop needs 0.57 us for a row of twelve points at a thousand rows and 1.05 us at a hundred thousand, and the difference is the memory.
+- A single curve costs the kernel 48 us against the front end's 2.9 ms, which is **61x**, but almost none of those 48 us is the curve: the fit below puts the fixed cost of a call at 48 us and the twelve observations of the curve at 0.6 us. A host which analyses one curve at a time is paying for the assembly of the result, not for the analysis.
+- `nca` with `n_workers=20` is no faster than the default at 1 000 x 200, because `split_rows` keeps a slice at `min_rows` = 1 000 rows or more and a thousand rows are therefore one slice and one worker. It is 1.9x faster at 10 000 x 200 (ten slices, 1.9x of them, since only the numpy calls release the GIL), which is the configuration the `nca` best column divides by there, and **slower** than the default at 100 000 x 12, where the automatic setting takes eight workers (`max_workers`) and twenty of them contend for the same interpreter. Python's parallelism is bounded by `min_rows`, by `chunk_rows` and by the GIL, not by the machine.
 
 ### The cost of a call, decomposed
 
-The serial build, one performance core, from the shapes `1x12`, `1x200`, `10x12`, `100x12`, `1000x12` and `1000x24`:
+The serial build, one performance core, three processes per shape as above, from the six shapes `1x12`, `1x200`, `10x12`, `100x12`, `1000x12` and `1000x24`, which measured 0.0481, 0.0564, 0.0562, 0.1025, 0.6194 and 1.0411 ms. A least squares fit of `a + b * rows + c * rows * points` over those six numbers gives
 
-| part | measured |
+| part | fitted |
 |---|---|
-| fixed per call | about 41 us: the contract and option checks, the unit of each of the 48 parameter columns of an intravenous bolus through `pkpdutils-units`, the assembly and the validation of the result |
-| per row | about 0.17 us |
-| per observation | about 34 ns |
+| fixed per call | `a` = 48 us: the contract and option checks, the unit of each of the 48 parameter columns of an intravenous bolus through `pkpdutils-units`, the assembly and the validation of the result |
+| per row | `b` = 0.15 us |
+| per observation | `c` = 35 ns |
 
-Two consequences. A batch is cheap per curve and a single call is not, so a host which has a thousand curves should send them as one batch. And the kernel's advantage over numpy is largest where the rows are long: numpy is vectorized along the rows, so a short curve is where it is already efficient. Per observation, `run_rows` needs 268 ns on 200 point curves against the kernel's 40, and 243 ns on twelve point curves against the kernel's 90.
+The 48 us is a fitted intercept and not a measured quantity: nothing here times an empty call. What can be checked is whether the three parts add up to the six measurements, and they do, within 2.8 us everywhere and within four percent of each cell - +2.3 us at 10 x 12, -2.8 us at 100 x 12, -0.7 us at 1 x 12 and under 1.1 us on the other three. So the single curve of the table is the fixed cost of a call plus 0.6 us of curve, with the couple of percent the residuals carry.
+
+Two consequences. A batch is cheap per curve and a single call is not, so a host which has a thousand curves should send them as one batch. And the kernel's advantage over numpy is largest where the rows are long: numpy is vectorized along the rows, so a short curve is where it is already efficient. Per observation, `run_rows` needs 268 ns on 200 point curves against the kernel's 40, and 243 ns on twelve point curves against the kernel's 88.
 
 ## The threshold
 
@@ -127,21 +141,23 @@ Two consequences. A batch is cheap per curve and a single call is not, so a host
 | 1 000 x 200 | 200 000 | 8.2467 | 4.6374 | 1.7312 | 1.3435 | 6.14x |
 | 10 000 x 200 | 2 000 000 | 82.6558 | 43.2692 | 14.0560 | 11.7355 | 7.04x |
 
-A cell is empty where the number of rows caps the plan below that count. The plan the kernel itself uses is the whole pool, four shards per thread: the 80 shard column where the batch has at least eighty rows and one shard per row below that. It is not always the best column of its row, and where it is not the difference is at most a fifth (500 x 12: 0.3099 against 0.2585). The sweep ran every shape in one process, which is why its 100 000 x 12 row is 22 percent above the fresh process of the table: that batch allocates and frees 56 MB per call and the heap it lands in matters. Within a row the counts are comparable, which is all the sweep is read for.
+The table compares 18 of the 20 shapes of `SWEEP`; the two it leaves out, 1 x 12 and 1 x 200, have a single row, so `shard_counts` caps them at one shard and there is nothing to compare. A cell is empty where the number of rows caps the plan below that count. The plan the kernel itself uses is the whole pool, four shards per thread: the 80 shard column where the batch has at least eighty rows and one shard per row below that. It is not always the best column of its row, and where it is not the difference is at most a fifth (500 x 12: 0.3099 against 0.2585). The sweep ran every shape in one process, which is why its 100 000 x 12 row is 22 percent above the fresh process of the table: that batch allocates and frees 56 MB per call and the heap it lands in matters. Within a row the counts are comparable, which is all the sweep is read for. It is the run the threshold was chosen from and it was taken in the first window, before the order of the tests inside `automatic_shards` was fixed; it passes every shard count explicitly, so that fix cannot have moved any of these numbers.
 
-Where the curve crosses one, with the plan the kernel really uses, which is the whole pool: at 1 200 observations the shards lose (0.1371 against 0.1022), at 2 400 they win by a fifth (0.1483 against 0.1753), at 4 000 by a third (0.1508 against 0.1996, twenty rows and so twenty shards) and from 10 000 on by more than two. **4 096 is above the crossing and not at it**: a batch which is only just worth sharding should not spend the whole pool on a tenth of a gain, and no shape of the sweep is made slower by a plan it did not ask for. Python's `NCA_WORKER_THRESHOLD` is 20 000 *rows* and counts no points at all, so a thousand curves of two hundred points - 200 000 observations, 56 ms of work in `nca`, 6x off what the shards do here - stays in a single thread there.
+Where the curve crosses one, with the plan the kernel really uses, which is the whole pool: at 1 200 observations the shards lose (0.1371 against 0.1022), at 2 400 they win by a fifth (0.1483 against 0.1753), at 4 000 by a third (0.1508 against 0.1996, twenty rows and so twenty shards) and from 10 000 on by more than two. **4 096 is above that crossing and not at it**, and the reason is the size of what it gives up and not the ratio: between the crossing and the threshold the shards save 0.027 ms at 2 400 observations and 0.049 ms at 4 000, hundredths of a millisecond on calls which cost two tenths of one, and shapes that small move by about that much between runs - the sweep reads 10 x 12 at 0.1307 ms where a fresh pinned process of the same binary reads 0.0562. In exchange, a batch below the threshold never starts the pool at all, since a plan of one shard does not reach rayon, so a process which only sends small batches stays at one thread and pays for no thread stacks. A threshold at the crossing would buy those hundredths back and would rest on which of two neighbouring sweep cells one believes; 4 096 is the round number above both, and no shape of the sweep is made slower by a plan it did not ask for. Python's `NCA_WORKER_THRESHOLD` is 20 000 *rows* and counts no points at all, so a thousand curves of two hundred points - 200 000 observations, 56 ms of work in `nca`, 6x off what the shards do here - stays in a single thread there.
 
 `SHARDS_PER_THREAD` is 4 and comes from the same sweep: four shards per thread beat one per thread at 100 x 200 (0.3006 against 0.3762), 1 000 x 200 (1.3435 against 1.7312), 2 000 x 12 (0.4304 against 0.4999), 10 000 x 12 and 10 000 x 200, drew at 5 000 x 12 and 100 000 x 12 and lost once, at 500 x 12 (0.3099 against 0.2585). The rows of a batch are not equally expensive - the terminal regression of a row evaluates every candidate window after its peak - so a shard per thread leaves the thread which drew the expensive ones finishing alone, and the pool steals the difference when there are more shards than threads. A plan which grows with the work instead, two shards at the threshold and twenty at ten times it, was measured against the full pool and was slower everywhere in between: 0.47 ms against 0.26 ms at 12 000 observations, 0.25 against 0.21 at 10 000.
 
 ## On wasm
 
-The same example compiled for `wasm32-wasip1` and run under wasmtime 50.0.1, unpinned, same protocol, same checksums as the native build down to all twelve digits:
+The same example compiled for `wasm32-wasip1` and run under wasmtime 50.0.1, unpinned, three processes per shape as above, same checksums as the native build down to all twelve digits:
 
 | rows x points | native serial | wasm32-wasip1 | wasm / native |
 |---|---:|---:|---:|
-| 1 x 12 | 0.0479 | 0.0602 | 1.26x |
-| 1 000 x 200 | 7.9145 | 9.7630 | 1.23x |
-| 100 000 x 12 | 107.7013 | 122.4929 | 1.14x |
+| 1 x 12 | 0.0481 | 0.0603 | 1.25x |
+| 1 000 x 200 | 7.9452 | 9.8411 | 1.24x |
+| 100 000 x 12 | 105.4011 | 122.0083 | 1.16x |
+
+The first pass measured one process per shape and read 0.0602, 9.7630 and 122.4929, within a percent of these three. The window matters more than the process count: the same wasm binary read 13 to 26 ms at 1 000 x 200 while an unrelated job held the machine at load 15, where the native control read 11 to 16 ms against its 7.9, so that window was discarded and these runs were taken at load 3.0 to 3.6 with a native control of 7.9311 ms before and 7.9523 ms after them.
 
 So the kernel costs about a quarter more inside a wasm runtime than outside it, and the 100 000 x 12 shape, which is memory bound rather than compute bound, loses the least. The build was made with the `parallel` feature deliberately, to see what it does there: rayon reports one thread, `automatic_shards` therefore plans one shard, and an explicit plan of two shards runs them one after the other in the calling thread without trapping. The feature buys a wasm instance nothing, which is why the wasm build leaves it out.
 
@@ -151,14 +167,14 @@ So the kernel costs about a quarter more inside a wasm runtime than outside it, 
 
 | rows x points | spike serial | kernel serial | spike rayon | kernel sharded |
 |---|---:|---:|---:|---:|
-| 1 x 12 | 0.0003 | 0.0479 (160x) | 0.0008 | 0.0479 (60x) |
-| 1 000 x 200 | 4.12 | 7.9145 (1.9x) | 0.371 | 1.0740 (2.9x) |
-| 10 000 x 200 | 41.19 | 80.4993 (2.0x) | 3.66 | 11.0489 (3.0x) |
-| 100 000 x 12 | 19.75 | 107.7013 (5.5x) | 2.04 | 55.7648 (27x) |
+| 1 x 12 | 0.0003 | 0.0481 (160x) | 0.0008 | 0.0481 (60x) |
+| 1 000 x 200 | 4.12 | 7.9452 (1.9x) | 0.371 | 1.1147 (3.0x) |
+| 10 000 x 200 | 41.19 | 80.3194 (1.9x) | 3.66 | 10.7247 (2.9x) |
+| 100 000 x 12 | 19.75 | 105.4011 (5.3x) | 2.04 | 52.7586 (26x) |
 
-The two dense shapes are explained by scope: the kernel computes 48 parameter columns, the count of subjects among them, where the spike computed eight numbers, so twice the time per observation on a dense curve is the price of the other forty parameters, the flags, the BLQ rules, the dose handling and the units. The 100 000 x 12 column is explained by memory: 420 bytes of parameters per row against the spike's 64, so 42 MB per call against 6.4 MB and 38 MB of result columns against 6.4 MB, which is why the shards there buy 1.9x and not the spike's 9.7x. The ratio of the port's own promise - the spike's "8 300x against python on one curve" - is likewise mostly the 41 us of assembly that the spike did not have; the honest single curve figure is 61x.
+The two dense shapes are explained by scope: the kernel computes 48 parameter columns, the count of subjects among them, where the spike computed eight numbers, so twice the time per observation on a dense curve is the price of the other forty parameters, the flags, the BLQ rules, the dose handling and the units. The 100 000 x 12 column is explained by memory: 420 bytes of parameters per row against the spike's 64, so 42 MB per call against 6.4 MB and 38 MB of result columns against 6.4 MB, which is why the shards there buy 2.0x and not the spike's 9.7x. The ratio of the port's own promise - the spike's "8 300x against python on one curve" - is likewise mostly the 48 us of fixed cost that the spike did not have; the honest single curve figure is 61x.
 
-LTO and one codegen unit, which the spike used and this workspace does not configure, were measured on the kernel as well: `--config profile.release.lto=true --config profile.release.codegen-units=1` gave 0.0440 ms at 1 x 12, 8.05 at 1 000 x 200, 101.03 at 100 000 x 12 serially and 1.050 and 50.97 sharded, so between 9 percent faster and 2 percent slower than the default profile. The table is the default profile, which is what `cargo run --release` gives.
+LTO and one codegen unit, which the spike used and this workspace does not configure, were measured on the kernel as well: `--config profile.release.lto=true --config profile.release.codegen-units=1` gave 0.0440 ms at 1 x 12, 8.05 at 1 000 x 200, 101.03 at 100 000 x 12 serially and 1.050 and 50.97 sharded. That was the first window, so it is read against that window's own numbers (0.0479, 7.9145, 107.7013, 1.0740 and 55.7648): between 9 percent faster and 2 percent slower than the default profile. The table is the default profile, which is what `cargo run --release` gives.
 
 ## Caveats
 
