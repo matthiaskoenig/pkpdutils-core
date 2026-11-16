@@ -11,6 +11,19 @@
 //! supports. It cannot be built for `wasm32`, which is why continuous integration excludes it
 //! from the wasm gates by name; the kernel it binds is checked there as before.
 
+/// The allocator of the extension module.
+///
+/// A batch of many rows and few points spends about a tenth of its time in the allocator, which
+/// is visible from outside the process: turning off glibc's thread cache
+/// (`GLIBC_TUNABLES=glibc.malloc.tcache_count=0`) costs eleven percent of the run. mimalloc takes
+/// about twenty two percent of the CPU time of such an analysis off, measured through
+/// [`analyze_batch`] on 100 000 rows by 12 points, and costs about a third more peak resident set
+/// size on that shape; a batch of few rows and many points is unaffected either way. Unlike the
+/// instruction set the wheel is compiled for, this is a choice a wheel is allowed to make: it
+/// travels inside the artifact and depends on nothing about the machine that installs it.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod convert;
 mod options;
 mod result;

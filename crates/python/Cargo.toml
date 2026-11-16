@@ -40,6 +40,19 @@ pkpdutils-abi = { path = "../abi", version = "0.2.0" }
 pkpdutils-core = { path = "../core", version = "0.2.0" }
 pyo3 = { workspace = true }
 numpy = { workspace = true }
+# The allocator of the extension module, set as the `#[global_allocator]` in `src/lib.rs`. It is
+# here and not in the kernel on purpose: the kernel is also a wasm library and a rust dependency,
+# where the choice of allocator belongs to whoever builds the final artifact, and this crate *is*
+# the final artifact. Measured through `analyze_batch` on a batch of 100 000 rows by 12 points,
+# the shape where allocation is on the hot path: 105.8 and 110.1 ms of CPU with glibc malloc
+# against 82.5 and 84.4 with this, so about 22 percent, at the cost of about 32 percent more peak
+# resident set size on that shape. The dense shapes neither gain nor lose. It builds mimalloc's C
+# sources through the `cc` crate, which adds no requirement a source install did not already have,
+# since linking a rust cdylib needs a C toolchain anyway.
+# Setting a global allocator in a crate which is also an rlib would take the choice away from a
+# rust binary that depends on it. Nothing does: the rlib exists so that `cargo test` and
+# `cargo doc` can see this crate, and a rust caller takes `pkpdutils-core` instead.
+mimalloc = "0.1"
 
 [dev-dependencies]
 # the tests build their numpy arrays in a real interpreter, which `auto-initialize` starts on the
