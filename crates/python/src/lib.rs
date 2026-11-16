@@ -20,6 +20,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 // `::` is not decoration: `#[pymodule]` expands to a module of the same name as the crate, which
 // an unqualified path would resolve to instead
 use ::pkpdutils_core as kernel;
+use pyo3::create_exception;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -27,6 +28,25 @@ use pyo3::types::PyDict;
 use crate::convert::batch_from_python;
 use crate::options::{options_from_python, unsupported_reason};
 use crate::result::result_into_python;
+
+create_exception!(
+    pkpdutils_core,
+    UnsupportedError,
+    PyValueError,
+    "An analysis which is well formed and which this build does not carry.\n\n\
+     This is the one failure of [`analyze_batch`] a host answers by analysing the batch some \
+     other way, and it is a type and not a sentence so that the rule can be written as one \
+     line which cannot be got wrong: catch `UnsupportedError` and fall back, let everything \
+     else through. The failures it must not be confused with - an options dict carrying a key \
+     or an enumeration value this build does not spell, a batch the kernel refuses - mean that \
+     the caller and this build disagree about the contract or that the data is malformed, and \
+     both of those are defects to fix rather than work to route elsewhere. Several of them are \
+     a plain `ValueError`, so a host which caught `ValueError` would swallow exactly the \
+     disagreement this design exists to make loud.\n\n\
+     It subclasses `ValueError`, which is what this refusal was before it had a type of its \
+     own, so a caller which catches `ValueError` keeps catching it.\n\n\
+     `is_supported` asks the same question without raising, and a host asks it first."
+);
 
 /// Analyse a batch of timecourses and give back the parameters of every row.
 ///
@@ -45,19 +65,22 @@ use crate::result::result_into_python;
 ///
 /// # Errors
 ///
-/// Three outcomes which are not one another, and which a caller must not read as one:
+/// Three outcomes which are not one another, which a caller must not read as one, and which are
+/// told apart by their type and not by their text:
 ///
+/// - an [`UnsupportedError`], and nothing else is one. The batch and the options are well
+///   formed and this build does not carry the analysis they ask for. This is the one a host
+///   answers by taking its own path; [`is_supported`] is the same question without an
+///   exception, and a host asks it first.
 /// - a `KeyError`, a `TypeError` or a `ValueError` naming a key of the batch or of the options.
 ///   The caller and this build disagree about the contract, which is a defect of one of the
-///   two and never a reason to analyse the batch some other way. A field `NCAOptions` gains
-///   without a release of this crate lands here, loudly, in the test suite of the host.
-/// - a `ValueError` saying that `pkpdutils-core` does not carry this analysis. The batch and
-///   the options are well formed and this build cannot answer for them; [`is_supported`] is
-///   the same question without an exception, and a host asks it first.
+///   two and never a reason to analyse the batch some other way. A field or an enumeration
+///   value `NCAOptions` gains without a release of this crate lands here, loudly, in the test
+///   suite of the host.
 /// - a `ValueError` carrying what the kernel refused the batch with: a malformed batch, a unit
 ///   which is no unit, options which contradict each other.
 ///
-/// A `RuntimeError` is the fourth and is a bug: see [`guarded`].
+/// A `RuntimeError` is the fourth and is a bug: see [`guarded`] and [`result_into_python`].
 #[pyfunction]
 #[pyo3(signature = (batch, options, n_workers = None))]
 fn analyze_batch<'py>(
@@ -69,13 +92,7 @@ fn analyze_batch<'py>(
     let batch = batch_from_python(py, batch)?;
     let options = options_from_python(options)?;
     if let Some(what) = unsupported_reason(&batch, &options) {
-        // the kernel's own error writes the sentence, so that the text of a refusal here and
-        // the text of the same refusal from the kernel cannot drift apart
-        let refusal = kernel::KernelError::Unsupported { what };
-        return Err(PyValueError::new_err(format!(
-            "pkpdutils-core does not carry this analysis: {refusal}. \
-             `is_supported` asks the same question without raising."
-        )));
+        return Err(unsupported(&kernel::KernelError::Unsupported { what }));
     }
 
     let analysed = py.detach(|| {
@@ -84,8 +101,27 @@ fn analyze_batch<'py>(
             Some(shards) => kernel::analyze_batch_in_shards(&batch, &options, shards),
         })
     })?;
-    let result = analysed.map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let result = analysed.map_err(|error| match error {
+        // the predicate answers for every refusal of the kernel, which
+        // `the_predicate_agrees_with_the_kernel` of `crate::options` holds it to, so this arm
+        // is reached only if the two have drifted apart. It is the type of the refusal which a
+        // host routes on, so a refusal which got past the predicate must still carry it
+        kernel::KernelError::Unsupported { .. } => unsupported(&error),
+        _ => PyValueError::new_err(error.to_string()),
+    })?;
     result_into_python(py, result)
+}
+
+/// The exception of an analysis this build does not carry.
+///
+/// The sentence is the kernel's own error, so that the text of a refusal the predicate gives
+/// and the text of the same refusal from the kernel cannot drift apart; what a host routes on
+/// is the type, and the text is for the person reading the traceback.
+fn unsupported(refusal: &kernel::KernelError) -> PyErr {
+    UnsupportedError::new_err(format!(
+        "pkpdutils-core does not carry this analysis: {refusal}. \
+         `is_supported` asks the same question without raising."
+    ))
 }
 
 /// Why `pkpdutils-core` would refuse this batch, `None` when it would analyse it.
@@ -142,7 +178,8 @@ fn guarded<T>(f: impl FnOnce() -> T) -> PyResult<T> {
     })
 }
 
-/// The module `pkpdutils` imports: the two entry points and the version of this build.
+/// The module `pkpdutils` imports: the two entry points, the refusal a host routes on and the
+/// version of this build.
 ///
 /// # Errors
 ///
@@ -151,6 +188,12 @@ fn guarded<T>(f: impl FnOnce() -> T) -> PyResult<T> {
 #[pymodule]
 fn pkpdutils_core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    // by name, so that a host writes `except pkpdutils_core.UnsupportedError` rather than
+    // matching on the text of a message
+    module.add(
+        "UnsupportedError",
+        module.py().get_type::<UnsupportedError>(),
+    )?;
     module.add_function(wrap_pyfunction!(analyze_batch, module)?)?;
     module.add_function(wrap_pyfunction!(is_supported, module)?)?;
     Ok(())
@@ -165,6 +208,7 @@ mod tests {
 
     use numpy::{PyArray2, PyReadonlyArray1};
     use pyo3::exceptions::{PyKeyError, PyRuntimeError};
+    use pyo3::types::PyType;
 
     use super::*;
 
@@ -272,6 +316,29 @@ mod tests {
             .to_vec()
     }
 
+    /// The truth values of one `bool` array of a mapping of the result.
+    fn truths(dict: &Bound<'_, PyDict>, key: &str) -> Vec<bool> {
+        dict.get_item(key)
+            .unwrap()
+            .unwrap_or_else(|| panic!("`{key}` is not in the mapping"))
+            .extract::<PyReadonlyArray1<'_, bool>>()
+            .unwrap_or_else(|e| panic!("`{key}` is no `bool` array: {e}"))
+            .as_slice()
+            .unwrap()
+            .to_vec()
+    }
+
+    /// The keys of a mapping of the result, sorted, so that a set can be compared by name.
+    fn names_of(dict: &Bound<'_, PyDict>) -> Vec<String> {
+        let mut names: Vec<String> = dict
+            .keys()
+            .iter()
+            .map(|key| key.extract().unwrap())
+            .collect();
+        names.sort();
+        names
+    }
+
     /// One section of the result, as a dict of its own.
     fn section<'py>(dict: &Bound<'py, PyDict>, key: &str) -> Bound<'py, PyDict> {
         dict.get_item(key)
@@ -324,10 +391,24 @@ mod tests {
                 .as_slice()
                 .unwrap()
                 .to_vec();
-            assert_eq!(flags.len(), 2);
+            // the two curves are one curve scaled, so they are flagged alike, and no bit of
+            // `NcaFlag` is set on either: the terminal window of this curve spans more than
+            // the two half-lives of `SPAN_MINIMUM` and nothing else of the single dose
+            // analysis has a flag to raise
+            assert_eq!(flags, [0, 0]);
 
-            // `accepted` and `excluded` are on every result of the kernel
-            assert_eq!(section(&result, "booleans").len(), 2);
+            // `accepted` and `excluded` are on every result of the kernel, by those names, and
+            // without a threshold of `NCAOptions.acceptance` every row is accepted and none is
+            // excluded
+            let booleans = section(&result, "booleans");
+            assert_eq!(names_of(&booleans), ["accepted", "excluded"]);
+            assert_eq!(truths(&booleans, "accepted"), [true, true]);
+            assert_eq!(truths(&booleans, "excluded"), [false, false]);
+
+            // no row was excluded, so there is no text to carry, and the only point variables
+            // of this build are of a single curve which asked to keep its candidates
+            assert_eq!(section(&result, "texts").len(), 0);
+            assert_eq!(section(&result, "point_variables").len(), 0);
         });
     }
 
@@ -488,6 +569,46 @@ mod tests {
     }
 
     #[test]
+    fn only_an_unsupported_analysis_carries_the_type_a_host_routes_on() {
+        // the host's rule is one line - catch `UnsupportedError` and take the python path, let
+        // everything else through - so the whole design rests on no other failure wearing that
+        // type. A disagreement about the contract which did would send every batch down the
+        // python path for good with nothing to notice it by
+        Python::attach(|py| {
+            let refused = options_dict(py);
+            refused.set_item("tau", 12.0).unwrap();
+            let err = analyze_batch(py, &batch_dict(py, 2), &refused, None).unwrap_err();
+            assert!(err.is_instance_of::<UnsupportedError>(py), "{err}");
+            // additive: it subclasses `ValueError`, which this refusal was before it had a
+            // type, so a caller which catches `ValueError` keeps catching it
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+
+            // an enumeration value `NCAOptions` gains which this build does not spell. This is
+            // the case the type exists for: it is a plain `ValueError`, so nothing but the
+            // type tells it from the refusal above
+            let gained = options_dict(py);
+            gained.set_item("auc_method", "trapezoid").unwrap();
+            let err = analyze_batch(py, &batch_dict(py, 2), &gained, None).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+
+            // a key it gains, which is a `KeyError`
+            let unknown = options_dict(py);
+            unknown.set_item("resolve_lloq", true).unwrap();
+            let err = analyze_batch(py, &batch_dict(py, 2), &unknown, None).unwrap_err();
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+
+            // and a batch the kernel itself refuses, which is malformed data and not an
+            // analysis of another plan
+            let batch = batch_dict(py, 2);
+            batch.set_item("unit", "banana/l").unwrap();
+            let err = analyze_batch(py, &batch, &options_dict(py), None).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+        });
+    }
+
+    #[test]
     fn a_panic_does_not_cross_the_boundary() {
         // no input of the kernel is known to panic, so nothing but this test reaches the
         // boundary; a panic which escaped a pyo3 extension would abort the interpreter and the
@@ -581,6 +702,19 @@ mod tests {
                 .call1((batch_dict(py, 2), options_dict(py)))
                 .unwrap();
             assert!(answer.is_none(), "{answer}");
+
+            // the refusal a host routes on is importable by name, and is a `ValueError`, so
+            // `except pkpdutils_core.UnsupportedError` is the whole of the host's rule
+            let refusal = module
+                .getattr("UnsupportedError")
+                .unwrap()
+                .cast_into::<PyType>()
+                .expect("a class");
+            assert!(
+                refusal.is_subclass_of::<PyValueError>().unwrap(),
+                "{refusal}"
+            );
+            assert!(refusal.is(py.get_type::<UnsupportedError>()), "{refusal}");
         });
     }
 }

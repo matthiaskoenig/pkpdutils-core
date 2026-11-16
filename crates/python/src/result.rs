@@ -19,6 +19,7 @@
 
 use numpy::PyArray1;
 use pkpdutils_abi::AnalysisResult;
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
@@ -29,9 +30,10 @@ use pyo3::types::{PyDict, PyList};
 ///
 /// # Errors
 ///
-/// Whatever building the dicts of the sections raises, which is what python raises when it runs
-/// out of memory and nothing else: every key is a string the kernel wrote and every value is an
-/// array of it.
+/// A `RuntimeError` when two sections carry one name, see [`unit_of`], and otherwise whatever
+/// building the dicts of the sections raises, which is what python raises when it runs out of
+/// memory and nothing else: every key is a string the kernel wrote and every value is an array
+/// of it.
 pub(crate) fn result_into_python(
     py: Python<'_>,
     result: AnalysisResult,
@@ -43,7 +45,7 @@ pub(crate) fn result_into_python(
     let texts = PyDict::new(py);
 
     for column in result.parameters {
-        units.set_item(&column.name, column.unit)?;
+        unit_of(&units, &column.name, column.unit)?;
         parameters.set_item(column.name, PyArray1::from_vec(py, column.values))?;
     }
     for variable in result.point_variables {
@@ -51,15 +53,15 @@ pub(crate) fn result_into_python(
         entry.set_item("dim", variable.dim)?;
         entry.set_item("size", variable.size)?;
         entry.set_item("values", PyArray1::from_vec(py, variable.values))?;
-        units.set_item(&variable.name, variable.unit)?;
+        unit_of(&units, &variable.name, variable.unit)?;
         point_variables.set_item(variable.name, entry)?;
     }
     for column in result.boolean_variables {
-        units.set_item(&column.name, column.unit)?;
+        unit_of(&units, &column.name, column.unit)?;
         booleans.set_item(column.name, PyArray1::from_vec(py, column.values))?;
     }
     for column in result.text_variables {
-        units.set_item(&column.name, column.unit)?;
+        unit_of(&units, &column.name, column.unit)?;
         texts.set_item(column.name, PyList::new(py, column.values)?)?;
     }
 
@@ -71,6 +73,32 @@ pub(crate) fn result_into_python(
     dict.set_item("booleans", booleans)?;
     dict.set_item("texts", texts)?;
     Ok(dict)
+}
+
+/// Record the unit of a variable, refusing a name a section has already claimed.
+///
+/// `units` is one mapping over the four sections, so two variables of one name would leave one
+/// of them carrying the other's unit, with nothing anywhere to say so: a parameter in the units
+/// of a text variable is `dimensionless` and reads as an answer. No section of the kernel
+/// shares a name with another today, which is why this is a check and not a merge, and it is a
+/// check rather than a test because a test can only pin the sections this build happens to
+/// emit.
+///
+/// # Errors
+///
+/// A `RuntimeError` naming the variable. It is of the family [`crate::guarded`] raises: the
+/// kernel built a result which cannot be read, which is a bug of this build and not an answer
+/// to the batch.
+fn unit_of(units: &Bound<'_, PyDict>, name: &str, unit: String) -> PyResult<()> {
+    if units.contains(name)? {
+        return Err(PyRuntimeError::new_err(format!(
+            "the result carries two variables named `{name}`, whose units would overwrite one \
+             another. This is a bug of the kernel and not of the batch it was given; please \
+             report it at {}",
+            env!("CARGO_PKG_REPOSITORY")
+        )));
+    }
+    units.set_item(name, unit)
 }
 
 #[cfg(test)]
@@ -237,6 +265,23 @@ mod tests {
                 .extract()
                 .unwrap();
             assert_eq!(reason, ["", "acceptance criteria"]);
+        });
+    }
+
+    #[test]
+    fn two_sections_cannot_claim_one_name() {
+        // `units` is one mapping over the four sections, so a name in two of them would leave
+        // one of the two carrying the other's unit and reading as an answer. No two sections
+        // of the kernel share a name today; this is what makes the day one does loud
+        let mut colliding = result();
+        colliding.boolean_variables[0].name = "cmax".to_string();
+
+        Python::attach(|py| {
+            let err = result_into_python(py, colliding).unwrap_err();
+            assert!(err.is_instance_of::<PyRuntimeError>(py), "{err}");
+            let message = err.to_string();
+            assert!(message.contains("cmax"), "{message}");
+            assert!(message.contains(env!("CARGO_PKG_REPOSITORY")), "{message}");
         });
     }
 
