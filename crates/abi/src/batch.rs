@@ -84,6 +84,38 @@ pub(crate) fn expected_len(
         .ok_or_else(|| format!("{field}: {n_samples} samples times {per_sample} overflows"))
 }
 
+/// Accept a dose field only where every row carries its doses at the front.
+///
+/// `batch/1` carries the doses of a row at the front of its dose columns and pads the rest with
+/// `NaN`, which is what `Timecourses.from_arrays` writes: it sorts the protocol by time and
+/// compacts it to the front of the row. `reference_dose` (`src/pkpdutils/nca/nca.py`) relies on
+/// that layout without checking it - it counts the dose columns of the whole row and then picks
+/// the first, or the last at steady state, by position - so a row with a hole in it, a padded
+/// column with a dose behind it, makes it pick a column which is no dose: every parameter which
+/// divides by the dose comes out `NaN` on a row which has one, and no flag marks it. Python
+/// cannot reach that state and the kernel is the port of `nca` and not of `Timecourses`, so the
+/// hole is refused here rather than compacted away, which is the data model's job.
+///
+/// A column is a dose where its entry is finite, which is what `reference_dose` counts, so an
+/// infinity is padding here as well. `dose_duration` is not checked and must not be: it is
+/// `NaN` for every dose of every route but an infusion.
+fn check_dose_padding(field: &str, values: &[f64], max_doses: usize) -> Result<(), String> {
+    if max_doses == 0 {
+        return Ok(());
+    }
+    for (row, slice) in values.chunks_exact(max_doses).enumerate() {
+        let doses = slice.iter().take_while(|x| x.is_finite()).count();
+        if let Some(offset) = slice[doses..].iter().position(|x| x.is_finite()) {
+            let column = doses + offset;
+            return Err(format!(
+                "{field} of row {row} has a hole: the dose at column {column} sits behind the \
+                 padding at column {doses}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// A coordinate over some of the sample dimensions.
 ///
 /// A sample coordinate of `pkpdutils` lives on a *subset* of the sample
@@ -312,7 +344,7 @@ impl PartialEq for Batch {
 
 impl Batch {
     /// Check every array against the sample shape, so that no row of the batch can index out
-    /// of range.
+    /// of range, and every dose row against the padding this contract states.
     ///
     /// A batch read from the wire is validated on the way in. A host which builds the struct
     /// directly - the path the design mandates where the layouts already agree, with the numpy
@@ -321,9 +353,14 @@ impl Batch {
     /// batch whose arrays do not fit its shape, and a panic is a trap which kills a wasm
     /// instance.
     ///
+    /// The doses of a row are at the front of its dose columns and the rest of them is `NaN`,
+    /// the one thing about the layout which `nca` reads without checking it; a row with a hole
+    /// in it is refused by `check_dose_padding`, whose documentation says why.
+    ///
     /// # Errors
     ///
-    /// The field, the expected length and the length found, or the overflow of a shape.
+    /// The field, the expected length and the length found, the overflow of a shape, or the row
+    /// and the column of a hole in a dose field.
     pub fn validate(&self) -> Result<(), String> {
         check_len(
             "sample_shape",
@@ -358,6 +395,8 @@ impl Batch {
         check_len("dose_amount", doses, self.dose_amount.len())?;
         check_len("dose_time", doses, self.dose_time.len())?;
         check_len("dose_duration", doses, self.dose_duration.len())?;
+        check_dose_padding("dose_amount", &self.dose_amount, self.max_doses)?;
+        check_dose_padding("dose_time", &self.dose_time, self.max_doses)?;
         check_coords(&self.coords, &self.sample_dims, &self.sample_shape)
     }
 
@@ -373,7 +412,8 @@ impl Batch {
     ///
     /// A subject without a protocol (`io.py` `_build_batch`) has none. The padding is `NaN` at
     /// the back, so a row with a `NaN` in the middle is malformed and is treated as ending at
-    /// its first `NaN`.
+    /// its first `NaN`; [`Batch::validate`] refuses such a row, so this reading is what an
+    /// unvalidated batch gets and nothing more.
     ///
     /// # Panics
     ///
@@ -653,6 +693,97 @@ mod tests {
         batch.dose_duration = vec![nan; 6];
         assert_eq!(batch.n_doses_of_row(1), 1);
         assert_eq!(batch.dosing_of_row(1).amounts, vec![100.0]);
+        // which is the reading of an unvalidated batch, and `validate` is what keeps a
+        // reader from ever seeing one: that row has a hole and is no batch of this contract
+        assert!(
+            batch.validate().unwrap_err().contains("row 1 has a hole"),
+            "a hole in the dose row has to be refused"
+        );
+    }
+
+    #[test]
+    fn a_dose_row_whose_doses_are_not_at_its_front_is_refused() {
+        // `batch/1` carries the doses of a row at the front of its dose columns and pads the
+        // rest with NaN, which is what `Timecourses.from_arrays` writes. `reference_dose` of
+        // `nca.py` counts the dose columns of the whole row and then picks positionally, so a
+        // hole makes it pick a column which is not a dose and every parameter which divides
+        // by the dose comes out NaN on a row which has one. Python cannot build that batch;
+        // this is where it is refused.
+        let nan = f64::NAN;
+        let padded = |amounts: Vec<f64>, times: Vec<f64>| Batch {
+            max_doses: 3,
+            dose_amount: amounts,
+            dose_time: times,
+            dose_duration: vec![nan; 6],
+            ..Batch::example_with_undosed_row()
+        };
+
+        // the dose of row 1 sits in its middle column, which is the shape this check was
+        // written for: two of the three columns are padding and the one which is not is
+        // behind the first of them
+        let holed = padded(
+            vec![nan, nan, nan, nan, 50.0, nan],
+            vec![nan, nan, nan, nan, 0.0, nan],
+        );
+        let err = holed.validate().unwrap_err();
+        assert_eq!(
+            err,
+            "dose_amount of row 1 has a hole: the dose at column 1 sits behind the padding at column 0"
+        );
+
+        // a hole in the times alone is a hole as well, and the field is named
+        let holed = padded(
+            vec![nan, nan, nan, 50.0, 25.0, nan],
+            vec![nan, nan, nan, nan, 12.0, nan],
+        );
+        assert_eq!(
+            holed.validate().unwrap_err(),
+            "dose_time of row 1 has a hole: the dose at column 1 sits behind the padding at column 0"
+        );
+
+        // an infinity is no dose to `reference_dose`, so it is padding here too
+        let holed = padded(
+            vec![nan, nan, nan, f64::INFINITY, 50.0, nan],
+            vec![nan, nan, nan, 0.0, 12.0, nan],
+        );
+        assert!(
+            holed
+                .validate()
+                .unwrap_err()
+                .contains("dose_amount of row 1"),
+            "an infinite amount with a dose behind it is a hole"
+        );
+
+        // while a protocol at the front of its row, a row of no dose at all and a batch of
+        // no dose columns are all well formed
+        let packed = padded(
+            vec![nan, nan, nan, 50.0, 25.0, nan],
+            vec![nan, nan, nan, 0.0, 12.0, nan],
+        );
+        assert!(packed.validate().is_ok(), "two doses, then the padding");
+        let undosed = Batch {
+            max_doses: 0,
+            dose_amount: Vec::new(),
+            dose_time: Vec::new(),
+            dose_duration: Vec::new(),
+            ..Batch::example_with_undosed_row()
+        };
+        assert!(undosed.validate().is_ok(), "no dose columns at all");
+        assert!(
+            Batch::example_with_undosed_row().validate().is_ok(),
+            "a row of NaN dose entries is a subject without a protocol"
+        );
+
+        // and the wire refuses it as well, since reading a batch validates it
+        let json = serde_json::to_string(&padded(
+            vec![nan, nan, nan, nan, 50.0, nan],
+            vec![nan, nan, nan, nan, 0.0, nan],
+        ))
+        .unwrap();
+        let err = serde_json::from_str::<Batch>(&json)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("has a hole"), "{err}");
     }
 
     #[test]

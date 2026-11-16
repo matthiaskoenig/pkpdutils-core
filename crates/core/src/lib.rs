@@ -27,6 +27,10 @@ use pkpdutils_abi::{
     NcaOptions, TerminalMethod, UncertaintyMethod, WindowLabel, check_contract,
 };
 
+/// The wire types this crate's whole public API is written in, re-exported so that a host takes
+/// one dependency and cannot hold a version of them which disagrees with this build's.
+pub use pkpdutils_abi;
+
 pub use crate::shard::{SHARD_WORK_THRESHOLD, automatic_shards};
 
 use crate::assemble::{RowResult, resolved_uncertainty, result_of};
@@ -36,7 +40,13 @@ use crate::shard::rows_of;
 use crate::terminal::Candidate;
 
 /// Why a batch could not be analysed.
+///
+/// The enumeration is `#[non_exhaustive]`: every [`KernelError::Unsupported`] analysis of this
+/// build is a path a later plan implements, and the errors those paths need are variants this
+/// one does not have. A host therefore matches with a `_` arm and keeps compiling across the
+/// plan which adds one.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum KernelError {
     /// The batch itself is malformed, with the reason `pkpdutils_abi::Batch::validate` gave,
     /// or one of its units is no unit, which that check does not cover (`crate::assemble`).

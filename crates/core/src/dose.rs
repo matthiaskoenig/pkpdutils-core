@@ -46,9 +46,12 @@ pub(crate) struct ReferenceDose {
 /// the terminal regression while a `NaN` duration excludes the samples at or before `t = 0`.
 ///
 /// The count is the number of dose columns which are a dose, not the position of the last one,
-/// so a protocol with a hole in it - a `NaN` amount with doses behind it, which the batch of a
-/// host can carry although `Timecourses` packs its doses to the front - picks a column which is
-/// not its last dose. That is what the python kernel picks, mirrored rather than corrected.
+/// so a protocol with a hole in it - a `NaN` amount with doses behind it, which `Timecourses`
+/// never builds since it packs its doses to the front - picks a column which is not its last
+/// dose. That is what the python kernel picks, mirrored rather than corrected. No analysis
+/// reaches it: `pkpdutils_abi::Batch::validate` refuses a batch whose dose rows are not packed
+/// that way, because mirroring the positional pick on a hole would drop every dose-dependent
+/// parameter of a row which has a dose, and nothing would say so.
 ///
 /// The three arrays are the dose columns of the row as the batch carries them, `NaN` padding and
 /// all: the count is taken over every column, which is what makes a protocol with a hole in it
@@ -366,9 +369,11 @@ mod tests {
         // An upstream oddity, mirrored rather than corrected and raised with the
         // maintainer: the last dose is picked by the NUMBER of doses of the protocol and
         // not by the position of the last one, so a protocol whose doses are not packed to
-        // the front - which `Timecourses` never builds and the batch of a host can carry -
-        // picks a column which is no dose at all. Two of these three columns are a dose,
-        // so the steady state analysis reads column 1: a NaN amount at t = 12.
+        // the front - which `Timecourses` never builds - picks a column which is no dose at
+        // all. Two of these three columns are a dose, so the steady state analysis reads
+        // column 1: a NaN amount at t = 12. The expression is pinned here because it is the
+        // port of python's; a batch of such a row is refused by `Batch::validate` and
+        // `a_protocol_with_a_hole_is_refused_before_any_row_runs` is that half.
         let holed: Protocol<'_> = (&[100.0, f64::NAN, 25.0], &[0.0, 12.0, 24.0], None);
         let last = picked(holed, true);
         assert!(last.amount.is_nan(), "not the 25.0 of the last column");

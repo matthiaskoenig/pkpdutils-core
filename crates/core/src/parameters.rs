@@ -1752,16 +1752,20 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_protocol_with_a_hole_is_read_as_the_python_kernel_reads_it() {
-        // An upstream oddity, mirrored rather than corrected: the reference dose is the first
-        // COLUMN of the protocol where any column is a dose, not the first column which is
-        // one. A protocol whose amount is missing and whose time is not therefore shifts the
-        // curve onto a dose whose amount is NaN.
-        let batch = Batch {
-            max_doses: 2,
-            dose_amount: vec![f64::NAN, 100.0],
-            dose_time: vec![5.0, 0.0],
-            dose_duration: vec![f64::NAN, f64::NAN],
+    fn a_protocol_with_a_hole_is_refused_before_any_row_runs() {
+        // `reference_dose` counts the dose columns of the whole row and then picks the first
+        // of them positionally, which is what python does, so a protocol with a hole in it
+        // picks a column which is not a dose: the curve is shifted onto a NaN amount and
+        // `cl_f`, `vz_f` and `auc_inf_dn` come out NaN on a row which has a dose, with no
+        // flag marking it. `Timecourses.from_arrays` sorts and compacts the protocol to the
+        // front of the row, so python never reaches that state and the kernel refuses the
+        // batch rather than compacting it, which is the data model's job and not the
+        // kernel's. `dose::reference_dose` stays the faithful port of the python expression.
+        let with_protocol = |amounts: Vec<f64>, times: Vec<f64>| Batch {
+            max_doses: amounts.len(),
+            dose_amount: amounts,
+            dose_time: times,
+            dose_duration: vec![f64::NAN; 3],
             dose_unit: Some("mg".to_string()),
             route: Some(Route::Oral),
             ..one(
@@ -1769,18 +1773,34 @@ pub(crate) mod tests {
                 &[0.0, 4.0, 8.0, 4.0, 2.0, 1.0, 0.5],
             )
         };
-        let result = run(&batch, &linear());
-
-        assert_eq!(
-            value(&result, "tmax"),
-            2.0,
-            "the times are shifted by the 5.0 of the first column"
-        );
-        assert_eq!(value(&result, "auc_last"), 19.25);
+        // the dose of this row sits in the middle column: `Timecourses.from_arrays` moves it
+        // to the front and warns ("the dose times of 1 of 1 dosing protocols were not
+        // sorted"), so `nca` answers it as the compacted protocol below, where the kernel
+        // answered NaN for every dose-dependent parameter before this check
+        let error = analyze_batch(
+            &with_protocol(
+                vec![f64::NAN, 50.0, f64::NAN],
+                vec![f64::NAN, 0.0, f64::NAN],
+            ),
+            &linear(),
+        )
+        .unwrap_err();
         assert!(
-            value(&result, "cl_f").is_nan(),
-            "and the amount of that column is no amount"
+            matches!(&error, KernelError::Batch(message) if message
+                == "dose_amount of row 0 has a hole: the dose at column 1 sits behind the padding at column 0"),
+            "{error}"
         );
+
+        // while the protocol of the same row, compacted to the front as a batch of this
+        // contract carries it, analyses and divides by its dose: `nca` of pkpdutils 1.4.0
+        // gives 2.5035866983344746 for `cl_f` of this curve, for the holed protocol and the
+        // compacted one alike
+        let packed = with_protocol(
+            vec![50.0, f64::NAN, f64::NAN],
+            vec![0.0, f64::NAN, f64::NAN],
+        );
+        let result = run(&packed, &linear());
+        close(value(&result, "cl_f"), 2.5035866983344746);
     }
 
     #[test]

@@ -1123,7 +1123,8 @@ mod tests {
     #[test]
     fn a_row_of_two_valid_points_has_no_window() {
         // A window needs three points, so a row of two has none at all: every
-        // statistic is NaN, the start is -1 and no flag claims a window was found.
+        // statistic is NaN, the window has no first and no last time, and no flag
+        // claims a window was found.
         let t = [0.0, 1.0, f64::NAN, f64::NAN];
         let c = [10.0, 5.0, f64::NAN, f64::NAN];
         let permitted = vec![true; t.len()];
@@ -1137,7 +1138,6 @@ mod tests {
         assert!(fit.n_points.is_nan());
         assert!(fit.t_first.is_nan());
         assert!(fit.t_last.is_nan());
-        assert!(fit.t_first.is_nan());
         assert_eq!(fit.flags, NcaFlag::TOO_FEW_POINTS);
         assert!(!fit.flags.contains(NcaFlag::POSITIVE_SLOPE));
         assert_eq!(span_flag(&fit), NcaFlag::NONE);
