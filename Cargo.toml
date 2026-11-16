@@ -1,11 +1,20 @@
 [workspace]
 resolver = "2"
-members = ["crates/abi", "crates/core", "crates/oracles", "crates/units"]
+members = ["crates/abi", "crates/core", "crates/oracles", "crates/python", "crates/units"]
+# `pkpdutils-python` is a member but not a default one. pyo3 refuses to build against an
+# interpreter older than its abi3 floor, so a crate in the default set would make a python 3.13
+# toolchain the price of `cargo test` on the kernel, for a binding most contributors never touch,
+# and that price is a hard build error and not a skipped crate. The four crates below are what
+# `cargo test`, `cargo clippy` and `cargo doc` take without a `-p`; the binding is built
+# deliberately, with `-p pkpdutils-python`, and is gated by the `python` job of continuous
+# integration. `--workspace` overrides this list and does reach it, which is why the wasm checks
+# exclude it by name.
+default-members = ["crates/abi", "crates/core", "crates/oracles", "crates/units"]
 # the throwaway package of the first spike sits at the repository root and is not a member
 exclude = ["spike"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.100"
 license = "MIT"
@@ -28,3 +37,11 @@ sha2 = "0.11"
 # the row shards of the kernel, behind the `parallel` feature of `pkpdutils-core`, which is off
 # by default: it compiles for both wasm targets but has no thread to run a shard on there
 rayon = "1.12"
+# the python binding, `pkpdutils-python` and nothing else in the workspace. `abi3-py313` builds
+# against the stable ABI from python 3.13 on, the floor of `pkpdutils`, so one wheel per platform
+# serves every python it supports. `extension-module` is deliberately not here: a crate which
+# takes `pyo3 = { workspace = true }` would inherit it, and a build with that feature does not
+# link libpython, so every test binary of such a crate would fail to link. It is an optional
+# feature of `pkpdutils-python`, which a wheel build asks for and `cargo test` does not.
+pyo3 = { version = "0.30.1", features = ["abi3-py313"] }
+numpy = "0.30.0"

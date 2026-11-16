@@ -1,0 +1,63 @@
+[package]
+name = "pkpdutils-python"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Python binding of the pkpdutils kernel: numpy buffers into the wire shapes of the abi"
+repository.workspace = true
+# not `readme.workspace = true`: the workspace entry is the README at the root of the
+# repository, and this crate has one of its own, which is also the long description of the
+# `pkpdutils-core` distribution on PyPI
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+
+# the cdylib is the extension module a wheel ships; the rlib is what `cargo test`, `cargo doc`
+# and a rust caller take. The lib is `pkpdutils_python`, after this package, while the
+# `#[pymodule]` is `pkpdutils_core`, after the distribution, which is why `module-name` of
+# `pyproject.toml` has to say which of the two the wheel ships the extension under.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# the feature a wheel build asks for. It is not inherited from the workspace entry of pyo3 on
+# purpose: `extension-module` leaves libpython to the interpreter which loads the wheel, so a
+# binary built with it does not link and `cargo test` could not run at all.
+extension-module = ["pyo3/extension-module"]
+# the row shards of the kernel, which the wheel is built with (`[tool.maturin] features`). It is
+# a feature of this crate rather than a `pkpdutils-core/parallel` on the build command so that
+# the one configuration the wheel ships can also be asked for by name from cargo.
+parallel = ["pkpdutils-core/parallel"]
+
+[dependencies]
+# the wire shapes the conversion builds, and the kernel the analysis entry point calls. The
+# `parallel` feature of the kernel is not enabled here by default: which features a wheel carries
+# is settled where the wheel is built, and a build without it runs every shard plan in the
+# calling thread, which is the same numbers and one thread
+pkpdutils-abi = { path = "../abi", version = "0.2.0" }
+pkpdutils-core = { path = "../core", version = "0.2.0" }
+pyo3 = { workspace = true }
+numpy = { workspace = true }
+# The allocator of the extension module, set as the `#[global_allocator]` in `src/lib.rs`. It is
+# here and not in the kernel on purpose: the kernel is also a wasm library and a rust dependency,
+# where the choice of allocator belongs to whoever builds the final artifact, and this crate *is*
+# the final artifact. Measured through `analyze_batch` on a batch of 100 000 rows by 12 points,
+# the shape where allocation is on the hot path: 105.8 and 110.1 ms of CPU with glibc malloc
+# against 82.5 and 84.4 with this, so about 22 percent, at the cost of about 32 percent more peak
+# resident set size on that shape. The dense shapes neither gain nor lose. It builds mimalloc's C
+# sources through the `cc` crate, which adds no requirement a source install did not already have,
+# since linking a rust cdylib needs a C toolchain anyway.
+# Setting a global allocator in a crate which is also an rlib would take the choice away from a
+# rust binary that depends on it. Nothing does: the rlib exists so that `cargo test` and
+# `cargo doc` can see this crate, and a rust caller takes `pkpdutils-core` instead.
+mimalloc = "0.1"
+
+[dev-dependencies]
+# the tests build their numpy arrays in a real interpreter, which `auto-initialize` starts on the
+# first `Python::attach`; it is a dev-dependency only, so no wheel ever carries it
+pyo3 = { workspace = true, features = ["auto-initialize"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,38 @@
+# Keep the GitHub Actions of the workflows and the cargo dependencies up to date, monthly, the
+# cadence of `pkpdutils`, since every update pull request runs the checks of `ci.yml`.
+#
+# Every action in `ci.yml` and `release.yml` is pinned to an exact version rather than to a moving
+# major tag, which is the only way a release workflow can be reproducible and is also how a pin
+# goes stale without anyone noticing. This file is what notices.
+# See https://docs.github.com/code-security/dependabot/dependabot-version-updates
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    # a single pull request for all action updates instead of one per action
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+
+  # the cargo dependencies. `Cargo.lock` is committed and is what every `--locked` gate of
+  # `ci.yml` and every published wheel is built from, so the lock is the thing to keep moving;
+  # the lower bounds in the manifests are what a crates.io consumer resolves against and are
+  # only ever raised by hand.
+  - package-ecosystem: "cargo"
+    directory: "/"
+    versioning-strategy: lockfile-only
+    schedule:
+      interval: "monthly"
+    groups:
+      cargo-dependencies:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build"

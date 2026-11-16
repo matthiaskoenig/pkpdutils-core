@@ -7,10 +7,10 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - name: Install the toolchain of rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.3
       - run: cargo fmt --check
       # --locked, so that the committed Cargo.lock is what is checked and a
       # resolver change is a failure here and not a silent difference
@@ -27,12 +27,12 @@ jobs:
   wasm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       # rust-toolchain.toml pins both wasm targets, which rustup installs with
       # the toolchain
       - name: Install the toolchain of rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.3
       # the core is compiled to wasm from plan 7 on, and the libraries compile
       # for both targets today; checking them from the start names the commit
       # which adds a dependency that is not wasm safe, instead of leaving it to
@@ -40,17 +40,76 @@ jobs:
       # the default features are what `cargo check --target wasm32-...` takes
       # without being told otherwise, so they are checked as well: a default
       # which stops compiling for wasm is the regression this job exists for
-      - run: cargo check --locked --workspace --target wasm32-unknown-unknown
-      - run: cargo check --locked --workspace --target wasm32-wasip1
+      # `pkpdutils-python` is excluded by name: pyo3 does not build for wasm at
+      # all, and a wasm host does not go through python anyway. Nothing is lost
+      # by leaving it out, since the binding carries no numerics of its own and
+      # the kernel it binds is what these four lines check
+      - run: cargo check --locked --workspace --exclude pkpdutils-python --target wasm32-unknown-unknown
+      - run: cargo check --locked --workspace --exclude pkpdutils-python --target wasm32-wasip1
       # and `--no-default-features` is how a wasm host builds the kernel: rayon
       # compiles for both wasm targets but reports one thread there, so the
       # `parallel` feature is a dependency a wasm instance cannot use
-      - run: cargo check --locked --workspace --no-default-features --target wasm32-unknown-unknown
-      - run: cargo check --locked --workspace --no-default-features --target wasm32-wasip1
+      - run: cargo check --locked --workspace --exclude pkpdutils-python --no-default-features --target wasm32-unknown-unknown
+      - run: cargo check --locked --workspace --exclude pkpdutils-python --no-default-features --target wasm32-wasip1
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install the toolchain of rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      # `pkpdutils-python` is no default member of the workspace, so the cargo
+      # commands of `checks` build none of it and this is the only gate it has.
+      # pyo3 refuses to build against an interpreter older than its
+      # `abi3-py313` floor, and the runner image ships an older one as
+      # `python3`, so the interpreter is named here
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.13"
+      # the exact versions, as the ruff of the job below is pinned: the tests of
+      # the binding build real numpy arrays through the C API, so a numpy
+      # release must not be able to turn this job red with no change here, and
+      # the backend which assembles the published artifact is pinned for the
+      # same reason
+      - run: python -m pip install numpy==2.5.5 maturin==1.16.0 pytest==9.2.0
+      - uses: Swatinem/rust-cache@v2.9.3
+      - run: cargo fmt --check
+      - run: cargo clippy -p pkpdutils-python --all-targets --locked -- -D warnings
+      # and with the row shards, as `checks` lints the kernel both ways: the
+      # wheel below is built with `parallel`, so without this line the one
+      # configuration users install would be the one no lint has ever seen
+      - run: cargo clippy -p pkpdutils-python --all-targets --locked --features parallel -- -D warnings
+      - run: cargo test -p pkpdutils-python --locked
+      - run: RUSTDOCFLAGS="-D warnings" cargo doc -p pkpdutils-python --locked --no-deps
+      # `license-files` of `pyproject.toml` may not reach out of the crate
+      # directory, so `crates/python/LICENSE` is a copy of the one at the root
+      # and the wheel ships the copy. Nothing else would notice the day the two
+      # differ, and the artifact it would be wrong in is a published one
+      - run: cmp LICENSE crates/python/LICENSE
+      # the cargo commands above link libpython, never take
+      # `extension-module` and assemble no wheel, so none of them produces the
+      # artifact a user installs. The wheel takes both features, it
+      # is tagged `abi3` and it ships the module under a name which is not the
+      # name of the lib target, and every one of those is decided here and
+      # nowhere a rust test can see it. `crates/python/tests/` therefore runs
+      # against the installed wheel and never against the source tree
+      - run: maturin build --release --locked -m crates/python/Cargo.toml
+      # `--no-index`, so that the numpy pinned above is the numpy the tests run
+      # with and no release of the day can be pulled in beside it
+      - run: python -m pip install --no-index --find-links target/wheels pkpdutils-core
+      - run: python -m pytest crates/python/tests -q
+      # the source distribution of the release, which maturin proves by
+      # building a wheel from it: it carries a workspace of its own, assembled
+      # out of this crate and the path dependencies it needs, so a file the
+      # build needs and the sdist does not carry fails here instead of failing
+      # every source install after the release. It is a command of its own
+      # because that workspace is not the one the committed `Cargo.lock` was
+      # resolved for, so cargo has to rewrite the lock and `--locked` cannot be
+      # passed; the wheel which is installed above is the `--locked` one
+      - run: maturin build --release --sdist --out target/sdist -m crates/python/Cargo.toml
   ruff:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       # the python of `scripts/` had no gate at all until `ruff.toml`, which is
       # how both of these were red without anyone noticing: `ruff.toml` pins
       # what is checked and the version here pins who checks it, so that
