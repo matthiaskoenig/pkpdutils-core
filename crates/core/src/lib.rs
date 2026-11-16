@@ -26,7 +26,7 @@ use pkpdutils_abi::{
     NcaOptions, TerminalMethod, UncertaintyMethod, WindowLabel, check_contract,
 };
 
-use crate::assemble::{resolved_uncertainty, result_of};
+use crate::assemble::{RowResult, resolved_uncertainty, result_of};
 use crate::dose::{ReferenceDose, reference_dose};
 use crate::parameters::{RowInput, Scratch, compute_row};
 use crate::terminal::Candidate;
@@ -114,7 +114,11 @@ pub fn analyze_batch(batch: &Batch, options: &NcaOptions) -> Result<AnalysisResu
             manual: manual.as_deref(),
         };
         let table = wants_candidates.then_some(&mut candidates);
-        rows.push((route, compute_row(&input, options, &mut scratch, table)));
+        rows.push(RowResult {
+            route,
+            dose_amount: input.dose.amount,
+            parameters: compute_row(&input, options, &mut scratch, table),
+        });
     }
 
     let result = result_of(batch, options, &rows, &candidates)?;
@@ -405,9 +409,9 @@ mod tests {
             options: options.clone(),
         };
         let result = analyze(&request).expect("the request is analysable");
-        // the oral parameter set of a dosed batch, and the trapezoids
-        // 2 + 6 + 6 + 3 + 1.5 + 0.75 of the canonical curve
-        assert_eq!(result.parameters.len(), 43);
+        // the oral parameter set of a dosed batch with its count of subjects, and the
+        // trapezoids 2 + 6 + 6 + 3 + 1.5 + 0.75 of the canonical curve
+        assert_eq!(result.parameters.len(), 44);
         let auc_last = result
             .parameters
             .iter()

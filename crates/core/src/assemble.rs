@@ -14,8 +14,8 @@
 //! parameter in the wrong magnitude.
 
 use pkpdutils_abi::{
-    AnalysisResult, Attributes, Batch, BooleanColumn, NcaOptions, ParameterColumn, PointVariable,
-    Route, UncertaintyMethod,
+    AnalysisResult, Attributes, Batch, BooleanColumn, Coordinate, NcaOptions, ParameterColumn,
+    PointVariable, Route, SampleCoordinate, UncertaintyMethod,
 };
 use pkpdutils_units::{UnitContext, parameter_unit};
 
@@ -31,6 +31,29 @@ const DIMENSIONLESS: &str = "dimensionless";
 
 /// The name of the dimension the candidate windows live on.
 const CANDIDATE_DIM: &str = "candidate";
+
+/// The name of the coordinate which names the dose every sample was analysed against.
+///
+/// `DOSE_COORDINATE` of `src/pkpdutils/nca/result.py`.
+const DOSE_COORDINATE: &str = "dose_amount";
+
+/// The number of subjects behind a sample, which every result carries.
+///
+/// `n` is no entry of `PARAMETER_UNITS`; `unit_expression` of `nca.py` answers it, and every
+/// name ending in `_n`, with `dimensionless`.
+const SUBJECT_COUNT: &str = "n";
+
+/// What one row of a batch contributes to the result.
+pub(crate) struct RowResult {
+    /// The route of the row, which decides which parameters it reports.
+    pub route: Option<Route>,
+    /// The amount of the dose the row was analysed against, as the protocol spells it: the
+    /// amount of no dose at all is `NaN` and a dose of `0` is a `0`, since this is the
+    /// coordinate of the protocol and not the divisor of `positive_dose`.
+    pub dose_amount: f64,
+    /// The parameters of the row.
+    pub parameters: RowParameters,
+}
 
 /// One variable of the candidate table: its name, its unit and the column it reads.
 struct CandidateVariable {
@@ -77,7 +100,7 @@ const CANDIDATE_VARIABLES: [CandidateVariable; 3] = [
 pub(crate) fn result_of(
     batch: &Batch,
     options: &NcaOptions,
-    rows: &[(Option<Route>, RowParameters)],
+    rows: &[RowResult],
     candidates: &[Candidate],
 ) -> Result<AnalysisResult, KernelError> {
     let context = UnitContext {
@@ -88,14 +111,18 @@ pub(crate) fn result_of(
         amount: None,
         volume: None,
     };
+    let has_dose = batch.max_doses > 0;
     let n_samples = rows.len();
+    let mut parameters = parameter_columns(rows, has_dose, &context)?;
+    // `n` goes after every parameter and before the boolean variables, where `nca` writes it
+    parameters.push(subject_counts(batch, n_samples, &context)?);
     Ok(AnalysisResult {
-        parameters: parameter_columns(rows, batch.max_doses > 0, &context)?,
+        parameters,
         point_variables: candidate_variables(candidates, n_samples, &context)?,
         boolean_variables: acceptance_variables(n_samples),
         text_variables: Vec::new(),
-        flags: rows.iter().map(|(_, p)| p.flags.bits()).collect(),
-        coords: batch.coords.clone(),
+        flags: rows.iter().map(|r| r.parameters.flags.bits()).collect(),
+        coords: coordinates(batch, rows, has_dose),
         ..AnalysisResult::new(
             batch.sample_dims.clone(),
             batch.sample_shape.clone(),
@@ -147,14 +174,14 @@ fn resolved_options(batch: &Batch, options: &NcaOptions) -> NcaOptions {
 /// way. A result is keyed by name on both sides, so this is a divergence in the order of a
 /// dataset and in no value of it.
 fn parameter_columns(
-    rows: &[(Option<Route>, RowParameters)],
+    rows: &[RowResult],
     has_dose: bool,
     context: &UnitContext,
 ) -> Result<Vec<ParameterColumn>, KernelError> {
     let mut routes: Vec<Option<Route>> = Vec::new();
-    for (route, _) in rows {
-        if !routes.contains(route) {
-            routes.push(*route);
+    for row in rows {
+        if !routes.contains(&row.route) {
+            routes.push(row.route);
         }
     }
     let reported = |p: &Parameter| routes.iter().any(|&r| p.reported_by(r, has_dose));
@@ -168,13 +195,13 @@ fn parameter_columns(
                 unit,
                 values: rows
                     .iter()
-                    .map(|(route, values)| {
-                        if p.reported_by(*route, has_dose) {
+                    .map(|row| {
+                        if p.reported_by(row.route, has_dose) {
                             // python converts every variable but the integer ones, whose
                             // expression is dimensionless and whose factor is therefore 1: a
                             // multiplication by 1 leaves every double as it was, the codes of
                             // `c0_method` included
-                            (p.read)(values) * factor
+                            (p.read)(&row.parameters) * factor
                         } else {
                             // the fill of a parameter the row does not report, which no unit
                             // converts: a NaN stays a NaN and the 0 of an integer code stays 0
@@ -185,6 +212,66 @@ fn parameter_columns(
             })
         })
         .collect()
+}
+
+/// The number of subjects behind every sample, the variable `n` of every result.
+///
+/// `Timecourses.n_subjects` is the stored count when the batch keeps one per sample and the
+/// largest over the time points when it keeps one per point, "the number of subjects of a group
+/// is the number behind its best covered point". The wire of this build has only the second
+/// form (`Batch::n` is one value per point), so the count of a sample is the `numpy.nanmax` of
+/// its row: the largest count which is a number, and `NaN` for a row which holds none, as numpy
+/// answers an all-`NaN` slice. A batch which does not carry `n` at all gives a column of `NaN`,
+/// which is what `nca` writes for a batch of individual curves.
+///
+/// # Errors
+///
+/// [`KernelError::Batch`] if `dimensionless` is no unit, which cannot happen.
+fn subject_counts(
+    batch: &Batch,
+    n_samples: usize,
+    context: &UnitContext,
+) -> Result<ParameterColumn, KernelError> {
+    let (unit, _) = unit_of(SUBJECT_COUNT, DIMENSIONLESS, context)?;
+    let values = (0..n_samples)
+        .map(|row| match &batch.n {
+            // `f64::max` answers a NaN with the other value and two NaNs with a NaN, which is
+            // the rule of `numpy.nanmax` down to the empty row
+            Some(n) => crate::row_slice(n, row, batch.n_time)
+                .iter()
+                .fold(f64::NAN, |most, &count| most.max(count)),
+            None => f64::NAN,
+        })
+        .collect();
+    Ok(ParameterColumn {
+        name: SUBJECT_COUNT.to_string(),
+        unit,
+        values,
+    })
+}
+
+/// The coordinates of the result: those of the batch, and the dose every sample was analysed
+/// against.
+///
+/// `_to_result` of `nca.py` adds `dose_amount` over the sample dimensions for a batch which has
+/// doses and does not already name the coordinate itself, so that a parameter of the result can
+/// be normalized by the dose afterwards (`NCAResult.dose_normalized`). The amount is the one the
+/// row really ran against (`reference_dose_amount`), which is why it is read back from the rows
+/// rather than from the first column of the protocol.
+///
+/// `SampleCoordinate` carries no unit, where python writes `attrs={"units": dose_unit}` onto the
+/// coordinate. The unit is `Batch::dose_unit`, which the host sent and still holds; nothing in
+/// this contract can carry it across, so nothing is invented for it here.
+fn coordinates(batch: &Batch, rows: &[RowResult], has_dose: bool) -> Vec<SampleCoordinate> {
+    let mut coords = batch.coords.clone();
+    if has_dose && !coords.iter().any(|c| c.name == DOSE_COORDINATE) {
+        coords.push(SampleCoordinate {
+            name: DOSE_COORDINATE.to_string(),
+            dims: batch.sample_dims.clone(),
+            values: Coordinate::Float(rows.iter().map(|r| r.dose_amount).collect()),
+        });
+    }
+    coords
 }
 
 /// The candidate windows of the terminal selection, over the dimension `candidate`.
@@ -503,6 +590,101 @@ mod tests {
         assert!(run(&oral_curve(), &linear()).point_variables.is_empty());
     }
 
+    #[test]
+    fn every_result_names_the_number_of_subjects_behind_its_samples() {
+        // `nca` of nca.py writes `values["n"] = timecourses.n_subjects` onto every result, NaN
+        // for a batch which does not say, and `unit_expression` of nca.py gives the name `n`
+        // the unit `dimensionless`. It is written after every parameter and before the boolean
+        // variables, so it is the last column here.
+        let individual = run(&oral_curve(), &linear());
+        assert_eq!(
+            names(&individual).last(),
+            Some(&"n"),
+            "after every parameter of the analysis"
+        );
+        assert_eq!(unit_of(&individual, "n"), "dimensionless");
+        assert!(
+            at(&individual, "n", 0).is_nan(),
+            "a batch of individual curves counts no subjects"
+        );
+
+        // `Timecourses.n_subjects` is the largest count over the time points of a sample, the
+        // number of subjects behind its best covered point, and `numpy.nanmax` of a sample
+        // without a single count is NaN rather than an error
+        let times: &[f64] = &[0.0, 1.0, 2.0];
+        let values: &[f64] = &[8.0, 4.0, 2.0];
+        let group = Batch {
+            n: Some(vec![4.0, 6.0, 5.0, f64::NAN, f64::NAN, f64::NAN]),
+            ..many(&[times, times], &[values, values])
+        };
+        let result = run(&group, &linear());
+        assert_eq!(at(&result, "n", 0), 6.0, "the largest of 4, 6 and 5");
+        assert!(at(&result, "n", 1).is_nan(), "a sample without a count");
+    }
+
+    #[test]
+    fn a_dosed_batch_carries_the_amount_it_was_analysed_against_as_a_coordinate() {
+        // `_to_result` of nca.py adds the coordinate `dose_amount` (`DOSE_COORDINATE` of
+        // nca/result.py) over the sample dimensions, the amount of the reference dose of every
+        // row, so that a parameter can be normalized by it afterwards
+        // (`NCAResult.dose_normalized`). It is added only where the batch has doses and does
+        // not already carry the coordinate itself.
+        let dosed_result = run(&oral_curve(), &linear());
+        let dose = coordinate(&dosed_result, "dose_amount");
+        assert_eq!(dose.dims, vec!["subject"]);
+        assert_eq!(dose.values, Coordinate::Float(vec![100.0]));
+        assert!(
+            dosed_result.coords.iter().any(|c| c.name == "subject"),
+            "beside the coordinates of the batch"
+        );
+
+        // a batch without doses has no amount to name
+        let undosed = run(&one(&[0.0, 1.0, 2.0], &[8.0, 4.0, 2.0]), &linear());
+        assert!(!undosed.coords.iter().any(|c| c.name == "dose_amount"));
+
+        // the amount of the dose the row was really analysed against, which may be no number
+        let missing = Batch {
+            dose_amount: vec![f64::NAN],
+            ..oral_curve()
+        };
+        let result = run(&missing, &linear());
+        let Coordinate::Float(values) = &coordinate(&result, "dose_amount").values else {
+            panic!("the amount of a dose is a number");
+        };
+        assert!(values[0].is_nan(), "{values:?}");
+
+        // and a batch which names the coordinate itself keeps what it named
+        let own = Batch {
+            coords: vec![SampleCoordinate {
+                name: "dose_amount".to_string(),
+                dims: vec!["subject".to_string()],
+                values: Coordinate::Float(vec![42.0]),
+            }],
+            ..oral_curve()
+        };
+        let result = run(&own, &linear());
+        assert_eq!(
+            coordinate(&result, "dose_amount").values,
+            Coordinate::Float(vec![42.0])
+        );
+        assert_eq!(result.coords.len(), 1, "and gains no second one");
+    }
+
+    /// One coordinate of a result.
+    #[track_caller]
+    fn coordinate<'a>(result: &'a AnalysisResult, name: &str) -> &'a SampleCoordinate {
+        result
+            .coords
+            .iter()
+            .find(|c| c.name == name)
+            .unwrap_or_else(|| {
+                panic!(
+                    "the result has no coordinate {name}: {:?}",
+                    result.coords.iter().map(|c| &c.name).collect::<Vec<_>>()
+                )
+            })
+    }
+
     /// The unit of one point variable.
     #[track_caller]
     fn unit_of_point<'a>(result: &'a AnalysisResult, name: &str) -> &'a str {
@@ -585,7 +767,11 @@ mod tests {
         };
         let result = run(&batch, &linear());
         assert_eq!(names(&result), MIXED_ROUTE_PARAMETERS);
-        assert_eq!(result.parameters.len(), 54);
+        assert_eq!(
+            result.parameters.len(),
+            55,
+            "the union and the count of subjects"
+        );
         assert_eq!(
             names(&run(&batch, &linear())),
             names(&result),
@@ -610,7 +796,8 @@ mod tests {
         assert_eq!(unit_of(&result, "c0_method"), "dimensionless");
     }
 
-    /// Every parameter of a batch which mixes an extravascular with an intravenous dose.
+    /// Every parameter of a batch which mixes an extravascular with an intravenous dose, and
+    /// the count of subjects every result carries.
     const MIXED_ROUTE_PARAMETERS: &[&str] = &[
         "cmax",
         "tmax",
@@ -666,6 +853,7 @@ mod tests {
         "auc_inf_dn",
         "auc_inf_pred_dn",
         "cmax_dn",
+        "n",
     ];
 
     #[test]

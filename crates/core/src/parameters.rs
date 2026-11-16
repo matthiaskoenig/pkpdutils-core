@@ -1225,16 +1225,18 @@ pub(crate) mod tests {
         "auc_inf_dn",
         "auc_inf_pred_dn",
         "cmax_dn",
+        "n",
     ];
 
     #[test]
     fn an_oral_row_reports_the_oral_parameter_set_and_no_iv_parameter() {
         // areas.md section 3.11: the 33 parameters of every concentration curve, the three of
         // an extravascular dose and the seven a dose and a route add, `flags` travelling in
-        // its own section of the result rather than as a column.
+        // its own section of the result rather than as a column, plus the count of subjects
+        // `n`, which `nca` of nca.py writes after every parameter of the analysis.
         let result = run(&oral_curve(), &linear());
         assert_eq!(names(&result), ORAL_PARAMETERS);
-        assert_eq!(result.parameters.len(), 43);
+        assert_eq!(result.parameters.len(), 44);
         for iv_only in [
             "c0",
             "c0_method",
@@ -1321,7 +1323,9 @@ pub(crate) mod tests {
                 "{extravascular} belongs to an extravascular dose"
             );
         }
-        assert_eq!(result.parameters.len(), 47);
+        // the 33 of every curve, the 5 of a bolus, the 9 a dose and an intravenous route add
+        // and the count of subjects
+        assert_eq!(result.parameters.len(), 48);
 
         // c0 = exp(ln 8 - (ln 4 - ln 8) / (2 - 1) * 1) = 8 * 8 / 4
         close(value(&result, "c0"), 16.0);

@@ -72,6 +72,12 @@ pub fn normalize_volume(unit: &Unit) -> (Unit, f64) {
 /// Anything else is returned unchanged.
 ///
 /// Returns the new unit and the factor applied (1 when unchanged).
+///
+/// The factor is one division here where pint's chain is several, so the two can differ in the
+/// last bit: `mg / ((ng/ml) * min)` gives exactly `60000.0` here and
+/// `59999.999999999985` in pint, a relative difference of 2.5e-16. That is five orders below
+/// the tightest conformance gate of the package (1e-8) and is a property of the two
+/// conversions, not a defect of either.
 pub fn normalize_clearance(unit: &Unit) -> (Unit, f64) {
     let d = unit.dimension();
     let per_time = Dimension::VOLUME.div(Dimension::TIME);
