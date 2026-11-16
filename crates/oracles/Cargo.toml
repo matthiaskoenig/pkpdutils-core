@@ -21,6 +21,9 @@ publish = false
 pkpdutils-abi = { path = "../abi" }
 pkpdutils-core = { path = "../core" }
 pkpdutils-units = { path = "../units" }
+# the validation oracle is read into typed structs with `deny_unknown_fields`, so a key it
+# gains or loses fails the gate instead of being ignored
+serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 

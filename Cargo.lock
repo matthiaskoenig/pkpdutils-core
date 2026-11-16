@@ -111,6 +111,7 @@ dependencies = [
  "pkpdutils-abi",
  "pkpdutils-core",
  "pkpdutils-units",
+ "serde",
  "serde_json",
  "sha2",
 ]
