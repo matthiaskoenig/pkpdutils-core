@@ -15,6 +15,12 @@ categories.workspace = true
 publish = false
 
 [dev-dependencies]
+# the kernel under test, the wire shapes its input is built from and the unit registry
+# the oracle's units are converted with; by path only, since this crate is never
+# published and so never resolves them from a registry
+pkpdutils-abi = { path = "../abi" }
+pkpdutils-core = { path = "../core" }
+pkpdutils-units = { path = "../units" }
 serde_json.workspace = true
 sha2.workspace = true
 

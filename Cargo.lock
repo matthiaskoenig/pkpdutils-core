@@ -108,6 +108,9 @@ dependencies = [
 name = "pkpdutils-oracles"
 version = "0.1.0"
 dependencies = [
+ "pkpdutils-abi",
+ "pkpdutils-core",
+ "pkpdutils-units",
  "serde_json",
  "sha2",
 ]
