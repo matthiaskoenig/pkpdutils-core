@@ -107,7 +107,7 @@ REJECTED = {
     "kelvin": "the registry has no temperature, `tests/stats/` keeps pint",
 }
 
-FENCE = re.compile(r"^```python\b(.*?)^```", re.M | re.S)
+FENCE = re.compile(r"^```python\b(.*?)^```", re.MULTILINE | re.DOTALL)
 
 TIME = ureg.hour.dimensionality
 VOLUME = ureg.liter.dimensionality
@@ -157,7 +157,9 @@ def literals_of(tree: ast.AST) -> set[str]:
             if node.arg in UNIT_MAPPINGS and isinstance(node.value, ast.Dict):
                 found.update(v for item in node.value.values if (v := string_of(item)))
         if isinstance(node, ast.Dict):
-            for key, value in zip(node.keys, node.values):
+            # a parsed dict has one key per value, `None` for a `**` entry, so
+            # `strict` can only fire on a tree which `ast` did not build
+            for key, value in zip(node.keys, node.values, strict=True):
                 if string_of(key) in UNIT_KEYWORDS and (v := string_of(value)):
                     found.add(v)
         if isinstance(node, ast.Call) and called_name(node) in UNIT_FUNCTIONS:
@@ -247,7 +249,9 @@ def records_of(axes: dict[str, list[str]]) -> tuple[list[dict], list[str]]:
             )
             continue
         for combination in itertools.product(*(axes[a] for a in named)):
-            given = dict(zip(named, combination))
+            # the product runs over `named`, so a combination has one value per
+            # axis and `strict` holds by construction
+            given = dict(zip(named, combination, strict=True))
             unit = given.get("unit", "mg/l")
             time = given.get("time", "hr")
             try:

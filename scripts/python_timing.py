@@ -51,7 +51,6 @@ import time
 from collections.abc import Callable
 
 import numpy as np
-
 import pkpdutils
 from pkpdutils import Dose, NCAOptions, Route, Timecourses, nca
 from pkpdutils.nca.nca import run_rows

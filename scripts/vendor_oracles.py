@@ -36,6 +36,7 @@ DIRECTORIES = ["docs/data/benchmarks"]
 
 
 def sha256(path: Path) -> str:
+    """The sha256 of one file, hex encoded, as the manifest records it."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -47,6 +48,7 @@ def read_manifest() -> dict:
 
 
 def git(source: Path, *args: str, strip: bool = True) -> str:
+    """The standard output of one git command in a source tree."""
     result = subprocess.run(
         ["git", "-C", str(source), *args], capture_output=True, text=True, check=True
     )
@@ -65,6 +67,7 @@ def source_commit(source: Path) -> str:
 
 
 def tracked(source: Path, *pathspecs: str) -> list[str]:
+    """The paths the commit of the source tracks under some pathspecs."""
     out = git(source, "ls-files", "-z", "--", *pathspecs, strip=False)
     return [p for p in out.split("\0") if p]
 
@@ -88,6 +91,7 @@ def relative_paths(source: Path) -> list[str]:
 
 
 def vendored_paths() -> set[str]:
+    """Every path under the oracle directory, relative to it, directories left out."""
     return {
         p.relative_to(ORACLE_DIR).as_posix()
         for p in ORACLE_DIR.rglob("*")
@@ -97,6 +101,11 @@ def vendored_paths() -> set[str]:
 
 
 def vendor(source: Path, accept_changes: bool) -> None:
+    """Copy the oracle set of the source and write the manifest.
+
+    The files go through a staging directory, so that a failure leaves the
+    oracles which are vendored today in place.
+    """
     commit = source_commit(source)
     paths = relative_paths(source)
     if MANIFEST_PATH.exists() or MANIFEST_PATH.is_symlink():
@@ -136,6 +145,11 @@ def vendor(source: Path, accept_changes: bool) -> None:
 
 
 def check(source: Path | None) -> int:
+    """Re-hash the vendored files, and the source as well when it is given.
+
+    Returns:
+        The exit code, 1 on any difference.
+    """
     manifest = read_manifest()
     recorded = manifest["files"]
     problems = []
@@ -174,6 +188,11 @@ def check(source: Path | None) -> int:
 
 
 def main() -> int:
+    """Vendor the oracles or check them against the manifest.
+
+    Returns:
+        The exit code.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--source", type=Path, help="checkout of pkpdutils")
     parser.add_argument("--check", action="store_true", help="re-hash, copy nothing")
