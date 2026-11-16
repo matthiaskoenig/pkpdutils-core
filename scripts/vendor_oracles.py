@@ -112,7 +112,9 @@ def vendor(source: Path, accept_changes: bool) -> None:
         old = set(read_manifest()["files"])
         added, removed = sorted(set(paths) - old), sorted(old - set(paths))
         if (added or removed) and not accept_changes:
-            lines = [f"  added: {p}" for p in added] + [f"  removed: {p}" for p in removed]
+            lines = [f"  added: {p}" for p in added] + [
+                f"  removed: {p}" for p in removed
+            ]
             sys.exit(
                 "refusing: the oracle set changed, pass --accept-changes if that "
                 "is intended:\n" + "\n".join(lines)

@@ -164,7 +164,9 @@ def tool_section(tool: str, attributes: dict[str, str | None]) -> dict:
     if not names:
         sys.exit(f"refusing: the name map of {tool} is empty")
     by_route = {
-        variable: {str(Route(route)): column for route, column in sorted(columns.items())}
+        variable: {
+            str(Route(route)): column for route, column in sorted(columns.items())
+        }
         for variable, columns in sorted(by_route_raw.items())
     }
     columns = set(names.values())
@@ -178,7 +180,9 @@ def tool_section(tool: str, attributes: dict[str, str | None]) -> dict:
         columns |= set(routes.values())
     stray = sorted(set(percent) - columns)
     if stray:
-        sys.exit(f"refusing: {tool} marks {stray} as a percentage of no column of its own")
+        sys.exit(
+            f"refusing: {tool} marks {stray} as a percentage of no column of its own"
+        )
     # an unmapped column is by definition one the name map does not carry
     overlap = sorted(set(unmapped) & columns)
     if overlap:
@@ -261,7 +265,9 @@ def rule_of(node: ast.If) -> dict:
     ):
         sys.exit("refusing: a branch of _pknca_route does not return a Route")
     if node.orelse:
-        sys.exit("refusing: a branch of _pknca_route has an else, which this reads as none")
+        sys.exit(
+            "refusing: a branch of _pknca_route has an else, which this reads as none"
+        )
     codes: set[str] = set()
     prefixes: set[str] = set()
     for inner in ast.walk(node.test):
@@ -289,7 +295,9 @@ def literal_strings(nodes: list[ast.expr]) -> list[str]:
     found = []
     for node in nodes:
         if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
-            sys.exit("refusing: _pknca_route tests against something which is no string")
+            sys.exit(
+                "refusing: _pknca_route tests against something which is no string"
+            )
         found.append(node.value)
     return found
 
@@ -316,7 +324,9 @@ def route_rules() -> list[dict]:
             if not (isinstance(node.value, ast.Constant) and node.value.value is None):
                 sys.exit("refusing: _pknca_route does not end in `return None`")
             continue
-        sys.exit(f"refusing: _pknca_route carries a {type(node).__name__} this does not read")
+        sys.exit(
+            f"refusing: _pknca_route carries a {type(node).__name__} this does not read"
+        )
     if not rules:
         sys.exit("refusing: no branch of _pknca_route was read")
     return rules
@@ -384,7 +394,9 @@ def canonical(body: dict) -> str:
                 sys.exit(f"refusing: {'/'.join(path)} carries a tab or a newline")
             lines.append("/".join(path) + "\t" + node)
         else:
-            sys.exit(f"refusing: {'/'.join(path)} is a {type(node).__name__}, no string")
+            sys.exit(
+                f"refusing: {'/'.join(path)} is a {type(node).__name__}, no string"
+            )
 
     walk([], body)
     return "\n".join(sorted(lines)) + "\n"
@@ -555,7 +567,9 @@ def main() -> int:
             "crosswalk_digest": digest(body),
             "n_tools": len(tools),
             "n_names": {tool: len(s["names"]) for tool, s in tools.items()},
-            "n_names_by_route": {tool: len(s["names_by_route"]) for tool, s in tools.items()},
+            "n_names_by_route": {
+                tool: len(s["names_by_route"]) for tool, s in tools.items()
+            },
             "n_percent": {tool: len(s["percent"]) for tool, s in tools.items()},
             "n_unmapped": {tool: len(s["unmapped"]) for tool, s in tools.items()},
             "n_columns": len(columns),

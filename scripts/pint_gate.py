@@ -167,7 +167,9 @@ def literals_of(tree: ast.AST) -> set[str]:
                 if value := string_of(argument):
                     found.add(value)
                 if isinstance(argument, ast.Dict):
-                    found.update(v for item in argument.values if (v := string_of(item)))
+                    found.update(
+                        v for item in argument.values if (v := string_of(item))
+                    )
     return found
 
 

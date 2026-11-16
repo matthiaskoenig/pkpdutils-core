@@ -109,8 +109,7 @@ def arrays(n_samples: int, n_time: int) -> tuple[np.ndarray, np.ndarray]:
     stream = uniforms(n_samples * (n_time + 2))
     k = 0
     times = [
-        (0.25 + 23.75 * j / (n_time - 1)) if n_time > 1 else 0.25
-        for j in range(n_time)
+        (0.25 + 23.75 * j / (n_time - 1)) if n_time > 1 else 0.25 for j in range(n_time)
     ]
     values = np.empty((n_samples, n_time), dtype=np.float64)
     for row in range(n_samples):
