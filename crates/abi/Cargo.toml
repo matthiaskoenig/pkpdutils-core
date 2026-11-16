@@ -2,8 +2,14 @@
 name = "pkpdutils-abi"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+description = "Wire contracts of pkpdutils: NCA options, sample batches and analysis results"
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 thiserror.workspace = true

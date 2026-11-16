@@ -7,8 +7,13 @@ exclude = ["spike"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.100"
 license = "MIT"
 authors = ["Matthias König"]
+repository = "https://github.com/matthiaskoenig/pkpdutils-core"
+readme = "README.md"
+keywords = ["pharmacokinetics", "nca", "pkpd", "units", "wasm"]
+categories = ["science", "wasm"]
 
 [workspace.dependencies]
 thiserror = "2"

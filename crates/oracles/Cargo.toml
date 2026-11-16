@@ -2,8 +2,14 @@
 name = "pkpdutils-oracles"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+description = "Conformance oracles of pkpdutils, vendored with checksums"
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 # never published: it exists for the gate over `testdata/oracles/`, which lives
 # at the workspace root and cannot be packaged with any one crate
 publish = false
