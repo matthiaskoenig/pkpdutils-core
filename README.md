@@ -22,6 +22,27 @@ The comparison is exact, so an additive field is a new contract as soon as a hos
 
 `pkpdutils-core` (`crates/core`) is the port of `pkpdutils.nca`. It carries the packing of the valid points of a curve and the three trapezoid rules so far, and `KernelError`, which is how a malformed batch, a contradictory set of options, an analysis this build does not carry and a foreign contract come back. A panic would trap the wasm instance and take the host's session with it, so the kernel indexes nothing with a number from the input and unwraps nothing a host controls: a malformed input is a named error or a `NaN`. Agreement with the python package is what the crate is measured by, down to the order of the operations inside a formula, and an upstream oddity is mirrored with a test pinning it rather than corrected. `docs/python-reference/` records what the python kernel computes, extracted from the commit `testdata/oracles/MANIFEST.json` names, and is the requirement the port is written against.
 
+## Row shards and the `parallel` feature
+
+The rows of a batch are independent, so the row loop is cut into contiguous shards and the shards run on a [rayon](https://docs.rs/rayon) pool. That is the `parallel` feature of `pkpdutils-core` and it is **off by default**:
+
+```bash
+cargo build --release -p pkpdutils-core --features parallel   # a native host
+cargo build --release -p pkpdutils-core --no-default-features --target wasm32-unknown-unknown
+```
+
+A wasm build takes the kernel without the feature. A wasm instance has no threads to run a shard on, and parallelism on the web is one kernel instance per Web Worker, which is the deployment this port was planned for: the worker holds the instance, the host spreads the batches over the workers and no instance ever spawns anything. Rayon 1.12 does compile for both wasm targets, so nothing stops a build from asking for the feature there, and what it then gets is nothing: `wasm32-wasip1` under wasmtime reports one thread and runs every shard in the calling thread, measured in `BENCHMARKS.md`, while `wasm32-unknown-unknown` carries no thread support in `std` at all. The feature on a wasm target is a dependency the instance cannot use, so do not enable it there.
+
+`analyze_batch` plans the shards itself with `automatic_shards`, from the work of the batch (its rows times its time points) and the size of the pool: one shard below `SHARD_WORK_THRESHOLD` of work, which is above where the measurement of `BENCHMARKS.md` found the crossover, and above it the whole pool, `SHARDS_PER_THREAD` shards per thread of it and never more shards than there are rows. A host which has its own pool, or its own worker per batch, calls `analyze_batch_in_shards(batch, options, 1)` instead and parallelizes outside. Whatever the plan, the numbers are identical down to the bit - a shard writes its own rows in the row order of the batch and shares nothing - and `the_parallel_and_the_serial_path_produce_the_same_bits` compares them that way.
+
+`BENCHMARKS.md` is the measured table against the python package. `crates/core/examples/kernel_timing.rs` is the rust half of what wrote it and `scripts/python_timing.py`, which builds the same batches in python and is run from a `pkpdutils` checkout, is the other:
+
+```bash
+cargo run --release --example kernel_timing                              # the serial build
+cargo run --release --example kernel_timing --features parallel          # the sharded build
+cargo run --release --example kernel_timing --features parallel -- sweep # the crossover
+```
+
 ## The pint gate
 
 `crates/units/tests/data/pint_gate.json` is pint's answer for the unit strings the package uses and produces, written by `scripts/pint_gate.py` from the `pkpdutils` checkout this crate mirrors. The tests in `crates/units/tests/pint_gate.rs` compare `parse_unit`, `unit_str`, `short_unit` and `parameter_unit` against it character for character, so the gate runs in `cargo test` without Python.
@@ -87,9 +108,14 @@ What continuous integration runs, so `--locked` here as well: the committed `Car
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
-cargo check --locked --workspace --target wasm32-unknown-unknown
-cargo check --locked --workspace --target wasm32-wasip1
+cargo clippy --locked --all-targets --features parallel -- -D warnings
+cargo test --locked --features parallel
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
+cargo check --locked --workspace --no-default-features --target wasm32-unknown-unknown
+cargo check --locked --workspace --no-default-features --target wasm32-wasip1
 ```
+
+The `parallel` feature is checked and tested as well as left out: a feature which compiles in one configuration only is a break waiting for the first host which asks for it. The wasm targets are checked with `--no-default-features`, which is how a wasm host builds the kernel.
 
 Two fixtures are generated from a `pkpdutils` checkout instead of being written by hand, and each of their scripts compares the committed file with a fresh run and writes nothing. They need that checkout and so are not part of continuous integration, where the Rust gates carry the sizes and digests as their own constants instead; run both by hand whenever `pkpdutils` changes and before a release, from any working directory (`path/to/pkpdutils` is the checkout being mirrored). A non-zero exit means the fixture is stale and has to be regenerated with the same command without `--check`, never edited.
 

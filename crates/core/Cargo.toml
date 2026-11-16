@@ -17,6 +17,14 @@ categories.workspace = true
 pkpdutils-abi = { path = "../abi", version = "0.1.0" }
 pkpdutils-units = { path = "../units", version = "0.1.0" }
 thiserror.workspace = true
+rayon = { workspace = true, optional = true }
+
+[features]
+# The row shards of the analysis, which need threads: a native host asks for them, a wasm
+# instance has none and runs one kernel instance per Web Worker instead (rayon compiles for both
+# wasm targets and reports one thread there, so the feature buys an instance nothing and only
+# adds a dependency). Off by default, so that the wasm build is the plain one.
+parallel = ["dep:rayon"]
 
 [lints]
 workspace = true

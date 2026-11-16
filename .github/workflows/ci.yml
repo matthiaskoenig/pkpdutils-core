@@ -16,6 +16,14 @@ jobs:
       # resolver change is a failure here and not a silent difference
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
+      # the `parallel` feature of the kernel as well as without it: a feature
+      # which compiles in one configuration only is a break waiting for the
+      # first host which asks for it
+      - run: cargo clippy --locked --all-targets --features parallel -- -D warnings
+      - run: cargo test --locked --features parallel
+      # a link to a private item, a broken one or a missing doc comment on a
+      # public item is a failure here as well
+      - run: RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
   wasm:
     runs-on: ubuntu-latest
     steps:
@@ -29,5 +37,8 @@ jobs:
       # for both targets today; checking them from the start names the commit
       # which adds a dependency that is not wasm safe, instead of leaving it to
       # be found at the end
-      - run: cargo check --locked --workspace --target wasm32-unknown-unknown
-      - run: cargo check --locked --workspace --target wasm32-wasip1
+      # `--no-default-features` is how a wasm host builds the kernel: rayon
+      # compiles for both wasm targets but reports one thread there, so the
+      # `parallel` feature is a dependency a wasm instance cannot use
+      - run: cargo check --locked --workspace --no-default-features --target wasm32-unknown-unknown
+      - run: cargo check --locked --workspace --no-default-features --target wasm32-wasip1

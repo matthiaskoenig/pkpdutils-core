@@ -25,3 +25,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 bitflags = "2"
 sha2 = "0.11"
+# the row shards of the kernel, behind the `parallel` feature of `pkpdutils-core`, which is off
+# by default: it compiles for both wasm targets but has no thread to run a shard on there
+rayon = "1.12"

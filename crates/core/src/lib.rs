@@ -19,6 +19,7 @@ mod blq;
 mod dose;
 mod pack;
 mod parameters;
+mod shard;
 mod terminal;
 
 use pkpdutils_abi::{
@@ -26,9 +27,12 @@ use pkpdutils_abi::{
     NcaOptions, TerminalMethod, UncertaintyMethod, WindowLabel, check_contract,
 };
 
+pub use crate::shard::{SHARD_WORK_THRESHOLD, SHARDS_PER_THREAD, automatic_shards};
+
 use crate::assemble::{RowResult, resolved_uncertainty, result_of};
 use crate::dose::{ReferenceDose, reference_dose};
 use crate::parameters::{RowInput, Scratch, compute_row};
+use crate::shard::rows_of;
 use crate::terminal::Candidate;
 
 /// Why a batch could not be analysed.
@@ -78,6 +82,11 @@ pub fn analyze(request: &AnalysisRequest) -> Result<AnalysisResult, KernelError>
 /// rows report in its reported unit, the flags of every row, the acceptance variables and the
 /// coordinates of the batch (`assemble::result_of`).
 ///
+/// The rows run in the shards [`automatic_shards`] plans for the shape of the batch: in the
+/// calling thread below [`SHARD_WORK_THRESHOLD`] of work and in every build without the
+/// `parallel` feature, on the rayon pool above it. [`analyze_batch_in_shards`] takes the plan
+/// instead of computing it; the numbers are the same either way, down to the bits.
+///
 /// # Errors
 ///
 /// [`KernelError::Contract`] for a batch of another contract, [`KernelError::Batch`] and
@@ -86,40 +95,59 @@ pub fn analyze(request: &AnalysisRequest) -> Result<AnalysisResult, KernelError>
 /// dose protocol, a partial area, the acceptance criteria, the propagation of an uncertainty and
 /// the unit conversion of the result.
 pub fn analyze_batch(batch: &Batch, options: &NcaOptions) -> Result<AnalysisResult, KernelError> {
+    let shards = automatic_shards(batch.n_samples(), batch.n_time);
+    analyze_batch_in_shards(batch, options, shards)
+}
+
+/// [`analyze_batch`] over a number of row shards the caller chooses.
+///
+/// The rows are cut into contiguous stretches of about `rows / shards` rows, which is what a
+/// batch of more work than [`SHARD_WORK_THRESHOLD`] gets from [`automatic_shards`]. `0` and `1`
+/// are one shard, a count above the number of rows is one shard per row, and the shards run on
+/// the rayon pool with the `parallel` feature and one after the other in the calling thread
+/// without it; the pool decides how many of them one thread takes, so the count is what it may
+/// not fall below and not a promise of that many stretches. Every shard reads the batch and writes its own rows, so the plan changes nothing
+/// about the result: it is the same bits for any count, which
+/// `the_parallel_and_the_serial_path_produce_the_same_bits` asserts.
+///
+/// A host which runs the kernel on a pool of its own - a web worker per instance, a thread per
+/// request - takes `1` and parallelizes outside, since a shard inside the pool of the host then
+/// competes with the host's own work.
+///
+/// # Errors
+///
+/// Whatever [`analyze_batch`] refuses, which is every error of the analysis: the plan itself is
+/// no error, since there is no count which is not a plan.
+pub fn analyze_batch_in_shards(
+    batch: &Batch,
+    options: &NcaOptions,
+    shards: usize,
+) -> Result<AnalysisResult, KernelError> {
     check_contract(&batch.contract, BATCH_CONTRACT)?;
     batch.validate().map_err(KernelError::Batch)?;
     options.validate().map_err(KernelError::Options)?;
     refuse_what_is_not_carried(batch, options)?;
 
     let n_samples = batch.n_samples();
-    let manual = manual_columns(batch, options)?;
-    let windows = sample_windows(batch, options)?;
-    let has_dose = batch.max_doses > 0;
+    let rows_of_batch = Rows {
+        batch,
+        options,
+        manual: manual_columns(batch, options)?,
+        windows: sample_windows(batch, options)?,
+        has_dose: batch.max_doses > 0,
+    };
     // only an analysis of a single row reports the windows the selection could have chosen from
-    // (`candidate_variables` of `nca.py`), so only such a row is asked for them
+    // (`candidate_variables` of `nca.py`), so only such a row is asked for them, and such a row
+    // is never a shard of a batch
     let mut candidates: Vec<Candidate> = Vec::new();
-    let wants_candidates = options.terminal.keep_candidates && n_samples == 1;
-    let mut scratch = Scratch::new(batch.n_time);
-    let mut rows = Vec::with_capacity(n_samples);
-    for row in 0..n_samples {
-        let route = batch.route_of_row(row);
-        let input = RowInput {
-            times: row_slice(&batch.times, row, batch.n_time),
-            values: row_slice(&batch.values, row, batch.n_time),
-            dose: row_dose(batch, row),
-            route,
-            has_dose,
-            lloq: batch.lloq.as_ref().and_then(|v| v.get(row).copied()),
-            window: windows.as_ref().and_then(|w| w.get(row).copied().flatten()),
-            manual: manual.as_deref(),
-        };
-        let table = wants_candidates.then_some(&mut candidates);
-        rows.push(RowResult {
-            route,
-            dose_amount: input.dose.amount,
-            parameters: compute_row(&input, options, &mut scratch, table),
-        });
-    }
+    let rows = if options.terminal.keep_candidates && n_samples == 1 {
+        let mut scratch = Scratch::new(batch.n_time);
+        vec![rows_of_batch.row(0, &mut scratch, Some(&mut candidates))]
+    } else {
+        rows_of(n_samples, batch.n_time, shards, |row, scratch| {
+            rows_of_batch.row(row, scratch, None)
+        })
+    };
 
     let result = result_of(batch, options, &rows, &candidates)?;
     // unreachable after `batch.validate`, which is what every length here comes from, and kept
@@ -127,6 +155,58 @@ pub fn analyze_batch(batch: &Batch, options: &NcaOptions) -> Result<AnalysisResu
     // batch validated, so the error names this build and not the input.
     result.validate().map_err(KernelError::Internal)?;
     Ok(result)
+}
+
+/// The rows of one batch, with everything every row of it needs besides the row itself.
+///
+/// What is per batch is computed once here and what is per row in [`Rows::row`], which is what a
+/// shard calls and the only thing it calls: the struct is read only, so the shards of a batch
+/// share it without synchronizing and without copying the batch.
+struct Rows<'a> {
+    /// The batch.
+    batch: &'a Batch,
+    /// The options every row is analysed with.
+    options: &'a NcaOptions,
+    /// The columns `TerminalMethod::Manual` selects, the same for every row.
+    manual: Option<Vec<bool>>,
+    /// The terminal window of every row, where the options give one.
+    windows: Option<RowWindows>,
+    /// Whether the batch carries dose arrays at all.
+    has_dose: bool,
+}
+
+impl Rows<'_> {
+    /// The analysis of one row, through the buffers of `scratch`, which it overwrites.
+    ///
+    /// `candidates`, where it is given, is filled with the windows the terminal selection could
+    /// have chosen from; only the single row of a single row batch is ever asked for them.
+    fn row(
+        &self,
+        row: usize,
+        scratch: &mut Scratch,
+        candidates: Option<&mut Vec<Candidate>>,
+    ) -> RowResult {
+        let batch = self.batch;
+        let route = batch.route_of_row(row);
+        let input = RowInput {
+            times: row_slice(&batch.times, row, batch.n_time),
+            values: row_slice(&batch.values, row, batch.n_time),
+            dose: row_dose(batch, row),
+            route,
+            has_dose: self.has_dose,
+            lloq: batch.lloq.as_ref().and_then(|v| v.get(row).copied()),
+            window: self
+                .windows
+                .as_ref()
+                .and_then(|w| w.get(row).copied().flatten()),
+            manual: self.manual.as_deref(),
+        };
+        RowResult {
+            route,
+            dose_amount: input.dose.amount,
+            parameters: compute_row(&input, self.options, scratch, candidates),
+        }
+    }
 }
 
 /// Refuse what this build does not carry, naming it.
