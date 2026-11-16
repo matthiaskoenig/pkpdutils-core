@@ -9,10 +9,17 @@
 //! the abi both are; and a terminal window arrives as the typed record of `_encode_window_key`,
 //! since a python dict key cannot say what it is any more than a JSON key can.
 //!
-//! A key the abi gives an `Option` may be absent or `None`; the rest must be there. The JSON
-//! wire defaults every field of the options instead, which is for a host that writes a partial
-//! object; the host here is `pkpdutils`, whose `NCAOptions` always carries all of them, so an
-//! absent key is a mistake worth naming rather than a short form.
+//! A key the abi gives an `Option` may be absent or `None`; the rest must be there, and a key
+//! no field of this build reads is refused by name. The JSON wire defaults every field of the
+//! options instead, which is for a host that writes a partial object; the host here is
+//! `pkpdutils`, whose `NCAOptions` always carries all of them, so an absent key is a mistake
+//! worth naming rather than a short form. A key too many is the worse mistake of the two: a
+//! field python gains and this build does not map would be dropped in silence and the analysis
+//! would then run with that option inert, which is a plausible wrong number rather than a
+//! visible wrong answer. Every dict of the options is therefore closed, as every wire struct of
+//! the abi is by `deny_unknown_fields`. `_nca_options_version` is no key of the dict, as
+//! `contract` is no key of the batch: the binding speaks one version, [`OPTIONS_VERSION`], and
+//! writes it itself.
 //!
 //! Nothing here validates: [`NcaOptions::validate`] runs on every entry point of
 //! `pkpdutils_core` already. [`unsupported_reason`] is the other half of the module, the
@@ -40,10 +47,10 @@ use crate::convert::at_key;
 ///
 /// # Errors
 ///
-/// A `KeyError` naming a required key the dict does not carry, by its path inside the options
-/// (`terminal.min_points`), a `TypeError` naming the key whose value has the wrong type, or a
-/// `ValueError` naming an enumeration value, a window label type or a duplicate window label
-/// the contract does not spell.
+/// A `KeyError` naming a required key the dict does not carry or a key it carries which no
+/// field reads, by its path inside the options (`terminal.min_points`), a `TypeError` naming
+/// the key whose value has the wrong type, or a `ValueError` naming an enumeration value, a
+/// window label type or a duplicate window label the contract does not spell.
 #[allow(
     dead_code,
     reason = "the analysis entry point which calls it is the next slice of the binding; the \
@@ -51,6 +58,7 @@ use crate::convert::at_key;
 )]
 pub(crate) fn options_from_python(obj: &Bound<'_, PyDict>) -> PyResult<NcaOptions> {
     let options = Fields::root(obj);
+    options.deny_unknown(&OPTION_KEYS)?;
     Ok(NcaOptions {
         kind: options.enum_field("kind")?,
         auc_method: options.enum_field("auc_method")?,
@@ -78,6 +86,34 @@ pub(crate) fn options_from_python(obj: &Bound<'_, PyDict>) -> PyResult<NcaOption
         delta_step: options.field("delta_step")?,
     })
 }
+
+/// Every key of the options, the 24 fields of `NCAOptions` in their order.
+const OPTION_KEYS: [&str; 24] = [
+    "kind",
+    "auc_method",
+    "terminal",
+    "lloq",
+    "lloq_relative",
+    "blq",
+    "c0_method",
+    "extrapolation_warning",
+    "acceptance",
+    "partial_aucs",
+    "tau",
+    "tau_tolerance",
+    "intervals",
+    "units",
+    "effect_threshold",
+    "n_workers",
+    "chunk_rows",
+    "uncertainty",
+    "n_boot",
+    "seed",
+    "ci_level",
+    "bootstrap_spread",
+    "bootstrap_distribution",
+    "delta_step",
+];
 
 /// Why `pkpdutils_core` would refuse this batch, `None` when it would analyse it.
 ///
@@ -194,6 +230,35 @@ impl<'py> Fields<'py> {
         Self {
             dict: dict.clone(),
             scope: String::new(),
+        }
+    }
+
+    /// Refuse a key of the dict which no field of this build reads.
+    ///
+    /// `known` is every key the converter of this dict asks for. A key beside them would be
+    /// dropped without a sound, and an option python carries but this build does not map would
+    /// then be inert while the analysis still answers - a plausible wrong number, which is
+    /// worse than a wrong answer that says so. Every wire struct of the abi closes itself the
+    /// same way, with `deny_unknown_fields`.
+    fn deny_unknown(&self, known: &[&str]) -> PyResult<()> {
+        for key in self.dict.keys() {
+            let name = key.extract::<String>().ok();
+            if !name.as_deref().is_some_and(|name| known.contains(&name)) {
+                return Err(PyKeyError::new_err(format!(
+                    "{} carries the key `{key}`, which no field of it spells",
+                    self.whose()
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// How an error names this dict: the options themselves, or the path of a nested one.
+    fn whose(&self) -> String {
+        if self.scope.is_empty() {
+            contract()
+        } else {
+            format!("`{}` of {}", self.scope, contract())
         }
     }
 
@@ -426,8 +491,23 @@ fn named<T: Named>(key: &str, name: &str) -> PyResult<T> {
         })
 }
 
+/// Every key of the terminal regression, the ten fields of `TerminalPhase` in their order.
+const TERMINAL_KEYS: [&str; 10] = [
+    "method",
+    "min_points",
+    "exclude_cmax",
+    "n_points",
+    "points",
+    "min_adj_r2",
+    "tie_tolerance",
+    "relative_warning",
+    "windows",
+    "keep_candidates",
+];
+
 /// The terminal regression, the ten fields of `pkpdutils.nca.options.TerminalPhase`.
 fn terminal_phase(terminal: &Fields<'_>) -> PyResult<TerminalPhase> {
+    terminal.deny_unknown(&TERMINAL_KEYS)?;
     Ok(TerminalPhase {
         method: terminal.enum_field("method")?,
         min_points: terminal.field("min_points")?,
@@ -461,6 +541,7 @@ fn windows(
     for (index, item) in items.enumerate() {
         let item = item?;
         let record = terminal.dict_of(&format!("{key}[{index}]"), &item)?;
+        record.deny_unknown(&["key", "window"])?;
         let label = window_label(&record.nested("key")?)?;
         let window: (f64, f64) = record.field("window")?;
         if map.insert(label.clone(), window).is_some() {
@@ -475,6 +556,7 @@ fn windows(
 
 /// One sample label, the `{"type": ..., "value": ...}` of `_encode_window_key`.
 fn window_label(label: &Fields<'_>) -> PyResult<WindowLabel> {
+    label.deny_unknown(&["type", "value"])?;
     let kind: String = label.field("type")?;
     let value = label.required("value")?;
     Ok(match kind.as_str() {
@@ -562,8 +644,19 @@ fn blq(options: &Fields<'_>, key: &str) -> PyResult<Blq> {
     )))
 }
 
+/// Every key of the rules, the six fields of `BLQRules` in their order.
+const BLQ_RULE_KEYS: [&str; 6] = [
+    "first",
+    "middle",
+    "last",
+    "before_tmax",
+    "after_tmax",
+    "terminal_regression",
+];
+
 /// The rules by position or by tmax, the six fields of `pkpdutils.nca.options.BLQRules`.
 fn blq_rules(rules: &Fields<'_>) -> PyResult<BlqRules> {
+    rules.deny_unknown(&BLQ_RULE_KEYS)?;
     Ok(BlqRules {
         first: blq_setting(rules, "first")?,
         middle: blq_setting(rules, "middle")?,
@@ -585,8 +678,18 @@ fn blq_setting(rules: &Fields<'_>, key: &str) -> PyResult<Option<BlqSetting>> {
     Ok(Some(BlqSetting::Value(rules.extract(key, value)?)))
 }
 
+/// Every key of the acceptance criteria, the five fields of `Acceptance` in their order.
+const ACCEPTANCE_KEYS: [&str; 5] = [
+    "r2_adj_min",
+    "extrapolation_max",
+    "span_min",
+    "n_points_min",
+    "exclude",
+];
+
 /// The thresholds of the acceptance criteria of `pkpdutils.nca.options.Acceptance`.
 fn acceptance(acceptance: &Fields<'_>) -> PyResult<Acceptance> {
+    acceptance.deny_unknown(&ACCEPTANCE_KEYS)?;
     Ok(Acceptance {
         r2_adj_min: acceptance.optional_field("r2_adj_min")?,
         extrapolation_max: acceptance.optional_field("extrapolation_max")?,
@@ -641,11 +744,30 @@ mod tests {
         Python::attach(|py| batch_from_python(py, &batch_dict(py, n_doses)).unwrap())
     }
 
-    /// The single dose batch with a spread per point, the group curve of several subjects.
-    fn batch_with_spread() -> Batch {
+    /// The single dose batch with one more array of five numbers, by the key it travels under.
+    fn batch_with(key: &str, values: Vec<f64>) -> Batch {
         Python::attach(|py| {
             let dict = batch_dict(py, 1);
-            dict.set_item("sd", row(py, vec![0.0, 1.0, 0.8, 0.4, 0.1]))
+            dict.set_item(key, row(py, values)).unwrap();
+            batch_from_python(py, &dict).unwrap()
+        })
+    }
+
+    /// The spread per point of a group curve, which the automatic choice bootstraps.
+    fn batch_with_spread() -> Batch {
+        batch_with("sd", vec![0.0, 1.0, 0.8, 0.4, 0.1])
+    }
+
+    /// Two dose amounts of which only the first has a time.
+    ///
+    /// The abi counts the leading amounts which are not `NaN` and reads two doses here, the
+    /// kernel counts the columns whose amount and time are both a number and reads one. The
+    /// padding of each array is still at its back, so the batch validates and the kernel
+    /// analyses it as the single dose batch it reads.
+    fn batch_with_a_dose_without_a_time() -> Batch {
+        Python::attach(|py| {
+            let dict = batch_dict(py, 2);
+            dict.set_item("dose_time", row(py, vec![0.0, f64::NAN]))
                 .unwrap();
             batch_from_python(py, &dict).unwrap()
         })
@@ -936,13 +1058,44 @@ mod tests {
 
     #[test]
     fn a_supported_batch_has_no_reason() {
-        let batch = batch(1);
-        let options = NcaOptions::default();
+        let single = batch(1);
+        let spread = batch_with_spread();
+        let counted = batch_with("n", vec![4.0; 5]);
+        let hole = batch_with_a_dose_without_a_time();
+        // the divergence the last case is built on, stated rather than implied: the abi reads
+        // two doses in that row and the kernel one, and the predicate answers for the kernel
+        assert_eq!(hole.n_doses_of_row(0), 2);
 
-        assert_eq!(unsupported_reason(&batch, &options), None);
-        // the other direction of the agreement: a batch the predicate passes is one the kernel
-        // really analyses, so a predicate stricter than the kernel fails here
-        assert!(analyze_batch(&batch, &options).is_ok());
+        let cases: [(&str, &Batch, NcaOptions); 4] = [
+            ("a single dose curve", &single, NcaOptions::default()),
+            // the refusal is of what the options resolve to and not of what the batch carries:
+            // a group curve whose propagation is turned off by hand is analysed, although the
+            // automatic choice for the very same batch is the bootstrap
+            (
+                "a group curve whose propagation is off",
+                &spread,
+                NcaOptions {
+                    uncertainty: Some(UncertaintyMethod::None),
+                    ..NcaOptions::default()
+                },
+            ),
+            // `n` is no spread: `resolved_uncertainty` reads `sd` and `se` and nothing else
+            (
+                "a batch which carries only `n`",
+                &counted,
+                NcaOptions::default(),
+            ),
+            ("a dose without a time", &hole, NcaOptions::default()),
+        ];
+
+        for (case, batch, options) in cases {
+            assert_eq!(unsupported_reason(batch, &options), None, "{case}");
+            // the other direction of the agreement: a batch the predicate passes is one the
+            // kernel really analyses, so a predicate stricter than the kernel fails here
+            if let Err(error) = analyze_batch(batch, &options) {
+                panic!("{case}: the predicate passed it and the kernel refused it as {error}");
+            }
+        }
     }
 
     #[test]
@@ -950,9 +1103,10 @@ mod tests {
         let single = batch(1);
         let multiple = batch(2);
         let spread = batch_with_spread();
+        let se_only = batch_with("se", vec![0.0, 0.5, 0.4, 0.2, 0.05]);
         let units = BTreeMap::from([("auc_last".to_string(), "mg*hr/l".to_string())]);
 
-        let cases: [(&str, &Batch, NcaOptions); 8] = [
+        let cases: [(&str, &Batch, NcaOptions); 9] = [
             (
                 "an effect curve",
                 &single,
@@ -994,22 +1148,26 @@ mod tests {
                 &spread,
                 NcaOptions::default(),
             ),
+            // `se` alone is a spread as much as `sd` is, and the propagation asked for by hand
+            // is refused on a batch which carries neither: the condition is what the options
+            // resolve to, so neither half of `resolved_uncertainty` may be dropped
+            (
+                "a group curve which carries `se`",
+                &se_only,
+                NcaOptions::default(),
+            ),
+            (
+                "the propagation asked for without a spread",
+                &single,
+                NcaOptions {
+                    uncertainty: Some(UncertaintyMethod::Bootstrap),
+                    ..NcaOptions::default()
+                },
+            ),
             (
                 "the unit conversion of a result",
                 &single,
                 NcaOptions {
-                    units: units.clone(),
-                    ..NcaOptions::default()
-                },
-            ),
-            // several refusals at once, which pins the order of the two lists and not only
-            // what is on them: the kernel names the effect curve and so must the predicate
-            (
-                "an effect curve of a multiple dose protocol",
-                &multiple,
-                NcaOptions {
-                    kind: Kind::Effect,
-                    tau: Some(12.0),
                     units,
                     ..NcaOptions::default()
                 },
@@ -1017,11 +1175,113 @@ mod tests {
         ];
 
         for (case, batch, options) in cases {
-            let error = analyze_batch(batch, &options).expect_err(case);
-            let KernelError::Unsupported { what } = error else {
-                panic!("{case}: the kernel refused it as {error} and not as unsupported");
-            };
-            assert_eq!(unsupported_reason(batch, &options), Some(what), "{case}");
+            assert_eq!(
+                unsupported_reason(batch, &options),
+                Some(refusal(batch, &options)),
+                "{case}"
+            );
         }
+    }
+
+    /// What the kernel refuses this batch with, which has to be a [`KernelError::Unsupported`].
+    fn refusal(batch: &Batch, options: &NcaOptions) -> String {
+        match analyze_batch(batch, options) {
+            Err(KernelError::Unsupported { what }) => what,
+            Err(error) => panic!("the kernel refused it as {error} and not as unsupported"),
+            Ok(_) => panic!("the kernel analysed it"),
+        }
+    }
+
+    #[test]
+    fn the_predicate_fires_in_the_order_the_kernel_tests() {
+        let multiple_spread = Python::attach(|py| {
+            let dict = batch_dict(py, 2);
+            dict.set_item("sd", row(py, vec![0.0, 1.0, 0.8, 0.4, 0.1]))
+                .unwrap();
+            batch_from_python(py, &dict).unwrap()
+        });
+        let single_spread = batch_with_spread();
+        let single = batch(1);
+
+        // every refusal at once: the options trip five of the seven conditions and the batch
+        // the other two. Each one is taken away in turn, so the next check of the kernel is
+        // the one which has to fire and every adjacent pair of the two orders is pinned, not
+        // only the first. The text has to match the kernel's, which is what makes the order a
+        // thing this binding can get wrong quietly
+        let mut options = NcaOptions {
+            kind: Kind::Effect,
+            tau: Some(12.0),
+            acceptance: Acceptance {
+                span_min: Some(3.0),
+                ..Acceptance::default()
+            },
+            partial_aucs: BTreeMap::from([("early".to_string(), (0.0, 4.0))]),
+            units: BTreeMap::from([("auc_last".to_string(), "mg*hr/l".to_string())]),
+            ..NcaOptions::default()
+        };
+        let agreed = |batch: &Batch, options: &NcaOptions| -> String {
+            let what = refusal(batch, options);
+            assert_eq!(unsupported_reason(batch, options).as_ref(), Some(&what));
+            what
+        };
+
+        let effect = agreed(&multiple_spread, &options);
+        assert!(effect.contains("Kind::Effect"), "{effect}");
+        options.kind = Kind::Concentration;
+
+        let tau = agreed(&multiple_spread, &options);
+        assert!(tau.contains("NcaOptions::tau"), "{tau}");
+        options.tau = None;
+
+        let doses = agreed(&multiple_spread, &options);
+        assert!(doses.contains("more than one dose"), "{doses}");
+        // the protocol is what trips the third check, so the batch and not the options is what
+        // the next step drops
+        let acceptance = agreed(&single_spread, &options);
+        assert!(
+            acceptance.contains("NcaOptions::acceptance"),
+            "{acceptance}"
+        );
+        options.acceptance = Acceptance::default();
+
+        let partial = agreed(&single_spread, &options);
+        assert!(partial.contains("NcaOptions::partial_aucs"), "{partial}");
+        options.partial_aucs.clear();
+
+        let uncertainty = agreed(&single_spread, &options);
+        assert!(
+            uncertainty.contains("uncertainty of a group curve"),
+            "{uncertainty}"
+        );
+        // and the spread is what trips the sixth
+        let units = agreed(&single, &options);
+        assert!(units.contains("NcaOptions::units"), "{units}");
+        options.units.clear();
+
+        assert_eq!(unsupported_reason(&single, &options), None);
+        assert!(analyze_batch(&single, &options).is_ok());
+    }
+
+    #[test]
+    fn an_unknown_key_is_refused_by_name() {
+        let messages = Python::attach(|py| {
+            // a field python gains which this build does not map would otherwise be dropped in
+            // silence and leave the analysis running with that option inert
+            let top = options_with(py, "resolve_lloq", true).unwrap_err();
+            assert!(top.is_instance_of::<PyKeyError>(py), "{top}");
+
+            let dict = options_dict(py);
+            let terminal = terminal_dict(py);
+            terminal.set_item("min_pionts", 4u32).unwrap();
+            dict.set_item("terminal", terminal).unwrap();
+            let nested = options_from_python(&dict).unwrap_err();
+            assert!(nested.is_instance_of::<PyKeyError>(py), "{nested}");
+
+            (top.to_string(), nested.to_string())
+        });
+
+        assert!(messages.0.contains("resolve_lloq"), "{}", messages.0);
+        assert!(messages.1.contains("min_pionts"), "{}", messages.1);
+        assert!(messages.1.contains("terminal"), "{}", messages.1);
     }
 }
