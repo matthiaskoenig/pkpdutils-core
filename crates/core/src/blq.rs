@@ -395,7 +395,7 @@ mod tests {
         let permitted: Vec<bool> = blq.iter().map(|&point| !point).collect();
         let phase = TerminalPhase::default();
         let fit = terminal_fit(&tp, &cp, n_valid, &permitted, imax, &phase);
-        assert_eq!(fit.start, -1);
+        assert!(fit.t_first.is_nan());
         assert!(fit.slope.is_nan());
         assert_eq!(fit.flags, NcaFlag::TOO_FEW_POINTS);
 

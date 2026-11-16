@@ -182,12 +182,6 @@ pub(crate) fn dose_value(route: Option<Route>, single_dose: bool, c0: f64) -> Op
 pub(crate) struct Inserted {
     /// Whether a point was added at the dose time.
     pub inserted: bool,
-    /// The value of the added point, `NaN` where none was added.
-    ///
-    /// The analysis of a row reads [`Inserted::inserted`] and the row the areas run on, never
-    /// the value by itself, so the tests of this module are its only caller.
-    #[allow(dead_code)]
-    pub value: f64,
     /// The points of the row the areas run on.
     pub n: usize,
 }
@@ -267,15 +261,7 @@ pub(crate) fn insert_dose_value(
     for slot in c_area.iter_mut().skip(n) {
         *slot = f64::NAN;
     }
-    Inserted {
-        inserted,
-        value: if inserted {
-            value.unwrap_or(f64::NAN)
-        } else {
-            f64::NAN
-        },
-        n,
-    }
+    Inserted { inserted, n }
 }
 
 /// Sort the points of a row by time, keeping the order of two points of the same time.
@@ -427,7 +413,6 @@ mod tests {
         let (t_area, c_area, inserted) =
             area_row(&t, &c, 3, dose_value(Some(Route::IvBolus), true, c0.value));
         assert!(inserted.inserted);
-        close(inserted.value, 16.0);
         assert_eq!(inserted.n, 4);
         assert_eq!(&t_area[..4], &[0.0, 1.0, 2.0, 4.0]);
         close(c_area[0], 16.0);
@@ -499,7 +484,6 @@ mod tests {
             let (t_area, c_area, inserted) =
                 area_row(&t, &c, 3, dose_value(Some(route), true, f64::NAN));
             assert!(inserted.inserted, "{route:?}");
-            assert_eq!(inserted.value, 0.0, "{route:?}");
             assert_eq!(inserted.n, 4);
             assert_eq!(&t_area[..4], &[0.0, 1.0, 2.0, 4.0], "{route:?}");
             assert_eq!(&c_area[..4], &[0.0, 8.0, 4.0, 1.0], "{route:?}");
@@ -537,7 +521,6 @@ mod tests {
         ] {
             let (t_area, c_area, inserted) = area_row(&t, &c, 3, bolus);
             assert!(!inserted.inserted, "{name}");
-            assert!(inserted.value.is_nan(), "{name}");
             assert_eq!(inserted.n, 3, "{name}");
             assert_eq!(&t_area[..3], &t, "{name}");
             assert_eq!(&c_area[..3], &c, "{name}");
@@ -684,7 +667,6 @@ mod tests {
         let mut c_area = [0.0; 2];
         let cut = insert_dose_value(&t, &c, 3, Some(16.0), &mut t_area, &mut c_area);
         assert!(!cut.inserted, "the buffer has no room for a fourth point");
-        assert!(cut.value.is_nan());
         assert_eq!(cut.n, 2, "the buffer holds two of the three points");
         assert_eq!(t_area, [1.0, 2.0], "the row alone, and no point at t = 0");
         assert_eq!(c_area, [8.0, 4.0]);

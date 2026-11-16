@@ -44,6 +44,10 @@ pub enum KernelError {
         /// The analysis, the option or the route which is missing.
         what: String,
     },
+    /// The kernel built a result which is not well formed, which is a bug in this build and
+    /// not an answer to anything the caller sent.
+    #[error("the kernel built a result which is not readable: {0}")]
+    Internal(String),
     /// The peer speaks another contract than this build.
     #[error(transparent)]
     Contract(#[from] pkpdutils_abi::ContractError),
@@ -113,8 +117,9 @@ pub fn analyze_batch(batch: &Batch, options: &NcaOptions) -> Result<AnalysisResu
         )
     };
     // unreachable after `batch.validate`, which is what every length here comes from, and kept
-    // because a result the host cannot read is worth a named error rather than a surprise
-    result.validate().map_err(KernelError::Batch)?;
+    // because a result the host cannot read is worth a named error rather than a surprise. The
+    // batch validated, so the error names this build and not the input.
+    result.validate().map_err(KernelError::Internal)?;
     Ok(result)
 }
 
@@ -441,10 +446,15 @@ mod tests {
             options: options.clone(),
         };
         let result = analyze(&request).expect("the request is analysable");
-        assert_eq!(
-            result.parameters.len(),
-            analyze_batch(&batch, &options).unwrap().parameters.len()
-        );
+        // the oral parameter set of a dosed batch, and the trapezoids
+        // 2 + 6 + 6 + 3 + 1.5 + 0.75 of the canonical curve
+        assert_eq!(result.parameters.len(), 43);
+        let auc_last = result
+            .parameters
+            .iter()
+            .find(|p| p.name == "auc_last")
+            .expect("the result carries the area");
+        assert_eq!(auc_last.values, vec![19.25]);
 
         let foreign = AnalysisRequest {
             contract: "analysis/0".to_string(),

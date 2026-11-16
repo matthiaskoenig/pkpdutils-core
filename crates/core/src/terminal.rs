@@ -195,12 +195,6 @@ pub(crate) struct TerminalFit {
     pub t_first: f64,
     /// The time of the last point.
     pub t_last: f64,
-    /// The packed index of the first point, `-1` without a window.
-    ///
-    /// Python reports it and the tests of this module read it; the parameters of a row are
-    /// built from the times of the window rather than from its index, so nothing else does.
-    #[allow(dead_code)]
-    pub start: i64,
     /// The flags the regression raised.
     pub flags: NcaFlag,
 }
@@ -217,7 +211,6 @@ impl TerminalFit {
             n_points: f64::NAN,
             t_first: f64::NAN,
             t_last: f64::NAN,
-            start: -1,
             flags,
         }
     }
@@ -535,8 +528,6 @@ fn collect(
         n_points: window.n,
         t_first: t.get(start).copied().unwrap_or(f64::NAN),
         t_last: t.get(end).copied().unwrap_or(f64::NAN),
-        // a slice index never reaches `isize::MAX`, so the cast is exact
-        start: start as i64,
         flags,
     }
 }
@@ -729,7 +720,6 @@ mod tests {
         let c: Vec<f64> = t.iter().map(|&x| 10.0 * (-0.2_f64 * x).exp()).collect();
         let fit = fit_of(&t, &c, &TerminalPhase::default());
 
-        assert_eq!(fit.start, 1);
         assert_eq!(fit.n_points, 8.0);
         assert_eq!(fit.t_first, 1.0);
         assert_eq!(fit.t_last, 48.0);
@@ -776,7 +766,6 @@ mod tests {
         close(stats[2].r2_adj, 1.0); // the shorter window fits exactly
 
         let fit = fit_of(&t, &c, &TerminalPhase::default());
-        assert_eq!(fit.start, 1);
         assert_eq!(fit.n_points, 4.0);
         assert_eq!(fit.t_first, 1.0);
         assert_eq!(fit.t_last, 4.0);
@@ -808,7 +797,6 @@ mod tests {
             ..TerminalPhase::default()
         };
         let fit = fit_of(&t, &c, &phase);
-        assert_eq!(fit.start, 1, "the earliest start of the absolute band");
         assert_eq!(fit.n_points, 4.0);
         assert_eq!(fit.t_first, 1.0);
         close(fit.slope, -0.340_000_000_000_000_2);
@@ -840,7 +828,7 @@ mod tests {
             &[5.0, 5.0, 5.0, 5.0],
             &TerminalPhase::default(),
         );
-        assert_eq!(fit.start, -1);
+        assert!(fit.t_first.is_nan());
         assert_eq!(fit.flags, NcaFlag::TOO_FEW_POINTS);
     }
 
@@ -856,7 +844,7 @@ mod tests {
             .collect();
 
         let fit = fit_of(&t, &c, &TerminalPhase::default());
-        assert_eq!(fit.start, 1, "without a threshold the window stands");
+        assert_eq!(fit.t_first, 1.0, "without a threshold the window stands");
         close(fit.slope, -0.8);
         close(fit.r2_adj, 0.459_999_999_999_999_96);
 
@@ -865,7 +853,7 @@ mod tests {
             ..TerminalPhase::default()
         };
         let rejected = fit_of(&t, &c, &phase);
-        assert_eq!(rejected.start, -1);
+        assert!(rejected.t_first.is_nan());
         assert!(rejected.slope.is_nan());
         assert_eq!(rejected.flags, NcaFlag::TOO_FEW_POINTS);
         assert!(!rejected.flags.contains(NcaFlag::POSITIVE_SLOPE));
@@ -883,7 +871,7 @@ mod tests {
             ..TerminalPhase::default()
         };
         let no_fallback = fit_of(&t, &banded, &phase);
-        assert_eq!(no_fallback.start, -1);
+        assert!(no_fallback.t_first.is_nan());
         assert_eq!(no_fallback.flags, NcaFlag::TOO_FEW_POINTS);
     }
 
@@ -897,7 +885,6 @@ mod tests {
         let c: Vec<f64> = [1.0_f64, 2.0, 3.0, 4.0].iter().map(|y| y.exp()).collect();
 
         let fit = fit_of(&t, &c, &method(TerminalMethod::Manual));
-        assert_eq!(fit.start, 0);
         assert_eq!(fit.n_points, 4.0);
         assert_eq!(fit.t_first, 0.0);
         assert_eq!(fit.t_last, 3.0);
@@ -920,7 +907,7 @@ mod tests {
                 ..TerminalPhase::default()
             },
         );
-        assert_eq!(refused.start, -1);
+        assert!(refused.t_first.is_nan());
         assert_eq!(refused.flags, NcaFlag::POSITIVE_SLOPE);
     }
 
@@ -936,7 +923,6 @@ mod tests {
         let phase = method(TerminalMethod::Manual);
         let fit = terminal_fit(&t, &c, 5, &masked, 0, &phase);
 
-        assert_eq!(fit.start, 2, "the first point of the mask, not of the row");
         assert_eq!(fit.n_points, 3.0);
         assert_eq!(fit.t_first, 2.0);
         assert_eq!(fit.t_last, 4.0);
@@ -948,7 +934,6 @@ mod tests {
         // the same row with every point permitted, which is what a caller that forgot to fold
         // the mask in would get: five points from t = 0 and a slope half again as steep
         let whole = fit_of(&t, &c, &phase);
-        assert_eq!(whole.start, 0);
         assert_eq!(whole.n_points, 5.0);
         assert_eq!(whole.t_first, 0.0);
         close(whole.slope, -1.034_977_465_516_455_2);
@@ -970,7 +955,6 @@ mod tests {
                 ..method(TerminalMethod::AllAfterTmax)
             };
             let fit = fit_of(&t, &c, &phase);
-            assert_eq!(fit.start, 2, "exclude_cmax = {exclude_cmax}");
             assert_eq!(fit.n_points, 3.0);
             assert_eq!(fit.t_first, 2.0);
             assert_eq!(fit.t_last, 4.0);
@@ -995,7 +979,6 @@ mod tests {
             ..method(TerminalMethod::LastN)
         };
         let fit = fit_of(&t, &c, &phase);
-        assert_eq!(fit.start, 1);
         assert_eq!(fit.n_points, 4.0);
         assert_eq!(fit.t_first, 1.0);
         assert_eq!(fit.t_last, 2.0);
@@ -1005,7 +988,6 @@ mod tests {
         // on a row without a degenerate window it takes exactly n_points
         let clean = [20.0, 10.0, 5.0, 2.5, 1.25];
         let fit = fit_of(&[0.0, 1.0, 2.0, 3.0, 4.0], &clean, &phase);
-        assert_eq!(fit.start, 2);
         assert_eq!(fit.n_points, 3.0);
         assert_eq!(fit.t_first, 2.0);
 
@@ -1020,7 +1002,6 @@ mod tests {
             &[1.0, 10.0, 8.0, 6.0, 4.0],
             &phase,
         );
-        assert_eq!(cut.start, 2);
         assert_eq!(cut.n_points, 3.0);
         assert_eq!(cut.t_first, 2.0);
     }
@@ -1035,7 +1016,6 @@ mod tests {
         let permitted = [true, true, true, true, false];
         let fit = terminal_fit(&t, &c, 5, &permitted, 0, &TerminalPhase::default());
 
-        assert_eq!(fit.start, 1);
         assert_eq!(fit.n_points, 3.0);
         assert_eq!(fit.t_first, 1.0);
         assert_eq!(fit.t_last, 3.0, "not 4.0, the time of the last valid point");
@@ -1053,7 +1033,6 @@ mod tests {
         for bad in [0.0, -1.0] {
             let c = [20.0, 10.0, bad, 2.5, 1.25];
             let fit = fit_of(&t, &c, &TerminalPhase::default());
-            assert_eq!(fit.start, 1, "c = {bad}");
             assert_eq!(fit.n_points, 3.0, "the bad point is not counted");
             assert_eq!(fit.t_first, 1.0);
             assert_eq!(fit.t_last, 4.0, "the window reaches over the gap");
@@ -1127,7 +1106,7 @@ mod tests {
             assert!(candidate.r2_adj < 0.99, "none of them passes min_adj_r2");
         }
         let fit = fit_of(&t, &c, &phase);
-        assert_eq!(fit.start, -1, "while the selection refuses the row");
+        assert!(fit.t_first.is_nan(), "while the selection refuses the row");
 
         // and a start which cannot be regressed is left out, although the selection
         // counts it: the zero at index 1 carries the statistics of index 2, and the
@@ -1139,7 +1118,6 @@ mod tests {
         assert_eq!(table[0].n, 3.0);
 
         let fit = fit_of(&t, &c, &TerminalPhase::default());
-        assert_eq!(fit.start, 2);
         assert_eq!(fit.t_first, 2.0);
         assert_eq!(fit.n_points, 3.0);
     }
@@ -1161,7 +1139,7 @@ mod tests {
         assert!(fit.n_points.is_nan());
         assert!(fit.t_first.is_nan());
         assert!(fit.t_last.is_nan());
-        assert_eq!(fit.start, -1);
+        assert!(fit.t_first.is_nan());
         assert_eq!(fit.flags, NcaFlag::TOO_FEW_POINTS);
         assert!(!fit.flags.contains(NcaFlag::POSITIVE_SLOPE));
         assert_eq!(span_flag(&fit), NcaFlag::NONE);
@@ -1179,12 +1157,12 @@ mod tests {
             ..TerminalPhase::default()
         };
         let low = fit_of(&t, &[10.0, 4.0, 2.0, 0.5], &phase);
-        assert_eq!(low.start, 1, "the window is found all the same");
+        assert_eq!(low.t_first, 1.0, "the window is found all the same");
         assert_eq!(low.flags, NcaFlag::TERMINAL_LOW_CONCENTRATION);
 
         // exactly at the threshold is not below it
         let at = fit_of(&t, &[10.0, 4.0, 2.0, 1.0], &phase);
-        assert_eq!(at.start, 1);
+        assert_eq!(at.t_first, 1.0);
         assert_eq!(at.flags, NcaFlag::NONE);
     }
 }

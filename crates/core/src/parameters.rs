@@ -244,6 +244,8 @@ pub(crate) struct Parameter {
     pub read: fn(&RowParameters) -> f64,
     /// The rows which carry it.
     pub presence: Presence,
+    /// The value a row which does not carry it contributes to the column of a mixed batch.
+    pub fill: f64,
 }
 
 /// Every parameter of the single dose concentration analysis, in the order python writes it.
@@ -315,7 +317,7 @@ pub(crate) const PARAMETERS: &[Parameter] = &[
     Parameter::new("lambda_z_span", |p| p.lambda_z_span, Presence::Always),
     Parameter::new("thalf", |p| p.thalf, Presence::Always),
     Parameter::new("c0", |p| p.c0, Presence::Bolus),
-    Parameter::new("c0_method", |p| p.c0_method, Presence::Bolus),
+    Parameter::integer("c0_method", |p| p.c0_method, Presence::Bolus),
     Parameter::new(
         "auc_back_extrap_fraction",
         |p| p.auc_back_extrap_fraction,
@@ -350,12 +352,31 @@ pub(crate) const PARAMETERS: &[Parameter] = &[
 ];
 
 impl Parameter {
-    /// One entry of [`PARAMETERS`].
+    /// One entry of [`PARAMETERS`], a float of the result.
     const fn new(name: &'static str, read: fn(&RowParameters) -> f64, presence: Presence) -> Self {
         Self {
             name,
             read,
             presence,
+            fill: f64::NAN,
+        }
+    }
+
+    /// One entry which is an integer variable of the python result.
+    ///
+    /// A row which does not carry it contributes `0`, the code of "no estimate", where a float
+    /// contributes `NaN`: an integer variable of the python result carries no `NaN`
+    /// (`INTEGER_VARIABLES` and `merge_rows` of `nca.py`).
+    const fn integer(
+        name: &'static str,
+        read: fn(&RowParameters) -> f64,
+        presence: Presence,
+    ) -> Self {
+        Self {
+            name,
+            read,
+            presence,
+            fill: 0.0,
         }
     }
 
@@ -365,16 +386,8 @@ impl Parameter {
     }
 
     /// The value a row which does not report it contributes to the column of a mixed batch.
-    ///
-    /// `NaN` for every parameter but `c0_method`, which python fills with `0`, the code of "no
-    /// estimate", because it is an integer variable of the result (`merge_rows` and
-    /// `INTEGER_VARIABLES` of `nca.py`).
     pub(crate) fn missing(&self) -> f64 {
-        if self.name == "c0_method" {
-            0.0
-        } else {
-            f64::NAN
-        }
+        self.fill
     }
 }
 
@@ -1759,10 +1772,18 @@ pub(crate) mod tests {
         );
         assert_eq!(value(&result, "lambda_z_n_points"), 4.0);
         close(value(&result, "lambda_z"), 0.358_351_893_845_611);
-        // the mean residence time of an infusion is corrected by half its duration
-        close(
-            value(&result, "mrt"),
-            value(&result, "aumc_inf") / value(&result, "auc_inf_obs") - 1.0,
+        // the areas run on the row which carries the zero at the dose: 5 + 9 + 7 + 5 + 3.5
+        // + 2.5, and the moments 5 + 13 + 17 + 17 + 15.5 + 13.5
+        assert_eq!(value(&result, "auc_last"), 32.0);
+        assert_eq!(value(&result, "aumc_last"), 81.0);
+        close(value(&result, "auc_inf_obs"), 37.581_106_265_512_474);
+        close(value(&result, "aumc_inf"), 130.061_011_166_546_1);
+        // and the mean residence time of an infusion is corrected by half its duration
+        close(value(&result, "mrt"), 2.460_808_477_740_338);
+        assert_eq!(
+            value(&result, "mrt_last"),
+            1.531_25,
+            "the correction reaches it too"
         );
 
         // a duration which is no number excludes the samples at and before the dose, which is
