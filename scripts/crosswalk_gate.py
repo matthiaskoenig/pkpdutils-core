@@ -9,10 +9,14 @@ them lives in `src/pkpdutils/crosswalk.py`. That module is source and not an
 oracle, so it was never vendored: without it nothing in this repository can read
 the tables at all.
 
-This script extracts the map. Nothing here is hand written: every name, set and
-rule comes out of the imported `pkpdutils.crosswalk`, so a map which changes
-upstream changes the fixture and a map which is renamed away fails the
-extraction instead of silently keeping an old copy.
+This script extracts the map. Every name, set and rule comes out of the imported
+`pkpdutils.crosswalk` and none is transcribed, so a map which changes upstream
+changes the fixture. What is written here is only where to look: `TOOLS` names
+the module attribute of every map and which of the two readers reads each tool's
+table. That table is deliberate rather than a shortcut - a map renamed upstream
+then fails the extraction instead of being written as an empty one - and
+`check_tools_cover_the_module` holds it to the module, so a map the module gains
+and this does not name is an error as well.
 
 Three sections come out of it:
 
@@ -92,6 +96,45 @@ TOOLS: dict[str, dict[str, str | None]] = {
         "unmapped": "NONCOMPART_UNMAPPED",
     },
 }
+
+
+#: the suffixes of the module attributes a tool declares. An attribute of
+#: `pkpdutils.crosswalk` which ends in one of them and which `TOOLS` does not
+#: name would be a map this extraction ignores in silence
+SUFFIXES = ("_NAMES", "_NAMES_BY_ROUTE", "_PERCENT", "_UNMAPPED")
+
+
+def check_tools_cover_the_module() -> None:
+    """`TOOLS` names every map the module declares and no other.
+
+    A tool whose entry says it declares no by-route map or no unmapped set
+    (`None` for `WINNONLIN_NAMES_BY_ROUTE` and `PKNCA_UNMAPPED`, neither of
+    which exists today) would ignore one added upstream, and a fourth tool
+    appearing in `crosswalk.py` would be left out of the fixture with nothing
+    failing. Both are caught by comparing the attributes of the module with the
+    ones `TOOLS` names.
+    """
+    declared = {
+        name
+        for name in dir(crosswalk)
+        if not name.startswith("_") and name.endswith(SUFFIXES)
+    }
+    named = {
+        name
+        for attributes in TOOLS.values()
+        for key, name in attributes.items()
+        if key != "reader" and name is not None
+    }
+    ignored = sorted(declared - named)
+    if ignored:
+        sys.exit(
+            f"refusing: pkpdutils.crosswalk declares {ignored}, which this "
+            "extraction does not read; name it in TOOLS, under the tool it "
+            "belongs to"
+        )
+    stray = sorted(named - declared)
+    if stray:
+        sys.exit(f"refusing: TOOLS names {stray}, which the module does not declare")
 
 
 def attribute(name: str | None, default: object) -> object:
@@ -474,6 +517,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    check_tools_cover_the_module()
     tools = {
         tool: tool_section(tool, attributes)
         for tool, attributes in sorted(TOOLS.items())

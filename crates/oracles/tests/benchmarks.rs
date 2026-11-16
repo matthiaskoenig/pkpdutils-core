@@ -135,6 +135,20 @@ const SCENARIO_IDS: [&str; SCENARIOS] = [
 const TOOL_IDS: [&str; TOOLS] = ["noncompart", "pknca", "winnonlin"];
 
 /// The relative tolerance, `TOLERANCE` of `test_benchmark_datasets.py:38`.
+///
+/// One published number is printed with less precision than this, so the headroom there is
+/// structurally negative rather than large. `Lambda_z` of theophylline subject 1 is printed as
+/// `0.048456997` in both `Final_Parameters_Pivoted_Theoph_Linear.csv` and
+/// `..._Theoph_Log.csv`: nine decimals on 0.0485, so half an ulp of that printout is a relative
+/// 1.032e-8, and of the nine-decimal values of the eight tables it is the only one above
+/// `RTOL`. The kernel's value falls inside that rounding interval and passes - the largest
+/// difference of either theophylline pair against WinNonlin is 4.7e-9, on another subject's
+/// `Lambda_z` - but a correct kernel could in principle fail on it.
+///
+/// The asymmetry is in the safe direction: a printout too coarse for the tolerance can fail a
+/// right answer and can never pass a wrong one. The tolerance therefore stays at 1e-8, which is
+/// what the python gate compares the same file at, and a failure on that one value is to be
+/// read as the precision of the oracle rather than as an error of the kernel.
 const RTOL: f64 = 1e-8;
 
 /// The absolute tolerance, `atol` of `test_benchmark_datasets.py:97`.
@@ -198,10 +212,18 @@ const DROPPED_ALL_NAN: [(&str, &str, &str); 2] = [
 /// analysis of the observed and of the imputed concentrations at one interval, and the first
 /// `tmax` is the observed maximum, which is what this comparison is about. One such row per
 /// subject, so twelve for each theophylline scenario and six for each indomethacin one.
+///
+/// A count alone would not notice a table which gained a duplicate for one subject and lost one
+/// for another, so the gate also asserts the identity of what was dropped: for every scenario
+/// and tool the dropped rows are either none at all or exactly one [`DUPLICATED_VARIABLE`] per
+/// subject of the dataset, and [`Tally::duplicates`] names the subject of each.
 const DUPLICATES_DROPPED: usize = 60;
 
 /// The one variable those duplicate rows carry, see [`DUPLICATES_DROPPED`].
 const DUPLICATED_VARIABLE: &str = "tmax";
+
+/// The one tool whose table carries duplicate rows at all, see [`DUPLICATES_DROPPED`].
+const DUPLICATING_TOOL: &str = "pknca";
 
 /// Which reader of `crosswalk.py` reads a tool's table.
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -349,8 +371,8 @@ struct Expected {
     values: BTreeMap<String, BTreeMap<String, f64>>,
     /// The variables dropped because the table has no number for any subject.
     dropped: Vec<String>,
-    /// The variables of the duplicate rows a long table dropped.
-    duplicates: Vec<String>,
+    /// The subject and the variable of every duplicate row a long table dropped.
+    duplicates: Vec<(String, String)>,
 }
 
 /// What the gate did, which the test pins against its literals.
@@ -369,8 +391,8 @@ struct Tally {
     dropped: Vec<(String, String, String)>,
     /// The parameters a tool reports and the kernel does not produce.
     missing: Vec<(String, String, String)>,
-    /// The variables of the duplicate rows the long tables dropped.
-    duplicates: Vec<String>,
+    /// The scenario, tool and subject of every duplicate row the long tables dropped.
+    duplicates: Vec<(String, String, String)>,
     /// Every variable it compared, over every scenario and tool.
     variables: BTreeSet<String>,
     /// The largest relative difference of every scenario and tool, with where it was.
@@ -982,6 +1004,12 @@ fn read_long(table: &Table, tool: &Tool, rules: &PkncaRules, scenario: &Scenario
     let subject = table.column(&scenario.subject);
     let [start, end, code, value, exclude]: [usize; 5] = std::array::from_fn(|i| first + i);
 
+    // `crosswalk.py:636-640` drops a row whose `exclude` is neither missing nor blank, where
+    // missing is whatever `pandas` read as a `NaN`. The three spellings below are the ones R
+    // writes and the ones all eight vendored tables carry; `pandas` would also read `null`,
+    // `N/A` and `None` as missing, so a table written by another tool with one of those would
+    // fail here as a number which is no number rather than be dropped. Widen the set when such
+    // a table appears, never silently.
     let kept: Vec<&Vec<String>> = table
         .rows
         .iter()
@@ -1043,7 +1071,7 @@ fn read_long(table: &Table, tool: &Tool, rules: &PkncaRules, scenario: &Scenario
     }
 
     let mut values: BTreeMap<String, BTreeMap<String, f64>> = BTreeMap::new();
-    let mut duplicates: Vec<String> = Vec::new();
+    let mut duplicates: Vec<(String, String)> = Vec::new();
     for (row, fields) in kept.iter().enumerate() {
         let name = fields[code].as_str();
         let variable = reverse[name];
@@ -1056,7 +1084,7 @@ fn read_long(table: &Table, tool: &Tool, rules: &PkncaRules, scenario: &Scenario
         };
         let by_subject = values.entry(variable.to_string()).or_default();
         if by_subject.contains_key(&fields[subject]) {
-            duplicates.push(variable.to_string());
+            duplicates.push((fields[subject].clone(), variable.to_string()));
             continue;
         }
         by_subject.insert(fields[subject].clone(), number);
@@ -1179,7 +1207,35 @@ fn run(crosswalk: &Crosswalk) -> Tally {
                     .dropped
                     .push((scenario.scenario.clone(), tool.to_string(), name.clone()));
             }
-            tally.duplicates.extend(table.duplicates.iter().cloned());
+            // the identity of the dropped duplicates, not only how many there were: the long
+            // PKNCA tables drop one `tmax` per subject and the wide tables drop nothing, so
+            // anything in between is a table which has changed shape
+            let duplicated: BTreeSet<(&str, &str)> = table
+                .duplicates
+                .iter()
+                .map(|(subject, variable)| (subject.as_str(), variable.as_str()))
+                .collect();
+            assert_eq!(
+                duplicated.len(),
+                table.duplicates.len(),
+                "{where_}: a profile carries the same parameter three times"
+            );
+            let one_each: BTreeSet<(&str, &str)> = rows
+                .keys()
+                .map(|subject| (*subject, DUPLICATED_VARIABLE))
+                .collect();
+            assert!(
+                duplicated.is_empty() || duplicated == one_each,
+                "{where_}: it drops the duplicate rows {duplicated:?}, which is neither none \
+                 nor one {DUPLICATED_VARIABLE} per subject"
+            );
+            for (subject, _) in &table.duplicates {
+                tally.duplicates.push((
+                    scenario.scenario.clone(),
+                    tool.to_string(),
+                    subject.clone(),
+                ));
+            }
             let mut worst = (0.0f64, "nothing was compared".to_string());
             for (variable, by_subject) in &table.values {
                 let Some(column) = column(&result, variable) else {
@@ -1290,12 +1346,16 @@ fn every_scenario_matches_all_three_tools() {
         DUPLICATES_DROPPED,
         "the duplicate rows of the long PKNCA tables"
     );
-    assert!(
+    // which scenario and subject each of them was is asserted in `run`, against the subjects of
+    // the dataset; here only that no other tool's table carries one at all
+    assert_eq!(
         tally
             .duplicates
             .iter()
-            .all(|variable| variable == DUPLICATED_VARIABLE),
-        "a duplicate row of a long PKNCA table carries something other than {DUPLICATED_VARIABLE}"
+            .map(|(_, tool, _)| tool.as_str())
+            .collect::<BTreeSet<&str>>(),
+        BTreeSet::from([DUPLICATING_TOOL]),
+        "a table other than the long {DUPLICATING_TOOL} one carries duplicate rows"
     );
     assert_eq!(
         tally
