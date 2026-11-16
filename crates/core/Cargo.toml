@@ -1,0 +1,21 @@
+[package]
+name = "pkpdutils-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Non-compartmental analysis of pharmacokinetic timecourses"
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+# the version is what a published `pkpdutils-core` resolves against; the path is
+# what the workspace builds
+pkpdutils-abi = { path = "../abi", version = "0.1.0" }
+thiserror.workspace = true
+
+[lints]
+workspace = true

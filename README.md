@@ -18,6 +18,10 @@ Two contracts connect a host to the core: `batch/1`, the batch of timecourses, a
 
 The comparison is exact, so an additive field is a new contract as soon as a host speaks the old one. While nothing speaks them - no host, no release, no other repository - a field is added to `batch/1` and `analysis/1` in place and the contract strings stay; after a host ships, the same change is a `batch/2` with a coordinated bump across the repositories.
 
+## The kernel
+
+`pkpdutils-core` (`crates/core`) is the port of `pkpdutils.nca`. It carries the packing of the valid points of a curve and the three trapezoid rules so far, and `KernelError`, which is how a malformed batch, a contradictory set of options, an analysis this build does not carry and a foreign contract come back. A panic would trap the wasm instance and take the host's session with it, so the kernel indexes nothing with a number from the input and unwraps nothing a host controls: a malformed input is a named error or a `NaN`. Agreement with the python package is what the crate is measured by, down to the order of the operations inside a formula, and an upstream oddity is mirrored with a test pinning it rather than corrected. `docs/python-reference/` records what the python kernel computes, extracted from the commit `testdata/oracles/MANIFEST.json` names, and is the requirement the port is written against.
+
 ## The pint gate
 
 `crates/units/tests/data/pint_gate.json` is pint's answer for the unit strings the package uses and produces, written by `scripts/pint_gate.py` from the `pkpdutils` checkout this crate mirrors. The tests in `crates/units/tests/pint_gate.rs` compare `parse_unit`, `unit_str`, `short_unit` and `parameter_unit` against it character for character, so the gate runs in `cargo test` without Python.
@@ -59,7 +63,7 @@ Stable Rust 1.100.0 with `rustfmt` and `clippy`, and the targets `wasm32-unknown
 
 ## Checks
 
-What continuous integration runs, so `--locked` here as well: the committed `Cargo.lock` is what is checked and a resolver change is a failure rather than a silent difference.
+What continuous integration runs, so `--locked` here as well: the committed `Cargo.lock` is what is checked and a resolver change is a failure rather than a silent difference. `missing_docs` is a workspace lint (`[workspace.lints.rust]`, inherited by every crate through `[lints] workspace = true`), so the convention that every public item carries a doc comment is a gate: `clippy -D warnings` fails on an undocumented one. Never silence it for a crate, write the doc comment.
 
 ```bash
 cargo fmt --check

@@ -1,3 +1,7 @@
+//! The options gate: the enumerations, the flags and the serialized `NCAOptions` of the python
+//! package read back into this crate unchanged, and a foreign version or an unknown key is
+//! refused by name.
+
 use std::collections::BTreeMap;
 
 use pkpdutils_abi::{

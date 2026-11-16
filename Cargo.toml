@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/abi", "crates/oracles", "crates/units"]
+members = ["crates/abi", "crates/core", "crates/oracles", "crates/units"]
 # the throwaway package of the first spike sits at the repository root and is not a member
 exclude = ["spike"]
 
@@ -14,6 +14,10 @@ repository = "https://github.com/matthiaskoenig/pkpdutils-core"
 readme = "README.md"
 keywords = ["pharmacokinetics", "nca", "pkpd", "units", "wasm"]
 categories = ["science", "wasm"]
+
+# every public item carries a doc comment, as a gate rather than a convention
+[workspace.lints.rust]
+missing_docs = "warn"
 
 [workspace.dependencies]
 thiserror = "2"
