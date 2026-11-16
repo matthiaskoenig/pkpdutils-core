@@ -16,6 +16,16 @@ name: release
 on:
   push:
     tags: ['v*']
+  # A pull request which changes this file runs the build half of this workflow. That is the only
+  # way to exercise it before it is needed: GitHub offers `workflow_dispatch` only for a workflow
+  # which is already on the default branch, so a release workflow on a branch cannot be dispatched
+  # at all, and without this line its first execution would be the release itself. Scoped to this
+  # file, so an ordinary pull request does not build five wheels.
+  # `publish` is unreachable from here, by both halves of its condition: it needs the `push` event
+  # and a tag ref, and a pull request is neither.
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
   workflow_dispatch:
 
 # checkout needs no more than this; the publish job asks for `id-token: write` of its own
