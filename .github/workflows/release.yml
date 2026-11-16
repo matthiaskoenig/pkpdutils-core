@@ -47,13 +47,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # `manylinux: '2014'` is the glibc 2.17 floor, and it is written here rather than left to
-          # the action's `auto` because it is the reach of every linux wheel we ship. Measured in
-          # containers before this file was written: the kernel and rust 1.100 build in
-          # manylinux2014, the resulting extension references no symbol above GLIBC_2.16, and the
-          # same build in manylinux_2_28 references GLIBC_2.28 and reaches strictly fewer systems
-          # for no measured gain. glibc 2.17 covers RHEL 8 (2.28), RHEL 9 (2.34) and every current
-          # Debian and Ubuntu.
+          # The `manylinux` of each linux row is the glibc floor of that wheel, written here
+          # rather than left to the action's `auto` because it is the reach of what we ship.
+          # Measured in the containers, not assumed: on x86_64 this code builds in manylinux2014
+          # and the extension then references no symbol above GLIBC_2.16, while the same source in
+          # manylinux_2_28 references GLIBC_2.28 and so reaches strictly fewer systems for nothing.
+          #
+          # The two rows differ, and the reason is mimalloc. aarch64 is cross compiled, and the
+          # cross image for manylinux2014 carries gcc 4.8.5, which predates `-Wdate-time`; the
+          # build script of `libmimalloc-sys` passes `-Wno-error=date-time`, so that gcc fails
+          # with "no option -Wdate-time" and no aarch64 wheel is produced at all. The 2_28 cross
+          # image carries gcc 7.5.0 and builds it. Both were run in docker and both reproduce.
+          # So each architecture takes the oldest floor its own toolchain can reach, which is
+          # 2.17 on x86_64 and 2.28 on aarch64, and RHEL 8 (glibc 2.28) is covered on both.
           - name: linux-x86_64
             runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
@@ -63,7 +69,8 @@ jobs:
           - name: linux-aarch64
             runner: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            manylinux: '2014'
+            # 2_28 and not 2014, for the gcc of the cross image: see above
+            manylinux: '2_28'
             # cross compiled in a container on an x86_64 runner: nothing here can load it
             smoke: false
           # the macOS wheel tag comes from the deployment target of the rust target (11.0 for
