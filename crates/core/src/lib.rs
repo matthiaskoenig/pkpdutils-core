@@ -20,6 +20,7 @@ mod dose;
 mod intervals;
 mod pack;
 mod parameters;
+mod percentile;
 mod shard;
 mod stats;
 
