@@ -609,6 +609,10 @@ pub(crate) struct RowInput<'a> {
     /// The columns `TerminalMethod::Manual` selects, over the columns of the row as the host
     /// sent them; `None` under every other method.
     pub manual: Option<&'a [bool]>,
+    /// Whether the dose is the only one of the row, which decides whether the curve starts at
+    /// the dose time: an infusion or an oral dose then gets a zero inserted there, a row of a
+    /// protocol of several doses does not. A bolus gets its back extrapolated `c0` either way.
+    pub single_dose: bool,
 }
 
 /// The parameters of one curve.
@@ -625,8 +629,8 @@ pub(crate) struct RowInput<'a> {
 /// have chosen from (`terminal::candidate_table`), which only an analysis of a single row
 /// reports; the caller decides whether it wants them, as python's `candidate_variables` does.
 ///
-/// Mirrors `compute_parameters` of `src/pkpdutils/nca/nca.py` for one row, with
-/// `single_dose=True`.
+/// Mirrors `compute_parameters` of `src/pkpdutils/nca/nca.py` for one row; `single_dose` is
+/// the `RowInput` field of that name.
 pub(crate) fn compute_row(
     input: &RowInput<'_>,
     options: &NcaOptions,
@@ -739,7 +743,7 @@ pub(crate) fn compute_row(
         tp,
         cp,
         n_valid,
-        dose_value(input.route, true, out.c0),
+        dose_value(input.route, input.single_dose, out.c0),
         t_area,
         c_area,
     );
@@ -1123,6 +1127,22 @@ pub(crate) mod tests {
             dose_amount: vec![amount; n_samples],
             dose_time: vec![time; n_samples],
             dose_duration: vec![f64::NAN; n_samples],
+            dose_unit: Some("mg".to_string()),
+            route: Some(route),
+            ..batch
+        }
+    }
+
+    /// `batch` with one dose of `amount` at every one of `times` per sample, given by `route`.
+    ///
+    /// The protocol is `times.len()` doses wide and every other respect is that of [`dosed`].
+    pub(crate) fn regimen(batch: Batch, route: Route, amount: f64, times: &[f64]) -> Batch {
+        let n_samples: usize = batch.sample_shape.iter().product();
+        Batch {
+            max_doses: times.len(),
+            dose_amount: vec![amount; n_samples * times.len()],
+            dose_time: (0..n_samples).flat_map(|_| times.iter().copied()).collect(),
+            dose_duration: vec![f64::NAN; n_samples * times.len()],
             dose_unit: Some("mg".to_string()),
             route: Some(route),
             ..batch
@@ -2154,6 +2174,75 @@ pub(crate) mod tests {
         );
         assert!(at(&result, "cl", 0).is_nan() && at(&result, "cl_f", 0).is_finite());
         assert!(at(&result, "cl", 1).is_finite() && at(&result, "cl_f", 1).is_nan());
+    }
+
+    /// The row of the curve below, computed directly: `analyze_batch` does not take a protocol
+    /// of several doses yet, so the flag is set by hand.
+    fn row_of_curve(route: Route, single_dose: bool) -> RowParameters {
+        let times = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let values = [8.0, 4.0, 2.0, 1.0, 0.5];
+        let input = RowInput {
+            times: &times,
+            values: &values,
+            dose: ReferenceDose {
+                amount: 100.0,
+                time: 0.0,
+                duration: Some(f64::NAN),
+            },
+            route: Some(route),
+            has_dose: true,
+            single_dose,
+            lloq: None,
+            window: None,
+            manual: None,
+        };
+        let mut scratch = Scratch::new(times.len());
+        compute_row(&input, &linear(), &mut scratch, None)
+    }
+
+    #[test]
+    fn an_infusion_of_several_doses_gets_no_zero_inserted_at_its_reference_dose() {
+        // with one dose the kernel inserts a 0 at the dose time of an infusion or an oral
+        // dose, as WinNonlin does. with several doses the curve does not start at zero, so the
+        // insertion must not happen, and `single_dose` is what distinguishes the two.
+        for route in [Route::Oral, Route::IvInfusion] {
+            let single = row_of_curve(route, true);
+            assert_eq!(single.auc_last, 15.25, "{route:?}");
+            assert_eq!(single.aumc_last, 27.25, "{route:?}");
+
+            let several = row_of_curve(route, false);
+            assert_eq!(several.auc_last, 11.25, "{route:?}");
+            assert_eq!(several.aumc_last, 23.25, "{route:?}");
+        }
+    }
+
+    #[test]
+    fn a_bolus_still_gets_its_back_extrapolated_c0_from_the_last_dose() {
+        // the bolus insertion is not gated by single_dose: the value at the dose of a bolus
+        // is the back extrapolated c0 whether or not earlier doses exist.
+        let single = row_of_curve(Route::IvBolus, true);
+        let several = row_of_curve(Route::IvBolus, false);
+        assert!((several.c0 - 16.0).abs() < 1e-9);
+        assert_eq!(several.auc_last, single.auc_last);
+        assert!(several.auc_last > 11.25);
+    }
+
+    #[test]
+    fn the_regimen_fixture_builds_one_protocol_per_sample() {
+        let batch = regimen(
+            many(&[&[0.0, 1.0], &[0.0, 1.0]], &[&[1.0, 2.0], &[1.0, 2.0]]),
+            Route::Oral,
+            50.0,
+            &[0.0, 12.0, 24.0],
+        );
+        assert_eq!(batch.max_doses, 3);
+        assert_eq!(batch.dose_amount, vec![50.0; 6]);
+        assert_eq!(batch.dose_time, vec![0.0, 12.0, 24.0, 0.0, 12.0, 24.0]);
+        assert_eq!(batch.dose_duration.len(), 6);
+        assert!(batch.dose_duration.iter().all(|d| d.is_nan()));
+        assert!(batch.validate().is_ok());
+        assert_eq!(super::super::n_doses_of_row(&batch, 0), 3);
+        assert_eq!(super::super::n_doses_of_row(&batch, 1), 3);
     }
 
     #[test]

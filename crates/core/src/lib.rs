@@ -228,6 +228,7 @@ impl Rows<'_> {
                 .as_ref()
                 .and_then(|w| w.get(row).copied().flatten()),
             manual: self.manual.as_deref(),
+            single_dose: single_dose_of_row(batch, self.options, row),
         };
         RowResult {
             route,
@@ -293,6 +294,17 @@ fn n_doses_of_row(batch: &Batch, row: usize) -> usize {
         .zip(times)
         .filter(|(amount, time)| amount.is_finite() && time.is_finite())
         .count()
+}
+
+/// Whether the dose a row is analysed against is the only one of its curve.
+///
+/// A protocol of fewer than two doses is a single dose curve, which starts at its dose, so an
+/// infusion or an oral dose gets the zero inserted there. An explicit `NcaOptions::tau` says the
+/// curve is an interval of a regimen, which has earlier doses whether or not the protocol lists
+/// them (a steady state interval is described by one dose and its `tau`), so it makes every row a
+/// multiple dose row on its own. This is the one place the rule lives.
+fn single_dose_of_row(batch: &Batch, options: &NcaOptions, row: usize) -> bool {
+    n_doses_of_row(batch, row) < 2 && options.tau.is_none()
 }
 
 /// The dose of a row the single dose analysis runs against, the first of its protocol.
@@ -553,9 +565,26 @@ fn dimension_labels(batch: &Batch, dim: &str, size: usize) -> Vec<WindowLabel> {
 
 #[cfg(test)]
 mod tests {
-    use pkpdutils_abi::{SampleCoordinate, TerminalPhase};
+    use pkpdutils_abi::{Route, SampleCoordinate, TerminalPhase};
 
     use super::*;
+
+    #[test]
+    fn a_row_is_single_dose_with_fewer_than_two_doses_and_no_tau() {
+        use crate::parameters::tests::{dosed, linear, many, regimen};
+        let curve = || many(&[&[1.0, 2.0, 3.0]], &[&[4.0, 2.0, 1.0]]);
+        let with_tau = NcaOptions {
+            tau: Some(24.0),
+            ..linear()
+        };
+        let one_dose = dosed(curve(), Route::Oral, 100.0, 0.0);
+        let two_doses = regimen(curve(), Route::Oral, 100.0, &[0.0, 24.0]);
+
+        assert!(single_dose_of_row(&one_dose, &linear(), 0));
+        assert!(!single_dose_of_row(&one_dose, &with_tau, 0));
+        assert!(!single_dose_of_row(&two_doses, &linear(), 0));
+        assert!(!single_dose_of_row(&two_doses, &with_tau, 0));
+    }
 
     #[test]
     fn every_kernel_error_names_what_went_wrong() {
