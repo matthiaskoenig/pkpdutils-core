@@ -1,4 +1,7 @@
-# The release of the `pkpdutils-core` distribution on PyPI.
+# The release of the `pkpdutils-core` distribution on PyPI, and then the release of this
+# repository, whose body is `release-notes/X.Y.Z.md`. The two belong together: a version on the
+# index without a release of its notes leaves a reader of this repository looking at a project
+# which seems to have stopped at an older version, which is what happened here until 0.2.1.
 #
 # The filename matters: PyPI's pending publisher for this project names `release.yml` and the
 # environment `pypi`, and the OIDC token the publish job presents carries both as claims. Rename
@@ -189,6 +192,21 @@ jobs:
       # Trusted Publishing: the only credential in this workflow, and it lives for one upload
       id-token: write
     steps:
+      # The body of the release of this tag. It is read before the upload and not after, because
+      # an upload cannot be taken back while a tag can be deleted and pushed again: a tag whose
+      # notes were forgotten is a run which failed before it spent the version number.
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: The release notes of the version are written
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          test -f "release-notes/${version}.md" || {
+            echo "release-notes/${version}.md is missing, so the release of ${GITHUB_REF_NAME} would have no body"
+            exit 1
+          }
+
       - uses: actions/download-artifact@v8.0.2
         with:
           pattern: dist-*
@@ -236,3 +254,38 @@ jobs:
           print-hash: true
           # PEP 740 attestations, signed with the same OIDC identity as the upload
           attestations: true
+
+  github_release:
+    name: the release of the tag
+    # Once PyPI carries the version and not before: a release of this repository which announces
+    # a version the index does not have sends a reader to an install which fails. `needs` makes
+    # the order, and a failed upload leaves no release behind to be corrected by hand.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      # the only write this workflow asks for anywhere, and it is scoped to this job
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      # Idempotent: a run which is repeated on a tag whose release exists says so and stops,
+      # rather than failing and leaving a re-run of a failed upload looking like a broken release.
+      - name: The release of the tag, whose body is the release notes of its version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
+            echo "::notice::the release ${GITHUB_REF_NAME} exists already, nothing is created"
+            exit 0
+          fi
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --latest \
+            --title "pkpdutils-core ${version}" \
+            --notes-file "release-notes/${version}.md"
