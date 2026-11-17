@@ -1245,8 +1245,68 @@ mod tests {
                 .unwrap()
                 .extract()
                 .unwrap();
-            assert!(n_batches >= 1);
+            // three animals share the one pattern of both times, so the variance has one batch
+            assert_eq!(n_batches, 1);
             assert_eq!(singletons, 0);
+        });
+    }
+
+    /// The `parameters` entry of a sparse answer as a name to values mapping.
+    fn sparse_parameters(answer: &Bound<'_, PyDict>) -> Vec<(String, Vec<f64>)> {
+        let parameters = answer.get_item("parameters").unwrap().unwrap();
+        let parameters = parameters.cast::<PyDict>().unwrap();
+        parameters
+            .iter()
+            .map(|(name, values)| {
+                let values = values.cast::<PyArray1<f64>>().unwrap().readonly();
+                (name.extract().unwrap(), values.as_array().to_vec())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_empty_sparse_shape_still_carries_the_batch_counts() {
+        Python::attach(|py| {
+            let request = sparse_request(py, "batch");
+            request
+                .set_item("values", PyArray1::from_slice(py, &[] as &[f64]))
+                .unwrap();
+            request.set_item("n_rows", 0).unwrap();
+            let answer = nca_sparse(py, &request).unwrap();
+            for key in ["n_batches", "singletons"] {
+                let count: usize = answer.get_item(key).unwrap().unwrap().extract().unwrap();
+                assert_eq!(count, 0, "{key}");
+            }
+            let parameters = sparse_parameters(&answer);
+            assert_eq!(parameters.len(), 7);
+            for (name, values) in parameters {
+                assert!(values.iter().all(|v| v.is_nan()), "{name}: {values:?}");
+            }
+        });
+    }
+
+    #[test]
+    fn a_design_of_single_animal_patterns_reports_its_singletons() {
+        Python::attach(|py| {
+            let request = sparse_request(py, "batch");
+            let nan = f64::NAN;
+            let v = [1.0, nan, nan, nan, 0.5, nan, nan, nan, 0.2];
+            request
+                .set_item("times", PyArray1::from_slice(py, &[1.0, 2.0, 3.0]))
+                .unwrap();
+            request
+                .set_item("values", PyArray1::from_slice(py, &v))
+                .unwrap();
+            request.set_item("n_cols", 3).unwrap();
+            let answer = nca_sparse(py, &request).unwrap();
+            let count =
+                |key: &str| -> usize { answer.get_item(key).unwrap().unwrap().extract().unwrap() };
+            assert_eq!((count("n_batches"), count("singletons")), (3, 3));
+            for (name, values) in sparse_parameters(&answer) {
+                if name == "auc_last_se" || name == "auc_last_df" {
+                    assert!(values[0].is_nan(), "{name}");
+                }
+            }
         });
     }
 
