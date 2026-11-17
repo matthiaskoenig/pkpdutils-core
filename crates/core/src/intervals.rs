@@ -1710,6 +1710,9 @@ mod tests {
         assert!(extrapolate_end(&t, &[0.0, 0.0, 0.0, 0.0, 0.0, 1.0], &all, 6.0, 3).is_nan());
         assert!(extrapolate_end(&[2.0, 2.0], &[3.0, 2.0], &[true; 2], 6.0, 3).is_nan());
         assert!(extrapolate_end(&[], &[], &[], 6.0, 3).is_nan());
+        // times so close that the squared spread underflows to zero while the cross product does
+        // not: the slope would be infinite, python's `denominator > 0` makes it NaN
+        assert!(extrapolate_end(&[0.0, 1e-200], &[3.0, 2.0], &[true; 2], 6.0, 3).is_nan());
     }
 
     #[test]
