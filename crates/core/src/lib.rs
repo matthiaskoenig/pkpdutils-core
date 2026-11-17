@@ -21,6 +21,7 @@ mod intervals;
 mod pack;
 mod parameters;
 mod shard;
+mod steady_state;
 mod terminal;
 
 use pkpdutils_abi::{
