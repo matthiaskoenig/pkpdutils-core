@@ -1251,7 +1251,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sparse_request_without_values_is_a_value_error() {
+    fn a_sparse_request_without_values_is_a_key_error() {
         Python::attach(|py| {
             let request = sparse_request(py, "batch");
             request.del_item("values").unwrap();
