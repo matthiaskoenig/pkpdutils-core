@@ -134,6 +134,14 @@ PYO3_PYTHON=python3.13 cargo test --workspace
 
 Continuous integration sets up python 3.13 for the same reason (`ci.yml` and `release.yml`).
 
+`PYO3_PYTHON` points the build at an interpreter; it does not tell the embedded one where to import from. Against a virtual environment outside this repository, the `pkpdutils` checkout's for instance, the test binary computes `sys.path` from its own location and finds the system numpy, which fails every test that touches an array with `Failed to access NumPy array API capsule`. Pass the environment's `site-packages` as well, and do not set `PYTHONHOME`, which breaks the interpreter's own start-up:
+
+```bash
+PYO3_PYTHON=../pkpdutils/.venv/bin/python \
+  PYTHONPATH=../pkpdutils/.venv/lib/python3.14/site-packages \
+  cargo test -p pkpdutils-python
+```
+
 ## Checks
 
 What continuous integration runs, so `--locked` here as well: the committed `Cargo.lock` is what is checked and a resolver change is a failure rather than a silent difference. `missing_docs` is a workspace lint (`[workspace.lints.rust]`, inherited by every crate through `[lints] workspace = true`), so the convention that every public item carries a doc comment is a gate: `clippy -D warnings` fails on an undocumented one. Never silence it for a crate, write the doc comment.
@@ -179,6 +187,12 @@ uv run --with-editable path/to/pkpdutils python scripts/crosswalk_gate.py --chec
 ```
 
 `scripts/pint_gate.py` writes `crates/units/tests/data/pint_gate.json`, pint's answer for every unit spelling of the package and every derived parameter unit, and `scripts/crosswalk_gate.py` writes `crates/oracles/tests/data/crosswalk.json`, the map from the variables of `pkpdutils` to the column names of the three NCA tools; the sections above describe both. `scripts/vendor_oracles.py --check` is the third, and it needs no checkout unless `--source` is given.
+
+Two reference generators are committed for the tables a test pins rather than computes, and neither needs a `pkpdutils` checkout. `scripts/reference_percentile.py` prints the rows of `crates/core/src/percentile.rs` from `numpy.nanpercentile` (`plain`, `hole`, `single`, `naive` and `grouping`: the last three are the rows a seeded search found where one of the plausible interpolations, or the plausible grouping of the virtual index, differs from numpy in the last bit, which is what makes the bit-exactness of `nan_percentile_rows` a measurement rather than a claim). The Student t references of `crates/core/src/stats.rs` come from the twin generator in the host repository, `scripts/reference_t_isf.py` of `pkpdutils`, which inverts the survival function with 60-digit mpmath and so reaches `p = 1e-300`, where scipy is no longer an oracle.
+
+```bash
+python3 scripts/reference_percentile.py single
+```
 
 ## Release
 

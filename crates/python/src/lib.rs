@@ -33,14 +33,25 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 // `::` is not decoration: `#[pymodule]` expands to a module of the same name as the crate, which
 // an unqualified path would resolve to instead
 use ::pkpdutils_core as kernel;
+use numpy::{PyArray1, PyArrayMethods, PyReadonlyArray1, PyReadonlyArrayDyn};
 use pyo3::create_exception;
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::convert::batch_from_python;
+use crate::convert::{at_key, batch_from_python, field, required};
 use crate::options::{options_from_python, unsupported_reason};
 use crate::result::result_into_python;
+
+/// How an error of [`summarize`] names the dict it was given.
+///
+/// The batch names its contract (`pkpdutils_abi::BATCH_CONTRACT`), which a summary request has
+/// none of: `SummaryRequest` is the argument of one entry point and is named after it.
+pub(crate) const SUMMARY_REQUEST: &str = "a `summarize` request";
+
+/// How an error of [`time_to_steady_state`] names the dict it was given, as
+/// [`SUMMARY_REQUEST`] does.
+pub(crate) const TSS_REQUEST: &str = "a `time_to_steady_state` request";
 
 create_exception!(
     pkpdutils_core,
@@ -134,6 +145,126 @@ fn analyze_batch<'py>(
     result_into_python(py, result)
 }
 
+/// The summary statistics of raw parameter values, `ParameterResult.summarize` of the host.
+///
+/// `request` is a dict of the fields of the kernel's `SummaryRequest`: `values` (a float array
+/// of any shape, read in C order, `NaN` or infinite for a missing value), `n_vars`, `n_groups`,
+/// `n_samples`, `ci_level` and the per-variable lists `lognormal` and `discrete`. The answer is
+/// a dict of the fourteen statistics `mean`, `sd`, `se`, `cv`, `ci_low`, `ci_high`, `median`,
+/// `q25`, `q75`, `min`, `max`, `count`, `geomean` and `geocv`, each a float array of shape
+/// `(n_vars, n_groups)`. The kernel computes every statistic of every variable and the host
+/// keeps the ones the classification of the parameter wants.
+///
+/// # Errors
+///
+/// A `KeyError` for a missing field and a `TypeError` for a field of the wrong type. A request
+/// whose lengths disagree with its dimensions or whose `ci_level` is not strictly between 0 and
+/// 1 is a plain `ValueError` and never an `UnsupportedError`: a host answers a refusal by taking
+/// its own path, and a request which is wrong must reach the caller instead of being answered
+/// by a second implementation.
+#[pyfunction]
+fn summarize<'py>(py: Python<'py>, request: &Bound<'py, PyDict>) -> PyResult<Bound<'py, PyDict>> {
+    let values: PyReadonlyArrayDyn<'_, f64> = required(request, "values", SUMMARY_REQUEST)?
+        .extract()
+        .map_err(|err| at_key(py, "values", err))?;
+    let request = kernel::pkpdutils_abi::SummaryRequest {
+        values: values.as_array().iter().copied().collect(),
+        n_vars: field(py, request, "n_vars", SUMMARY_REQUEST)?,
+        n_groups: field(py, request, "n_groups", SUMMARY_REQUEST)?,
+        n_samples: field(py, request, "n_samples", SUMMARY_REQUEST)?,
+        ci_level: field(py, request, "ci_level", SUMMARY_REQUEST)?,
+        lognormal: field(py, request, "lognormal", SUMMARY_REQUEST)?,
+        discrete: field(py, request, "discrete", SUMMARY_REQUEST)?,
+    };
+    let (n_vars, n_groups) = (request.n_vars, request.n_groups);
+    let answer = py
+        .detach(|| guarded(|| kernel::summarize(&request)))?
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let out = PyDict::new(py);
+    for (name, column) in [
+        ("mean", answer.mean),
+        ("sd", answer.sd),
+        ("se", answer.se),
+        ("cv", answer.cv),
+        ("ci_low", answer.ci_low),
+        ("ci_high", answer.ci_high),
+        ("median", answer.median),
+        ("q25", answer.q25),
+        ("q75", answer.q75),
+        ("min", answer.min),
+        ("max", answer.max),
+        ("count", answer.count),
+        ("geomean", answer.geomean),
+        ("geocv", answer.geocv),
+    ] {
+        out.set_item(
+            name,
+            PyArray1::from_vec(py, column).reshape([n_vars, n_groups])?,
+        )?;
+    }
+    Ok(out)
+}
+
+/// The time to steady state of the troughs of the dosing intervals, `time_to_steady_state` of
+/// the host.
+///
+/// `request` is a dict of the fields of the kernel's `TssRequest`: `time`, `value`, `start`
+/// (float arrays of shape `(n_rows, n_cols)`, read in C order) and `valid` (a bool array of the
+/// same shape), `n_rows`, `n_cols`, `method` (`"monoexponential"` or `"stepwise"`), `fraction`
+/// and `alpha`. The answer is a dict of `tss`, a float array of `n_rows`, and `c_ss`, the
+/// plateau per row for the monoexponential estimate and an empty array for the stepwise one.
+///
+/// # Errors
+///
+/// A `KeyError` for a missing field and a `TypeError` for a field of the wrong type. A request
+/// whose arrays disagree with its shape, whose troughs are not packed to the front of a row or
+/// whose `fraction` or `alpha` is not strictly between 0 and 1 is a plain `ValueError` and never
+/// an `UnsupportedError`: a host answers a refusal by taking its own path, and a request which
+/// is wrong must reach the caller instead of being answered by a second implementation.
+#[pyfunction]
+fn time_to_steady_state<'py>(
+    py: Python<'py>,
+    request: &Bound<'py, PyDict>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let floats = |key: &str| -> PyResult<Vec<f64>> {
+        let array: PyReadonlyArrayDyn<'_, f64> = required(request, key, TSS_REQUEST)?
+            .extract()
+            .map_err(|err| at_key(py, key, err))?;
+        Ok(array.as_array().iter().copied().collect())
+    };
+    let valid: PyReadonlyArrayDyn<'_, bool> = required(request, "valid", TSS_REQUEST)?
+        .extract()
+        .map_err(|err| at_key(py, "valid", err))?;
+    let method: String = field(py, request, "method", TSS_REQUEST)?;
+    let method = match method.as_str() {
+        "monoexponential" => kernel::pkpdutils_abi::TssMethod::Monoexponential,
+        "stepwise" => kernel::pkpdutils_abi::TssMethod::Stepwise,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "method {other:?} is neither \"monoexponential\" nor \"stepwise\""
+            )));
+        }
+    };
+    let request = kernel::pkpdutils_abi::TssRequest {
+        time: floats("time")?,
+        value: floats("value")?,
+        start: floats("start")?,
+        valid: valid.as_array().iter().copied().collect(),
+        n_rows: field(py, request, "n_rows", TSS_REQUEST)?,
+        n_cols: field(py, request, "n_cols", TSS_REQUEST)?,
+        method,
+        fraction: field(py, request, "fraction", TSS_REQUEST)?,
+        alpha: field(py, request, "alpha", TSS_REQUEST)?,
+    };
+    let answer = py
+        .detach(|| guarded(|| kernel::time_to_steady_state(&request)))?
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let out = PyDict::new(py);
+    out.set_item("tss", PyArray1::from_vec(py, answer.tss))?;
+    out.set_item("c_ss", PyArray1::from_vec(py, answer.c_ss))?;
+    Ok(out)
+}
+
 /// The exception of an analysis this build does not carry.
 ///
 /// The sentence is the kernel's own error, so that the text of a refusal the predicate gives
@@ -176,6 +307,79 @@ fn is_supported(
     let batch = batch_from_python(py, batch)?;
     let options = options_from_python(options)?;
     Ok(unsupported_reason(&batch, &options))
+}
+
+/// Apply `f` to a float or to every element of a 1-d float array, giving back the same shape.
+///
+/// A python float returns a python float and an array returns a new array, so the three
+/// quantile functions serve a scalar call and a vectorised one with the same signature.
+///
+/// # Errors
+///
+/// A `TypeError` when the argument is neither a float nor a 1-d array of floats.
+fn map_scalar_or_array<'py>(
+    py: Python<'py>,
+    x: &Bound<'py, PyAny>,
+    f: impl Fn(f64) -> f64,
+) -> PyResult<Bound<'py, PyAny>> {
+    if let Ok(value) = x.extract::<f64>() {
+        let out = guarded(|| f(value))?;
+        return Ok(out.into_pyobject(py)?.into_any());
+    }
+    let array = x
+        .extract::<PyReadonlyArray1<'_, f64>>()
+        .map_err(|_| PyTypeError::new_err("expected a float or a 1-d numpy array of floats"))?;
+    // a strided view (a column of a matrix, a reversed array) is read as it is, not copied first
+    let view = array.as_array();
+    let out = guarded(|| view.iter().map(|&v| f(v)).collect::<Vec<f64>>())?;
+    Ok(PyArray1::from_vec(py, out).into_any())
+}
+
+/// The standard normal quantile of the upper tail: `x` with `P(Z > x) = p`.
+///
+/// Accurate to a few ulp over `[1e-300, 1 - 1e-16]`; `0` gives `+inf`, `1` gives `-inf` and a
+/// probability outside `[0, 1]` gives `NaN`.
+///
+/// # Errors
+///
+/// A `TypeError` when `p` is neither a float nor a 1-d float array.
+#[pyfunction]
+fn normal_isf<'py>(py: Python<'py>, p: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    map_scalar_or_array(py, p, kernel::normal_isf)
+}
+
+/// The Student t quantile of the upper tail with `df` degrees of freedom (real, at least 1,
+/// `NaN` below).
+///
+/// Accurate to a relative `1e-12` for `p` in `[1e-6, 1 - 1e-6]` and `df` in `[1, 1e4]`, `1e-9`
+/// down to `1e-300`, strictly monotone below; above `1e12` degrees of freedom it is the normal
+/// quantile.
+///
+/// # Errors
+///
+/// A `TypeError` when `p` is neither a float nor a 1-d float array.
+#[pyfunction]
+fn student_t_isf<'py>(
+    py: Python<'py>,
+    p: &Bound<'py, PyAny>,
+    df: f64,
+) -> PyResult<Bound<'py, PyAny>> {
+    map_scalar_or_array(py, p, move |p| kernel::student_t_isf(p, df))
+}
+
+/// The survival function `P(T > t)` of the Student t distribution with `df` degrees of freedom
+/// (real, at least 1, `NaN` below), accurate to a relative `1e-12` for `df` in `[1, 1e4]`.
+///
+/// # Errors
+///
+/// A `TypeError` when `t` is neither a float nor a 1-d float array.
+#[pyfunction]
+fn student_t_sf<'py>(
+    py: Python<'py>,
+    t: &Bound<'py, PyAny>,
+    df: f64,
+) -> PyResult<Bound<'py, PyAny>> {
+    map_scalar_or_array(py, t, move |t| kernel::student_t_sf(t, df))
 }
 
 /// Run `f` with the unwind boundary of the extension around it.
@@ -227,6 +431,11 @@ fn pkpdutils_core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     module.add_function(wrap_pyfunction!(analyze_batch, module)?)?;
     module.add_function(wrap_pyfunction!(is_supported, module)?)?;
+    module.add_function(wrap_pyfunction!(summarize, module)?)?;
+    module.add_function(wrap_pyfunction!(time_to_steady_state, module)?)?;
+    module.add_function(wrap_pyfunction!(normal_isf, module)?)?;
+    module.add_function(wrap_pyfunction!(student_t_isf, module)?)?;
+    module.add_function(wrap_pyfunction!(student_t_sf, module)?)?;
     Ok(())
 }
 
@@ -237,7 +446,7 @@ mod tests {
     use std::thread;
     use std::time::Instant;
 
-    use numpy::{PyArray2, PyReadonlyArray1};
+    use numpy::{PyArray2, PyUntypedArrayMethods};
     use pyo3::exceptions::{PyKeyError, PyRuntimeError};
     use pyo3::types::PyType;
 
@@ -801,6 +1010,175 @@ mod tests {
                 "{refusal}"
             );
             assert!(refusal.is(py.get_type::<UnsupportedError>()), "{refusal}");
+        });
+    }
+
+    /// The request of one variable and one group over the values given.
+    fn summary_request<'py>(
+        py: Python<'py>,
+        values: &[f64],
+        n_samples: usize,
+    ) -> Bound<'py, PyDict> {
+        let request = PyDict::new(py);
+        request
+            .set_item("values", PyArray1::from_slice(py, values))
+            .unwrap();
+        request.set_item("n_vars", 1).unwrap();
+        request.set_item("n_groups", 1).unwrap();
+        request.set_item("n_samples", n_samples).unwrap();
+        request.set_item("ci_level", 0.95).unwrap();
+        request.set_item("lognormal", vec![true]).unwrap();
+        request.set_item("discrete", vec![false]).unwrap();
+        request
+    }
+
+    #[test]
+    fn summarize_returns_the_statistics_of_a_group_as_arrays_of_variables_by_groups() {
+        Python::attach(|py| {
+            let answer =
+                summarize(py, &summary_request(py, &[1.0, 2.0, 4.0, f64::NAN], 4)).unwrap();
+            let get = |name: &str| -> Vec<f64> {
+                let array = answer.get_item(name).unwrap().unwrap();
+                let array = array.cast::<numpy::PyArray2<f64>>().unwrap();
+                assert_eq!(array.shape(), [1, 1], "{name}");
+                array.readonly().as_array().iter().copied().collect()
+            };
+            assert_eq!(get("count"), [3.0]);
+            assert!((get("mean")[0] - 7.0 / 3.0).abs() < 1e-15);
+            // the geometric mean is the cube root of 1 * 2 * 4, which is 2
+            assert!((get("geomean")[0] - 2.0).abs() < 1e-14);
+            assert_eq!(get("median"), [2.0]);
+            assert_eq!(get("min"), [1.0]);
+            assert_eq!(get("max"), [4.0]);
+        });
+    }
+
+    #[test]
+    fn a_malformed_summary_request_is_a_value_error_and_never_a_refusal() {
+        Python::attach(|py| {
+            // three values for a group of four samples
+            let short = summary_request(py, &[1.0, 2.0, 4.0], 4);
+            let err = summarize(py, &short).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+            let message = err.value(py).to_string();
+            assert!(message.contains("3 values"), "{message}");
+            assert!(message.contains("4 samples"), "{message}");
+
+            // a confidence level of 1 is no level
+            let level = summary_request(py, &[1.0, 2.0, 4.0], 3);
+            level.set_item("ci_level", 1.0).unwrap();
+            let err = summarize(py, &level).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+
+            // a missing field is a KeyError which names it
+            let absent = summary_request(py, &[1.0], 1);
+            absent.del_item("n_groups").unwrap();
+            let err = summarize(py, &absent).unwrap_err();
+            assert!(err.is_instance_of::<PyKeyError>(py), "{err}");
+            assert!(err.value(py).to_string().contains("n_groups"));
+        });
+    }
+
+    /// A request of one row of four troughs on a rising curve.
+    fn tss_request<'py>(py: Python<'py>, method: &str) -> Bound<'py, PyDict> {
+        let request = PyDict::new(py);
+        let t = [10.0, 20.0, 30.0, 40.0];
+        let v = [3.9, 6.3, 7.8, 8.7];
+        let s = [0.0, 10.0, 20.0, 30.0];
+        request
+            .set_item("time", PyArray1::from_slice(py, &t))
+            .unwrap();
+        request
+            .set_item("value", PyArray1::from_slice(py, &v))
+            .unwrap();
+        request
+            .set_item("start", PyArray1::from_slice(py, &s))
+            .unwrap();
+        request
+            .set_item("valid", PyArray1::from_slice(py, &[true; 4]))
+            .unwrap();
+        request.set_item("n_rows", 1).unwrap();
+        request.set_item("n_cols", 4).unwrap();
+        request.set_item("method", method).unwrap();
+        request.set_item("fraction", 0.9).unwrap();
+        request.set_item("alpha", 0.05).unwrap();
+        request
+    }
+
+    #[test]
+    fn time_to_steady_state_returns_the_estimate_per_row() {
+        Python::attach(|py| {
+            let answer = time_to_steady_state(py, &tss_request(py, "monoexponential")).unwrap();
+            let tss = answer.get_item("tss").unwrap().unwrap();
+            let tss = tss.cast::<PyArray1<f64>>().unwrap().readonly();
+            assert_eq!(tss.as_array().len(), 1);
+            assert!(tss.as_array()[0].is_finite());
+            let c_ss = answer.get_item("c_ss").unwrap().unwrap();
+            let c_ss = c_ss.cast::<PyArray1<f64>>().unwrap().readonly();
+            assert!(c_ss.as_array()[0] > 8.0);
+            let answer = time_to_steady_state(py, &tss_request(py, "stepwise")).unwrap();
+            let c_ss = answer.get_item("c_ss").unwrap().unwrap();
+            assert_eq!(c_ss.cast::<PyArray1<f64>>().unwrap().len(), 0);
+        });
+    }
+
+    #[test]
+    fn a_malformed_tss_request_is_a_value_error_and_never_a_refusal() {
+        Python::attach(|py| {
+            let short = tss_request(py, "stepwise");
+            short.set_item("n_cols", 5).unwrap();
+            let err = time_to_steady_state(py, &short).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+            assert!(err.value(py).to_string().contains("time entries"));
+
+            let level = tss_request(py, "monoexponential");
+            level.set_item("fraction", 1.0).unwrap();
+            let err = time_to_steady_state(py, &level).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+
+            let unknown = tss_request(py, "bogus");
+            let err = time_to_steady_state(py, &unknown).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+
+            let absent = tss_request(py, "stepwise");
+            absent.del_item("alpha").unwrap();
+            let err = time_to_steady_state(py, &absent).unwrap_err();
+            assert!(err.is_instance_of::<PyKeyError>(py), "{err}");
+        });
+    }
+
+    #[test]
+    fn a_missing_key_names_the_request_it_belongs_to() {
+        // one helper reads the required keys of all three entry points, and its message has to
+        // send the caller to the dict it really passed: a summary request which forgot
+        // `n_groups` used to report that `batch/1` needs it, and `batch/1` has no such key
+        Python::attach(|py| {
+            let contract = kernel::pkpdutils_abi::BATCH_CONTRACT;
+
+            let batch = batch_dict(py, 2);
+            batch.del_item("times").unwrap();
+            let err = analyze_batch(py, &batch, &options_dict(py), None).unwrap_err();
+            let message = err.value(py).to_string();
+            assert!(err.is_instance_of::<PyKeyError>(py), "{err}");
+            assert!(message.contains(contract), "{message}");
+
+            let summary = summary_request(py, &[1.0], 1);
+            summary.del_item("n_groups").unwrap();
+            let message = summarize(py, &summary).unwrap_err().value(py).to_string();
+            assert!(message.contains(SUMMARY_REQUEST), "{message}");
+            assert!(!message.contains(contract), "{message}");
+
+            let tss = tss_request(py, "stepwise");
+            tss.del_item("valid").unwrap();
+            let err = time_to_steady_state(py, &tss).unwrap_err();
+            let message = err.value(py).to_string();
+            assert!(message.contains(TSS_REQUEST), "{message}");
+            assert!(!message.contains(contract), "{message}");
         });
     }
 }

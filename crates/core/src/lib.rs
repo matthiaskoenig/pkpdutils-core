@@ -20,9 +20,17 @@ mod dose;
 mod intervals;
 mod pack;
 mod parameters;
+mod percentile;
 mod shard;
+mod stats;
+mod summarize;
+
+pub use crate::stats::{normal_isf, student_t_isf, student_t_sf};
+pub use crate::summarize::summarize;
+pub use crate::tss::time_to_steady_state;
 mod steady_state;
 mod terminal;
+mod tss;
 
 use pkpdutils_abi::{
     ANALYSIS_CONTRACT, AnalysisRequest, AnalysisResult, BATCH_CONTRACT, Batch, Coordinate, Kind,
@@ -76,6 +84,15 @@ pub enum KernelError {
         /// The analysis, the option or the route which is missing.
         what: String,
     },
+    /// A summary request whose lengths disagree with its dimensions or whose `ci_level` is not
+    /// strictly between 0 and 1, with the reason `SummaryRequest::validate` gave.
+    #[error("the summary request is malformed: {0}")]
+    Summary(String),
+    /// A time to steady state request whose arrays disagree with its dimensions, whose troughs
+    /// are not packed to the front or whose `fraction` or `alpha` is not strictly between 0
+    /// and 1, with the reason `TssRequest::validate` gave.
+    #[error("the time to steady state request is malformed: {0}")]
+    Tss(String),
     /// The kernel built a result which is not well formed, which is a bug in this build and
     /// not an answer to anything the caller sent.
     #[error("the kernel built a result which is not readable: {0}")]

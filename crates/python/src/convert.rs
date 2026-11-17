@@ -33,9 +33,9 @@ use pyo3::types::PyDict;
 pub(crate) fn batch_from_python(py: Python<'_>, obj: &Bound<'_, PyDict>) -> PyResult<Batch> {
     Ok(Batch {
         contract: BATCH_CONTRACT.to_string(),
-        sample_dims: field(py, obj, "sample_dims")?,
-        sample_shape: field(py, obj, "sample_shape")?,
-        n_time: field(py, obj, "n_time")?,
+        sample_dims: field(py, obj, "sample_dims", BATCH_CONTRACT)?,
+        sample_shape: field(py, obj, "sample_shape", BATCH_CONTRACT)?,
+        n_time: field(py, obj, "n_time", BATCH_CONTRACT)?,
         times: points(py, obj, "times")?,
         values: points(py, obj, "values")?,
         sd: optional_points(py, obj, "sd")?,
@@ -43,12 +43,12 @@ pub(crate) fn batch_from_python(py: Python<'_>, obj: &Bound<'_, PyDict>) -> PyRe
         n: optional_points(py, obj, "n")?,
         nominal_time: optional_points(py, obj, "nominal_time")?,
         lloq: optional_samples(py, obj, "lloq")?,
-        max_doses: field(py, obj, "max_doses")?,
+        max_doses: field(py, obj, "max_doses", BATCH_CONTRACT)?,
         dose_amount: points(py, obj, "dose_amount")?,
         dose_time: points(py, obj, "dose_time")?,
         dose_duration: points(py, obj, "dose_duration")?,
-        time_unit: field(py, obj, "time_unit")?,
-        unit: field(py, obj, "unit")?,
+        time_unit: field(py, obj, "time_unit", BATCH_CONTRACT)?,
+        unit: field(py, obj, "unit", BATCH_CONTRACT)?,
         dose_unit: optional_field(py, obj, "dose_unit")?,
         substance: optional_field(py, obj, "substance")?,
         substances: optional_field(py, obj, "substances")?,
@@ -59,12 +59,20 @@ pub(crate) fn batch_from_python(py: Python<'_>, obj: &Bound<'_, PyDict>) -> PyRe
     })
 }
 
-/// The value of a key the dict must carry.
-fn required<'py>(obj: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>> {
+/// The value of a key the dict must carry, `whose` naming the request it belongs to.
+///
+/// The batch is the wire shape of a contract and names it ([`BATCH_CONTRACT`]), while the
+/// requests of the other entry points have no contract of their own and name the entry point
+/// instead ([`crate::SUMMARY_REQUEST`], [`crate::TSS_REQUEST`]). The name is the caller's
+/// because the message has to send a caller to the dict it really passed: a summary request
+/// which forgot `n_groups` used to be sent to `batch/1`, which has no such key.
+pub(crate) fn required<'py>(
+    obj: &Bound<'py, PyDict>,
+    key: &str,
+    whose: &str,
+) -> PyResult<Bound<'py, PyAny>> {
     obj.get_item(key)?.ok_or_else(|| {
-        PyKeyError::new_err(format!(
-            "{BATCH_CONTRACT} needs the key `{key}`, which is absent"
-        ))
+        PyKeyError::new_err(format!("{whose} needs the key `{key}`, which is absent"))
     })
 }
 
@@ -87,11 +95,18 @@ pub(crate) fn at_key(py: Python<'_>, key: &str, err: PyErr) -> PyErr {
 }
 
 /// The value of a required key, extracted into `T` and named on a type mismatch.
-fn field<'py, T>(py: Python<'_>, obj: &Bound<'py, PyDict>, key: &str) -> PyResult<T>
+///
+/// `whose` names the request the key belongs to, as [`required`] describes.
+pub(crate) fn field<'py, T>(
+    py: Python<'_>,
+    obj: &Bound<'py, PyDict>,
+    key: &str,
+    whose: &str,
+) -> PyResult<T>
 where
     T: for<'a> FromPyObject<'a, 'py, Error = PyErr>,
 {
-    required(obj, key)?
+    required(obj, key, whose)?
         .extract::<T>()
         .map_err(|err| at_key(py, key, err))
 }
@@ -129,7 +144,7 @@ fn c_order<D: Dimension>(array: &PyReadonlyArray<'_, f64, D>) -> Vec<f64> {
 
 /// A required `(n_samples, per_sample)` array, flattened row major.
 fn points(py: Python<'_>, obj: &Bound<'_, PyDict>, key: &str) -> PyResult<Vec<f64>> {
-    let value = required(obj, key)?;
+    let value = required(obj, key, BATCH_CONTRACT)?;
     let array: PyReadonlyArray2<'_, f64> = value.extract().map_err(|err| at_key(py, key, err))?;
     Ok(c_order(&array))
 }
@@ -230,8 +245,8 @@ fn coordinates(
 fn coordinate(py: Python<'_>, item: &Bound<'_, PyAny>) -> PyResult<SampleCoordinate> {
     let dict = item.cast::<PyDict>()?;
     Ok(SampleCoordinate {
-        name: field(py, dict, "name")?,
-        dims: field(py, dict, "dims")?,
+        name: field(py, dict, "name", BATCH_CONTRACT)?,
+        dims: field(py, dict, "dims", BATCH_CONTRACT)?,
         values: coordinate_values(py, dict, "values")?,
     })
 }
@@ -245,7 +260,7 @@ fn coordinate(py: Python<'_>, item: &Bound<'_, PyAny>) -> PyResult<SampleCoordin
 /// a `bool` is an `int` in python and a column of whole numbers is not therefore an integer
 /// column.
 fn coordinate_values(py: Python<'_>, obj: &Bound<'_, PyDict>, key: &str) -> PyResult<Coordinate> {
-    let values = required(obj, key)?;
+    let values = required(obj, key, BATCH_CONTRACT)?;
     let dict = values
         .cast::<PyDict>()
         .map_err(|err| at_key(py, key, err.into()))?;
