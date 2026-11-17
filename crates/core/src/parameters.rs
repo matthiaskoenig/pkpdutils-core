@@ -135,6 +135,47 @@ pub(crate) struct RowParameters {
     pub auc_inf_pred_dn: f64,
     /// The dose normalized maximum.
     pub cmax_dn: f64,
+    /// The area over the last dosing interval, `AUC(0-tau)`.
+    pub auc_tau: f64,
+    /// The extrapolated share of the area of the last interval, a fraction: `0` where the data cover it, the tail share where it was completed.
+    pub auc_tau_extrap_fraction: f64,
+    /// The smallest value of the last dosing interval.
+    pub cmin_ss: f64,
+    /// The largest value of the last dosing interval.
+    pub cmax_ss: f64,
+    /// The value at the end of the last dosing interval.
+    pub ctrough: f64,
+    /// The average over the last dosing interval, `AUC(0-tau) / tau`.
+    pub cavg: f64,
+    /// `(cmax_ss - cmin_ss) / cavg` of the last dosing interval.
+    pub fluctuation: f64,
+    /// `(cmax_ss - cmin_ss) / cmin_ss` of the last dosing interval.
+    pub swing: f64,
+    /// `(cmax_ss - ctrough) / cavg`, the trough in place of the smallest value.
+    pub fluctuation_tau: f64,
+    /// `(cmax_ss - ctrough) / ctrough`.
+    pub swing_tau: f64,
+    /// The peak to trough ratio, `cmax_ss / ctrough`.
+    pub ptr: f64,
+    /// The predicted accumulation, `1 / (1 - exp(-lambda_z tau))`.
+    pub accumulation_ratio: f64,
+    /// The observed accumulation of the area, last interval over first.
+    pub accumulation_ratio_obs: f64,
+    /// The observed accumulation of the peak, last interval over first.
+    pub accumulation_ratio_cmax_obs: f64,
+    /// The observed accumulation of the minimum, last interval over first.
+    pub accumulation_ratio_cmin_obs: f64,
+    /// The observed accumulation of the trough, last interval over first.
+    pub accumulation_ratio_ctrough_obs: f64,
+    /// The clearance over the last dosing interval, reported as `cl_ss` or `cl_ss_f`.
+    pub cl_ss: f64,
+    /// The number of doses of the protocol of the row, which a single dose row of a mixed batch reports too.
+    pub n_doses: f64,
+    /// The length of the last dosing interval.
+    pub tau: f64,
+    /// Whether the row was analysed over its dosing intervals (`compute_steady_state`), which
+    /// decides whether a batch reports the steady state columns at all.
+    pub multiple: bool,
     /// The flags of the row.
     pub flags: NcaFlag,
 }
@@ -195,6 +236,26 @@ impl RowParameters {
         auc_inf_dn: f64::NAN,
         auc_inf_pred_dn: f64::NAN,
         cmax_dn: f64::NAN,
+        auc_tau: f64::NAN,
+        auc_tau_extrap_fraction: f64::NAN,
+        cmin_ss: f64::NAN,
+        cmax_ss: f64::NAN,
+        ctrough: f64::NAN,
+        cavg: f64::NAN,
+        fluctuation: f64::NAN,
+        swing: f64::NAN,
+        fluctuation_tau: f64::NAN,
+        swing_tau: f64::NAN,
+        ptr: f64::NAN,
+        accumulation_ratio: f64::NAN,
+        accumulation_ratio_obs: f64::NAN,
+        accumulation_ratio_cmax_obs: f64::NAN,
+        accumulation_ratio_cmin_obs: f64::NAN,
+        accumulation_ratio_ctrough_obs: f64::NAN,
+        cl_ss: f64::NAN,
+        n_doses: f64::NAN,
+        tau: f64::NAN,
+        multiple: false,
         flags: NcaFlag::NONE,
     };
 }
@@ -250,6 +311,9 @@ pub(crate) struct Parameter {
     pub presence: Presence,
     /// The value a row which does not carry it contributes to the column of a mixed batch.
     pub fill: f64,
+    /// Whether it is a steady state parameter (`compute_steady_state`): reported only by a batch
+    /// with at least one multiple dose row, and `NaN` in the other rows of such a batch.
+    pub steady_state: bool,
 }
 
 /// Every parameter of the single dose concentration analysis, in the order python writes it.
@@ -259,6 +323,11 @@ pub(crate) struct Parameter {
 /// dose, then the dose dependent ones. A pair like `cl` and `cl_f` is one field under two names,
 /// of which a row carries one, so a batch of one route reports them in exactly the python order
 /// and a batch which mixes routes reports both names, as `merge_rows` of `nca.py` does.
+///
+/// The last block is the steady state parameters of `compute_steady_state`
+/// ([`Parameter::steady_state`]): a batch reports them only when it has a multiple dose row, and
+/// its other rows are `NaN` in them (`n_doses` apart, which every row reports). Their order is
+/// the one python writes them in, after the dose dependent parameters.
 ///
 /// `flags` is not here: it has its own section in `pkpdutils_abi::AnalysisResult` and is not a
 /// parameter column.
@@ -492,6 +561,86 @@ pub(crate) const PARAMETERS: &[Parameter] = &[
         |p| p.cmax_dn,
         Presence::Dose,
     ),
+    Parameter::steady(
+        "auc_tau",
+        "({unit}) * ({time})",
+        |p| p.auc_tau,
+        Presence::Always,
+    ),
+    Parameter::steady(
+        "auc_tau_extrap_fraction",
+        "dimensionless",
+        |p| p.auc_tau_extrap_fraction,
+        Presence::Always,
+    ),
+    Parameter::steady("cmin_ss", "{unit}", |p| p.cmin_ss, Presence::Always),
+    Parameter::steady("cmax_ss", "{unit}", |p| p.cmax_ss, Presence::Always),
+    Parameter::steady("ctrough", "{unit}", |p| p.ctrough, Presence::Always),
+    Parameter::steady("cavg", "{unit}", |p| p.cavg, Presence::Always),
+    Parameter::steady(
+        "fluctuation",
+        "dimensionless",
+        |p| p.fluctuation,
+        Presence::Always,
+    ),
+    Parameter::steady("swing", "dimensionless", |p| p.swing, Presence::Always),
+    Parameter::steady(
+        "fluctuation_tau",
+        "dimensionless",
+        |p| p.fluctuation_tau,
+        Presence::Always,
+    ),
+    Parameter::steady(
+        "swing_tau",
+        "dimensionless",
+        |p| p.swing_tau,
+        Presence::Always,
+    ),
+    Parameter::steady("ptr", "dimensionless", |p| p.ptr, Presence::Always),
+    Parameter::steady(
+        "accumulation_ratio",
+        "dimensionless",
+        |p| p.accumulation_ratio,
+        Presence::Always,
+    ),
+    Parameter::steady(
+        "accumulation_ratio_obs",
+        "dimensionless",
+        |p| p.accumulation_ratio_obs,
+        Presence::Always,
+    ),
+    Parameter::steady(
+        "accumulation_ratio_cmax_obs",
+        "dimensionless",
+        |p| p.accumulation_ratio_cmax_obs,
+        Presence::Always,
+    ),
+    Parameter::steady(
+        "accumulation_ratio_cmin_obs",
+        "dimensionless",
+        |p| p.accumulation_ratio_cmin_obs,
+        Presence::Always,
+    ),
+    Parameter::steady(
+        "accumulation_ratio_ctrough_obs",
+        "dimensionless",
+        |p| p.accumulation_ratio_ctrough_obs,
+        Presence::Always,
+    ),
+    Parameter::steady(
+        "cl_ss",
+        "({dose}) / (({unit}) * ({time}))",
+        |p| p.cl_ss,
+        Presence::DoseIv,
+    ),
+    Parameter::steady(
+        "cl_ss_f",
+        "({dose}) / (({unit}) * ({time}))",
+        |p| p.cl_ss,
+        Presence::DoseExtravascular,
+    ),
+    Parameter::steady("n_doses", "dimensionless", |p| p.n_doses, Presence::Always),
+    Parameter::steady("tau", "{time}", |p| p.tau, Presence::Always),
 ];
 
 impl Parameter {
@@ -508,6 +657,25 @@ impl Parameter {
             read,
             presence,
             fill: f64::NAN,
+            steady_state: false,
+        }
+    }
+
+    /// One entry of the multiple dose analysis, a float of the result which only a batch with a
+    /// multiple dose row reports (`merge_rows` of `nca.py` fills the other rows with `NaN`).
+    const fn steady(
+        name: &'static str,
+        unit: &'static str,
+        read: fn(&RowParameters) -> f64,
+        presence: Presence,
+    ) -> Self {
+        Self {
+            name,
+            unit,
+            read,
+            presence,
+            fill: f64::NAN,
+            steady_state: true,
         }
     }
 
@@ -528,6 +696,7 @@ impl Parameter {
             read,
             presence,
             fill: 0.0,
+            steady_state: false,
         }
     }
 
@@ -568,6 +737,17 @@ pub(crate) struct Scratch {
     t_area: Vec<f64>,
     /// The values of the row the areas run on.
     c_area: Vec<f64>,
+    /// The valid times of the row as the host sent them, packed: the frame of the intervals.
+    pub(crate) host_t: Vec<f64>,
+    /// The valid values of the row as the host sent them, packed.
+    pub(crate) host_c: Vec<f64>,
+    /// The times of the curve of one interval.
+    pub(crate) curve_t: Vec<f64>,
+    /// The values of the curve of one interval.
+    pub(crate) curve_c: Vec<f64>,
+    /// The values of the row with those before its last dose dropped, which the point parameters
+    /// of a multiple dose row read (`compute_steady_state`).
+    pub(crate) masked: Vec<f64>,
 }
 
 impl Scratch {
@@ -584,6 +764,11 @@ impl Scratch {
             permitted: vec![false; n_time],
             t_area: vec![f64::NAN; width],
             c_area: vec![f64::NAN; width],
+            host_t: vec![f64::NAN; n_time],
+            host_c: vec![f64::NAN; n_time],
+            curve_t: Vec::with_capacity(n_time.saturating_add(2)),
+            curve_c: Vec::with_capacity(n_time.saturating_add(2)),
+            masked: Vec::with_capacity(n_time),
         }
     }
 }
@@ -609,6 +794,17 @@ pub(crate) struct RowInput<'a> {
     /// The columns `TerminalMethod::Manual` selects, over the columns of the row as the host
     /// sent them; `None` under every other method.
     pub manual: Option<&'a [bool]>,
+    /// Whether the dose is the only one of the row, which decides whether the curve starts at
+    /// the dose time: an infusion or an oral dose then gets a zero inserted there, a row of a
+    /// protocol of several doses does not. A bolus gets its back extrapolated `c0` either way.
+    pub single_dose: bool,
+    /// The dose times of the protocol of the row, in the time frame of `times`, `NaN` padded
+    /// (`dose_time` of `compute_intervals`); only the multiple dose analysis reads them.
+    pub dose_times: &'a [f64],
+    /// The dose amounts of the protocol of the row, in the order of `dose_times`, `NaN` padded
+    /// (`dose_amount` of `compute_intervals`); empty for a batch without doses, which is
+    /// `amounts is None` there and gives no `interval_dose`.
+    pub dose_amounts: &'a [f64],
 }
 
 /// The parameters of one curve.
@@ -625,8 +821,12 @@ pub(crate) struct RowInput<'a> {
 /// have chosen from (`terminal::candidate_table`), which only an analysis of a single row
 /// reports; the caller decides whether it wants them, as python's `candidate_variables` does.
 ///
-/// Mirrors `compute_parameters` of `src/pkpdutils/nca/nca.py` for one row, with
-/// `single_dose=True`.
+/// The dosing intervals of a multiple dose row are not computed here but by
+/// `crate::steady_state::compute_steady_state`, which calls this function on the values from the
+/// last dose on, as `compute_steady_state` of python calls `compute_parameters`.
+///
+/// Mirrors `compute_parameters` of `src/pkpdutils/nca/nca.py` for one row; `single_dose` is
+/// the `RowInput` field of that name.
 pub(crate) fn compute_row(
     input: &RowInput<'_>,
     options: &NcaOptions,
@@ -644,6 +844,7 @@ pub(crate) fn compute_row(
         permitted,
         t_area,
         c_area,
+        ..
     } = scratch;
     let columns = input.times.len().min(input.values.len()).min(time.len());
 
@@ -739,7 +940,7 @@ pub(crate) fn compute_row(
         tp,
         cp,
         n_valid,
-        dose_value(input.route, true, out.c0),
+        dose_value(input.route, input.single_dose, out.c0),
         t_area,
         c_area,
     );
@@ -821,7 +1022,7 @@ fn infusion_end(route: Option<Route>, duration: Option<f64>) -> Option<f64> {
 ///
 /// Over every valid point, the values a rule kept or imputed among them, and never over the
 /// point the route put at the dose time, which lives in another row (`terminal.md` hazard 8).
-fn first_maximum(cp: &[f64], n_valid: usize) -> usize {
+pub(crate) fn first_maximum(cp: &[f64], n_valid: usize) -> usize {
     let mut index = 0;
     let mut peak = f64::NEG_INFINITY;
     for (j, &value) in cp.iter().take(n_valid).enumerate() {
@@ -834,7 +1035,7 @@ fn first_maximum(cp: &[f64], n_valid: usize) -> usize {
 }
 
 /// The packed index of the first smallest value of a row, `0` for a row without a point.
-fn first_minimum(cp: &[f64], n_valid: usize) -> usize {
+pub(crate) fn first_minimum(cp: &[f64], n_valid: usize) -> usize {
     let mut index = 0;
     let mut trough = f64::INFINITY;
     for (j, &value) in cp.iter().take(n_valid).enumerate() {
@@ -1123,6 +1324,22 @@ pub(crate) mod tests {
             dose_amount: vec![amount; n_samples],
             dose_time: vec![time; n_samples],
             dose_duration: vec![f64::NAN; n_samples],
+            dose_unit: Some("mg".to_string()),
+            route: Some(route),
+            ..batch
+        }
+    }
+
+    /// `batch` with one dose of `amount` at every one of `times` per sample, given by `route`.
+    ///
+    /// The protocol is `times.len()` doses wide and every other respect is that of [`dosed`].
+    pub(crate) fn regimen(batch: Batch, route: Route, amount: f64, times: &[f64]) -> Batch {
+        let n_samples: usize = batch.sample_shape.iter().product();
+        Batch {
+            max_doses: times.len(),
+            dose_amount: vec![amount; n_samples * times.len()],
+            dose_time: (0..n_samples).flat_map(|_| times.iter().copied()).collect(),
+            dose_duration: vec![f64::NAN; n_samples * times.len()],
             dose_unit: Some("mg".to_string()),
             route: Some(route),
             ..batch
@@ -2021,34 +2238,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_multiple_dose_batch_is_refused_by_name() {
-        // `is_multiple_dose` of nca.py: a row whose protocol holds two doses, or any row at
-        // all when `tau` is given, is analysed over its dosing intervals instead.
-        let two_doses = Batch {
-            max_doses: 2,
-            dose_amount: vec![100.0, 100.0],
-            dose_time: vec![0.0, 12.0],
-            dose_duration: vec![f64::NAN, f64::NAN],
-            ..oral_curve()
-        };
-        let error = analyze_batch(&two_doses, &linear()).unwrap_err();
-        assert!(
-            matches!(&error, KernelError::Unsupported { what } if what.contains("more than one dose")),
-            "{error}"
-        );
-
-        let steady_state = NcaOptions {
-            tau: Some(12.0),
-            ..linear()
-        };
-        let error = analyze_batch(&oral_curve(), &steady_state).unwrap_err();
-        assert!(
-            matches!(&error, KernelError::Unsupported { what } if what.contains("tau")),
-            "{error}"
-        );
-    }
-
-    #[test]
     fn a_ragged_batch_is_refused_as_a_batch_error() {
         // The row loop reads a slice per sample, so a batch whose arrays do not fit its shape
         // is refused before any row runs rather than cut to what fits.
@@ -2154,6 +2343,77 @@ pub(crate) mod tests {
         );
         assert!(at(&result, "cl", 0).is_nan() && at(&result, "cl_f", 0).is_finite());
         assert!(at(&result, "cl", 1).is_finite() && at(&result, "cl_f", 1).is_nan());
+    }
+
+    /// The row of the curve below, computed directly: `analyze_batch` does not take a protocol
+    /// of several doses yet, so the flag is set by hand.
+    fn row_of_curve(route: Route, single_dose: bool) -> RowParameters {
+        let times = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let values = [8.0, 4.0, 2.0, 1.0, 0.5];
+        let input = RowInput {
+            times: &times,
+            values: &values,
+            dose: ReferenceDose {
+                amount: 100.0,
+                time: 0.0,
+                duration: Some(f64::NAN),
+            },
+            route: Some(route),
+            has_dose: true,
+            single_dose,
+            lloq: None,
+            window: None,
+            manual: None,
+            dose_times: &[],
+            dose_amounts: &[],
+        };
+        let mut scratch = Scratch::new(times.len());
+        compute_row(&input, &linear(), &mut scratch, None)
+    }
+
+    #[test]
+    fn an_infusion_of_several_doses_gets_no_zero_inserted_at_its_reference_dose() {
+        // with one dose the kernel inserts a 0 at the dose time of an infusion or an oral
+        // dose, as WinNonlin does. with several doses the curve does not start at zero, so the
+        // insertion must not happen, and `single_dose` is what distinguishes the two.
+        for route in [Route::Oral, Route::IvInfusion] {
+            let single = row_of_curve(route, true);
+            assert_eq!(single.auc_last, 15.25, "{route:?}");
+            assert_eq!(single.aumc_last, 27.25, "{route:?}");
+
+            let several = row_of_curve(route, false);
+            assert_eq!(several.auc_last, 11.25, "{route:?}");
+            assert_eq!(several.aumc_last, 23.25, "{route:?}");
+        }
+    }
+
+    #[test]
+    fn a_bolus_still_gets_its_back_extrapolated_c0_from_the_last_dose() {
+        // the bolus insertion is not gated by single_dose: the value at the dose of a bolus
+        // is the back extrapolated c0 whether or not earlier doses exist.
+        let single = row_of_curve(Route::IvBolus, true);
+        let several = row_of_curve(Route::IvBolus, false);
+        assert!((several.c0 - 16.0).abs() < 1e-9);
+        assert_eq!(several.auc_last, single.auc_last);
+        assert!(several.auc_last > 11.25);
+    }
+
+    #[test]
+    fn the_regimen_fixture_builds_one_protocol_per_sample() {
+        let batch = regimen(
+            many(&[&[0.0, 1.0], &[0.0, 1.0]], &[&[1.0, 2.0], &[1.0, 2.0]]),
+            Route::Oral,
+            50.0,
+            &[0.0, 12.0, 24.0],
+        );
+        assert_eq!(batch.max_doses, 3);
+        assert_eq!(batch.dose_amount, vec![50.0; 6]);
+        assert_eq!(batch.dose_time, vec![0.0, 12.0, 24.0, 0.0, 12.0, 24.0]);
+        assert_eq!(batch.dose_duration.len(), 6);
+        assert!(batch.dose_duration.iter().all(|d| d.is_nan()));
+        assert!(batch.validate().is_ok());
+        assert_eq!(super::super::n_doses_of_row(&batch, 0), 3);
+        assert_eq!(super::super::n_doses_of_row(&batch, 1), 3);
     }
 
     #[test]

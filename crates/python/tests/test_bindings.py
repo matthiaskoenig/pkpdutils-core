@@ -258,6 +258,90 @@ def test_a_single_dose_batch_analyses() -> None:
     assert result["texts"] == {}
 
 
+def test_a_multiple_dose_batch_analyses() -> None:
+    """The wheel analyses a three dose protocol over its dosing intervals.
+
+    The expected numbers are those of the python core of `pkpdutils` (`nca` on the same
+    curve, which runs `compute_steady_state` for a protocol of more than one dose), read from
+    a run of it and not from this wheel. The curve is 10 mg every 12 h, sampled over 36 h.
+    """
+    times = [0, 1, 2, 4, 8, 12, 13, 14, 16, 20, 24, 25, 26, 28, 32, 36.0]
+    values = [
+        0,
+        6.8,
+        7.1,
+        5.1,
+        2.3,
+        1.0,
+        7.7,
+        7.8,
+        5.6,
+        2.5,
+        1.1,
+        7.8,
+        7.9,
+        5.6,
+        2.5,
+        1.1,
+    ]
+    batch = oral_batch()
+    batch.update(
+        n_time=len(times),
+        times=np.array([times]),
+        values=np.array([values]),
+        max_doses=3,
+        dose_amount=np.array([[10.0, 10.0, 10.0]]),
+        dose_time=np.array([[0.0, 12.0, 24.0]]),
+        dose_duration=np.full((1, 3), np.nan),
+    )
+    options = linear_options()
+    assert pkpdutils_core.is_supported(batch, options) is None
+    result = pkpdutils_core.analyze_batch(batch, options)
+
+    # the protocol, and the steady state of the last interval (24 h to 36 h)
+    assert value(result, "n_doses") == 3.0
+    assert value(result, "tau") == 12.0
+    assert value(result, "auc_tau") == pytest.approx(49.2, rel=1e-12)
+    assert value(result, "cmax_ss") == 7.9
+    assert value(result, "cmin_ss") == 1.1
+    assert value(result, "ctrough") == 1.1
+    assert value(result, "cavg") == pytest.approx(4.1, rel=1e-12)
+    assert value(result, "accumulation_ratio") == pytest.approx(
+        1.0953594281312835, rel=1e-12
+    )
+    assert result["flags"].tolist() == [0]
+
+    # the areas of the three intervals, over the dimension `interval`
+    interval_auc = result["point_variables"]["interval_auc"]
+    assert interval_auc["dim"] == "interval"
+    assert interval_auc["size"] == 3
+    assert interval_auc["values"] == pytest.approx(
+        [43.949999999999996, 48.900000000000006, 49.2], rel=1e-12
+    )
+
+
+def test_an_explicit_tau_analyses_a_single_dose_as_an_interval() -> None:
+    """An explicit `tau` is analysed, not refused, and takes the dose as the last of its regimen.
+
+    The curve is that of `test_a_single_dose_batch_analyses` with `tau` of 6 h; the expected
+    numbers are those of the python core (`NCAOptions(tau=6.0)`), read from a run of it.
+    """
+    options = {**linear_options(), "tau": 6.0}
+    assert pkpdutils_core.is_supported(oral_batch(), options) is None
+    result = pkpdutils_core.analyze_batch(oral_batch(), options)
+
+    assert value(result, "n_doses") == 1.0
+    assert value(result, "tau") == 6.0
+    assert value(result, "auc_tau") == 19.25
+    assert value(result, "cmax_ss") == 8.0
+    assert value(result, "ctrough") == 0.5
+    assert value(result, "cavg") == pytest.approx(3.2083333333333335, rel=1e-12)
+    assert value(result, "accumulation_ratio") == pytest.approx(
+        1.0158730158730158, rel=1e-12
+    )
+    assert result["point_variables"]["interval_auc"]["values"].tolist() == [19.25]
+
+
 def test_the_shard_plan_does_not_change_the_numbers() -> None:
     """A sharded run gives the bits of a serial one.
 
@@ -313,18 +397,18 @@ def test_the_wheel_carries_the_row_shards() -> None:
 
 
 def test_an_unsupported_batch_raises() -> None:
-    """A multiple dose analysis is refused by a type a host can route on.
+    """An analysis this build does not carry is refused by a type a host can route on.
 
     `UnsupportedError` subclasses `ValueError`, so a caller which catches `ValueError` keeps
     catching it, and the message names the option which this build does not carry.
     """
     options = linear_options()
-    options["tau"] = 12.0
+    options["units"] = {"auc_last": "mg*hr/l"}
 
     assert issubclass(pkpdutils_core.UnsupportedError, ValueError)
     with pytest.raises(pkpdutils_core.UnsupportedError) as raised:
         pkpdutils_core.analyze_batch(oral_batch(), options)
-    assert "tau" in str(raised.value)
+    assert "units" in str(raised.value)
 
     # and the refusals which are not that one keep their own type: a key no field of the
     # options spells is a disagreement about the contract, never work to route elsewhere
@@ -341,10 +425,10 @@ def test_is_supported_reports_the_reason() -> None:
     assert pkpdutils_core.is_supported(oral_batch(), linear_options()) is None
 
     options = linear_options()
-    options["tau"] = 12.0
+    options["units"] = {"auc_last": "mg*hr/l"}
     reason = pkpdutils_core.is_supported(oral_batch(), options)
     assert isinstance(reason, str)
-    assert "tau" in reason
+    assert "units" in reason
 
 
 def test_the_version_matches_the_crate() -> None:

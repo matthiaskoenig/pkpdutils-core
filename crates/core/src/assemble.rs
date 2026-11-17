@@ -20,6 +20,7 @@ use pkpdutils_abi::{
 use pkpdutils_units::{UnitContext, parameter_unit};
 
 use crate::KernelError;
+use crate::intervals::{INTERVAL_VARIABLES, Interval};
 use crate::parameters::{PARAMETERS, Parameter, RowParameters};
 use crate::terminal::Candidate;
 
@@ -31,6 +32,9 @@ const DIMENSIONLESS: &str = "dimensionless";
 
 /// The name of the dimension the candidate windows live on.
 const CANDIDATE_DIM: &str = "candidate";
+
+/// The extra dimension of the per-interval variables.
+const INTERVAL_DIM: &str = "interval";
 
 /// The name of the coordinate which names the dose every sample was analysed against.
 ///
@@ -53,6 +57,9 @@ pub(crate) struct RowResult {
     pub dose_amount: f64,
     /// The parameters of the row.
     pub parameters: RowParameters,
+    /// The dosing intervals of the row, empty unless the batch is a multiple dose one and the
+    /// options ask for them (`NcaOptions::intervals`).
+    pub intervals: Vec<Interval>,
 }
 
 /// One variable of the candidate table: its name, its unit and the column it reads.
@@ -119,7 +126,11 @@ pub(crate) fn result_of(
     parameters.push(subject_counts(batch, n_samples, &context)?);
     Ok(AnalysisResult {
         parameters,
-        point_variables: candidate_variables(candidates, n_samples, &context)?,
+        point_variables: {
+            let mut variables = candidate_variables(candidates, n_samples, &context)?;
+            variables.extend(interval_variables(batch, rows, &context)?);
+            variables
+        },
         boolean_variables: acceptance_variables(n_samples),
         text_variables: Vec::new(),
         flags: rows.iter().map(|r| r.parameters.flags.bits()).collect(),
@@ -185,7 +196,12 @@ fn parameter_columns(
             routes.push(row.route);
         }
     }
-    let reported = |p: &Parameter| routes.iter().any(|&r| p.reported_by(r, has_dose));
+    // the steady state columns belong to a batch with a multiple dose row, and the other rows of
+    // such a batch are `NaN` in them (`merge_rows` of `nca.py`)
+    let multiple = rows.iter().any(|row| row.parameters.multiple);
+    let reported = |p: &Parameter| {
+        (multiple || !p.steady_state) && routes.iter().any(|&r| p.reported_by(r, has_dose))
+    };
     PARAMETERS
         .iter()
         .filter(|p| reported(p))
@@ -301,6 +317,51 @@ fn candidate_variables(
                     .iter()
                     .map(|c| (variable.read)(c) * factor)
                     .collect(),
+            })
+        })
+        .collect()
+}
+
+/// The per-interval variables of a multiple dose batch, over the dimension `interval`.
+///
+/// Empty unless some row carries intervals, which only a multiple dose batch analysed with
+/// `NcaOptions::intervals` does. The dimension is as wide as the widest protocol of the batch
+/// (`max_doses`, at least one for a `tau` without a protocol), a row with fewer doses is `NaN`
+/// padded, and the values are sample major: sample `i`, interval `k` at `i * size + k`.
+///
+/// Mirrors the `interval_*` variables `compute_intervals` returns, over `(N, K)`.
+fn interval_variables(
+    batch: &Batch,
+    rows: &[RowResult],
+    context: &UnitContext,
+) -> Result<Vec<PointVariable>, KernelError> {
+    if rows.iter().all(|row| row.intervals.is_empty()) {
+        return Ok(Vec::new());
+    }
+    let size = batch
+        .max_doses
+        .max(rows.iter().map(|r| r.intervals.len()).max().unwrap_or(0));
+    INTERVAL_VARIABLES
+        .iter()
+        .filter(|variable| (variable.present)(batch))
+        .map(|variable| {
+            let (unit, factor) = unit_of(variable.name, variable.unit, context)?;
+            let values = rows
+                .iter()
+                .flat_map(|row| {
+                    (0..size).map(|k| {
+                        row.intervals
+                            .get(k)
+                            .map_or(f64::NAN, |interval| (variable.read)(interval) * factor)
+                    })
+                })
+                .collect();
+            Ok(PointVariable {
+                name: variable.name.to_string(),
+                unit,
+                dim: INTERVAL_DIM.to_string(),
+                size,
+                values,
             })
         })
         .collect()

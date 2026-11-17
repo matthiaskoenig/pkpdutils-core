@@ -297,6 +297,13 @@ mod tests {
         dict
     }
 
+    /// The `units` option of one conversion, which this build refuses.
+    fn units_dict(py: Python<'_>) -> Bound<'_, PyDict> {
+        let units = PyDict::new(py);
+        units.set_item("auc_last", "mg*hr/l").unwrap();
+        units
+    }
+
     /// `NCAOptions()` as `pkpdutils` hands it over, every key of it at its default.
     fn options_dict(py: Python<'_>) -> Bound<'_, PyDict> {
         let acceptance = PyDict::new(py);
@@ -576,11 +583,11 @@ mod tests {
             // what the predicate refuses: the message carries the kernel's own text and says
             // that it is the support of this build which is at issue
             let options = options_dict(py);
-            options.set_item("tau", 12.0).unwrap();
+            options.set_item("units", units_dict(py)).unwrap();
             let err = analyze_batch(py, &batch_dict(py, 2), &options, None).unwrap_err();
             assert!(err.is_instance_of::<PyValueError>(py), "{err}");
             let message = err.to_string();
-            assert!(message.contains("NcaOptions::tau"), "{message}");
+            assert!(message.contains("NcaOptions::units"), "{message}");
             assert!(
                 message.contains("is not implemented by this build"),
                 "{message}"
@@ -650,7 +657,7 @@ mod tests {
         // python path for good with nothing to notice it by
         Python::attach(|py| {
             let refused = options_dict(py);
-            refused.set_item("tau", 12.0).unwrap();
+            refused.set_item("units", units_dict(py)).unwrap();
             let err = analyze_batch(py, &batch_dict(py, 2), &refused, None).unwrap_err();
             assert!(err.is_instance_of::<UnsupportedError>(py), "{err}");
             // additive: it subclasses `ValueError`, which this refusal was before it had a
@@ -718,11 +725,14 @@ mod tests {
             );
 
             let options = options_dict(py);
-            options.set_item("tau", 12.0).unwrap();
+            options.set_item("units", units_dict(py)).unwrap();
             let reason = is_supported(py, &batch_dict(py, 2), &options)
                 .unwrap()
                 .expect("the analysis is not carried");
-            assert_eq!(reason, "a multiple dose analysis (NcaOptions::tau)");
+            assert_eq!(
+                reason,
+                "the unit conversion of a result (NcaOptions::units)"
+            );
             // the bare `what` and not the whole `Display` of the kernel's error: the host logs
             // this in a line of its own and `analyze_batch` is what raises
             assert!(
