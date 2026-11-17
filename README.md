@@ -1,5 +1,11 @@
 # pkpdutils-core
 
+[![CI](https://github.com/matthiaskoenig/pkpdutils-core/actions/workflows/ci.yml/badge.svg)](https://github.com/matthiaskoenig/pkpdutils-core/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/pypi/v/pkpdutils-core.svg)](https://pypi.org/project/pkpdutils-core/)
+[![Python Versions](https://img.shields.io/pypi/pyversions/pkpdutils-core.svg)](https://pypi.org/project/pkpdutils-core/)
+[![pkpdutils-abi](https://img.shields.io/crates/v/pkpdutils-abi.svg?label=pkpdutils-abi)](https://crates.io/crates/pkpdutils-abi)
+[![MIT License](https://img.shields.io/pypi/l/pkpdutils-core.svg)](https://opensource.org/licenses/MIT)
+
 A Rust port of the non-compartmental analysis core of the Python library [pkpdutils](https://github.com/matthiaskoenig/pkpdutils), compiled natively and to WebAssembly.
 
 Two contracts connect a host to the core: `batch/1`, the batch of timecourses, and `analysis/1`, the analysis request and its result. Their identifiers and the version of the serialized options are defined in `pkpdutils-abi` (`crates/abi`).
