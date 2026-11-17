@@ -581,13 +581,6 @@ pub(crate) fn analyze_intervals(
 /// `amounts[k]`, and an interval which does not exist, or has no amount, keeps `NaN`.
 ///
 /// Mirrors `np.where(usable, amounts, np.nan)` in `compute_intervals`.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "reached by the multiple dose analysis, which a later task wires in"
-    )
-)]
 pub(crate) fn fill_doses(intervals: &mut [Interval], amounts: &[f64]) {
     for (k, interval) in intervals.iter_mut().enumerate() {
         interval.dose = if interval.start.is_finite() {
@@ -774,7 +767,8 @@ mod tests {
     #[test]
     fn a_row_of_a_single_time_point_is_no_data_and_nothing_panics() {
         use crate::parameters::tests::linear;
-        use crate::parameters::{RowInput, Scratch, compute_row};
+        use crate::parameters::{RowInput, Scratch};
+        use crate::steady_state::compute_steady_state;
         use pkpdutils_abi::{NcaFlag, Route};
 
         let (times, values) = ([1.0], [5.0]);
@@ -794,10 +788,11 @@ mod tests {
             manual: None,
             single_dose: false,
             dose_times: &doses,
+            dose_amounts: &[],
         };
         let mut scratch = Scratch::new(1);
         let mut intervals = Vec::new();
-        let row = compute_row(&input, &linear(), &mut scratch, None, Some(&mut intervals));
+        let row = compute_steady_state(&input, &linear(), &mut scratch, None, &mut intervals);
         assert!(row.flags.contains(NcaFlag::NO_DATA));
         assert_eq!(intervals.len(), 3);
         // the bounds exist and the one sample is counted, with no index past the row
@@ -812,7 +807,8 @@ mod tests {
         // BLQ-treats only the copy the point parameters read), verified by running it:
         // lloq 0.5 on this row gives interval_n_points [4, 3], the same as without a limit
         use crate::parameters::tests::linear;
-        use crate::parameters::{RowInput, Scratch, compute_row};
+        use crate::parameters::{RowInput, Scratch};
+        use crate::steady_state::compute_steady_state;
         use pkpdutils_abi::{NcaOptions, Route};
 
         let times = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
@@ -834,19 +830,14 @@ mod tests {
                 manual: None,
                 single_dose: false,
                 dose_times: &doses,
+                dose_amounts: &[],
             };
             let options = NcaOptions {
                 tau: Some(3.0),
                 ..linear()
             };
             let mut intervals = Vec::new();
-            compute_row(
-                &input,
-                &options,
-                &mut Scratch::new(6),
-                None,
-                Some(&mut intervals),
-            );
+            compute_steady_state(&input, &options, &mut Scratch::new(6), None, &mut intervals);
             intervals.iter().map(|i| i.n_points).collect::<Vec<_>>()
         };
         assert_eq!(counts(None), [4.0, 3.0]);
@@ -1436,7 +1427,8 @@ mod tests {
         lloq: Option<f64>,
     ) -> (Vec<Interval>, NcaFlag) {
         use crate::parameters::tests::linear;
-        use crate::parameters::{RowInput, Scratch, compute_row};
+        use crate::parameters::{RowInput, Scratch};
+        use crate::steady_state::compute_steady_state;
 
         let input = RowInput {
             times,
@@ -1457,6 +1449,7 @@ mod tests {
             manual: None,
             single_dose: false,
             dose_times: doses,
+            dose_amounts: &[],
         };
         let tau = doses[1] - doses[0];
         let options = NcaOptions {
@@ -1465,12 +1458,12 @@ mod tests {
             ..linear()
         };
         let mut intervals = Vec::new();
-        let row = compute_row(
+        let row = compute_steady_state(
             &input,
             &options,
             &mut Scratch::new(times.len()),
             None,
-            Some(&mut intervals),
+            &mut intervals,
         );
         (intervals, row.flags)
     }

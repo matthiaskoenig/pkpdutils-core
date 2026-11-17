@@ -196,7 +196,12 @@ fn parameter_columns(
             routes.push(row.route);
         }
     }
-    let reported = |p: &Parameter| routes.iter().any(|&r| p.reported_by(r, has_dose));
+    // the steady state columns belong to a batch with a multiple dose row, and the other rows of
+    // such a batch are `NaN` in them (`merge_rows` of `nca.py`)
+    let multiple = rows.iter().any(|row| row.parameters.multiple);
+    let reported = |p: &Parameter| {
+        (multiple || !p.steady_state) && routes.iter().any(|&r| p.reported_by(r, has_dose))
+    };
     PARAMETERS
         .iter()
         .filter(|p| reported(p))

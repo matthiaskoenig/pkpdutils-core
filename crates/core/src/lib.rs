@@ -39,6 +39,7 @@ use crate::assemble::{RowResult, resolved_uncertainty, result_of};
 use crate::dose::{ReferenceDose, reference_dose};
 use crate::parameters::{RowInput, Scratch, compute_row};
 use crate::shard::rows_of;
+use crate::steady_state::compute_steady_state;
 use crate::terminal::Candidate;
 
 /// Why a batch could not be analysed.
@@ -165,8 +166,6 @@ pub fn analyze_batch_in_shards(
         manual: manual_columns(batch, options)?,
         windows: sample_windows(batch, options)?,
         has_dose: batch.max_doses > 0,
-        with_intervals: options.intervals
-            && (0..n_samples).any(|row| !single_dose_of_row(batch, options, row)),
     };
     // only an analysis of a single row reports the windows the selection could have chosen from
     // (`candidate_variables` of `nca.py`), so only such a row is asked for them, and such a row
@@ -205,9 +204,6 @@ struct Rows<'a> {
     windows: Option<RowWindows>,
     /// Whether the batch carries dose arrays at all.
     has_dose: bool,
-    /// Whether the rows report their dosing intervals: a multiple dose batch whose options ask
-    /// for them (`NcaOptions::intervals`, `is_multiple_dose` of `nca.py`).
-    with_intervals: bool,
 }
 
 impl Rows<'_> {
@@ -223,10 +219,14 @@ impl Rows<'_> {
     ) -> RowResult {
         let batch = self.batch;
         let route = batch.route_of_row(row);
+        // a row of a protocol of several doses, or of an explicit `tau`, is analysed over its
+        // dosing intervals from its last dose on (`is_multiple_dose` of `nca.py`); every other
+        // row is a single dose curve from its first
+        let single_dose = single_dose_of_row(batch, self.options, row);
         let input = RowInput {
             times: row_slice(&batch.times, row, batch.n_time),
             values: row_slice(&batch.values, row, batch.n_time),
-            dose: row_dose(batch, row),
+            dose: row_dose(batch, row, !single_dose),
             route,
             has_dose: self.has_dose,
             lloq: batch.lloq.as_ref().and_then(|v| v.get(row).copied()),
@@ -235,17 +235,33 @@ impl Rows<'_> {
                 .as_ref()
                 .and_then(|w| w.get(row).copied().flatten()),
             manual: self.manual.as_deref(),
-            single_dose: single_dose_of_row(batch, self.options, row),
+            single_dose,
             dose_times: row_slice(&batch.dose_time, row, batch.max_doses),
+            dose_amounts: row_slice(&batch.dose_amount, row, batch.max_doses),
         };
+        if single_dose {
+            let mut parameters = compute_row(&input, self.options, scratch, candidates);
+            // the protocol of a row is reported whichever path the row took (`run_analysis_rows`
+            // of `nca.py` fills `n_doses` for every row of a batch which has the column)
+            parameters.n_doses = row_slice(&batch.dose_time, row, batch.max_doses)
+                .iter()
+                .filter(|t| t.is_finite())
+                .count() as f64;
+            return RowResult {
+                route,
+                dose_amount: input.dose.amount,
+                parameters,
+                intervals: Vec::new(),
+            };
+        }
+        // the intervals are always computed, since the flags are raised from them; only their
+        // emission follows `NcaOptions::intervals` (`if options.intervals` of python)
         let mut intervals = Vec::new();
-        let parameters = compute_row(
-            &input,
-            self.options,
-            scratch,
-            candidates,
-            self.with_intervals.then_some(&mut intervals),
-        );
+        let parameters =
+            compute_steady_state(&input, self.options, scratch, candidates, &mut intervals);
+        if !self.options.intervals {
+            intervals.clear();
+        }
         RowResult {
             route,
             dose_amount: input.dose.amount,
@@ -324,19 +340,20 @@ fn single_dose_of_row(batch: &Batch, options: &NcaOptions, row: usize) -> bool {
     n_doses_of_row(batch, row) < 2 && options.tau.is_none()
 }
 
-/// The dose of a row the single dose analysis runs against, the first of its protocol.
+/// The dose of a row its analysis runs against: the first of its protocol for a single dose
+/// curve and the last (`last`) for a multiple dose row, as `reference_dose` of `nca.py`.
 ///
 /// The durations are read whenever the batch has doses at all, which is what python's
 /// `dose_duration is not None` means: `Timecourses` writes `dose_duration` onto every batch with
 /// doses and leaves it `NaN` where the route is no infusion.
-fn row_dose(batch: &Batch, row: usize) -> ReferenceDose {
+fn row_dose(batch: &Batch, row: usize, last: bool) -> ReferenceDose {
     let durations =
         (batch.max_doses > 0).then(|| row_slice(&batch.dose_duration, row, batch.max_doses));
     reference_dose(
         row_slice(&batch.dose_amount, row, batch.max_doses),
         row_slice(&batch.dose_time, row, batch.max_doses),
         durations,
-        false,
+        last,
     )
 }
 
