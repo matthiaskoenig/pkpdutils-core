@@ -157,10 +157,10 @@ mod tests {
             .map(|t| 10.0 * (1.0 - (-0.3 * t).exp()) * (1.0 + 0.05 * (7.0 * t).sin()))
             .collect();
         let (tss, plateau) = monoexponential(&t, &v, 0.9);
-        // the true minimum of the profiled cost, scipy `least_squares(method="lm")` on the same
-        // profiled residuals with xtol = ftol = gtol = 1e-15 (python's own default tolerances stop
-        // at 8.054337149, 2.9e-7 short, which is a looseness and not the answer)
-        let (ref_tss, ref_plateau) = (8.054339492229222, 10.210161964838916);
+        // the exact minimum of the profiled cost: the root of its derivative computed at 40
+        // decimal digits with mpmath, not any optimizer's output. Python's default LM tolerances
+        // stop at 8.054337149, 2.9e-7 short of it, which is a looseness this test must not pin
+        let (ref_tss, ref_plateau) = (8.05433948904572512, 10.2101619636571784);
         assert!((tss / ref_tss - 1.0).abs() < 1e-6, "{tss}");
         assert!((plateau / ref_plateau - 1.0).abs() < 1e-6, "{plateau}");
     }
