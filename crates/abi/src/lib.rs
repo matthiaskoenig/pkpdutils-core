@@ -20,7 +20,7 @@ pub use result::{
     AnalysisRequest, AnalysisResult, Attributes, BooleanColumn, ParameterColumn, PointVariable,
     TextColumn,
 };
-pub use sparse::{SparseDesign, SparseRequest};
+pub use sparse::{SparseAnswer, SparseDesign, SparseRequest};
 pub use summary::{SummaryAnswer, SummaryRequest};
 pub use tss::{TssAnswer, TssMethod, TssRequest};
 pub use window::WindowLabel;

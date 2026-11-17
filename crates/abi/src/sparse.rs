@@ -1,5 +1,6 @@
 //! The request of the sparse (destructive and batch design) analysis.
 
+use crate::AnalysisResult;
 use crate::nonfinite;
 use serde::{Deserialize, Serialize};
 
@@ -40,15 +41,10 @@ pub struct SparseRequest {
 }
 
 impl SparseRequest {
-    /// Check the shape (without overflowing), that the times strictly increase and that a serial
+    /// Check the shape (without overflowing; an empty shape is valid, python answers it with the
+    /// `NO_DATA` result), that the times strictly increase and that a serial
     /// design has at most one finite sample per animal.
     pub fn validate(&self) -> Result<(), String> {
-        if self.n_rows == 0 || self.n_cols == 0 {
-            return Err(format!(
-                "{} rows x {} columns: both must be positive",
-                self.n_rows, self.n_cols
-            ));
-        }
         let size = self
             .n_rows
             .checked_mul(self.n_cols)
@@ -75,7 +71,7 @@ impl SparseRequest {
         {
             return Err("the times must be strictly increasing".to_string());
         }
-        if self.design == SparseDesign::Serial {
+        if self.design == SparseDesign::Serial && self.n_cols > 0 {
             let k = self
                 .values
                 .chunks(self.n_cols)
@@ -90,6 +86,22 @@ impl SparseRequest {
         }
         Ok(())
     }
+}
+
+/// The answer of the sparse analysis: the result and what the host needs to word its warning.
+///
+/// `singletons > 0` is the condition under which the variance and the degrees of freedom of the
+/// area are `NaN`: that many batches (animals with the same sampling times) hold fewer than two
+/// members, so their contribution cannot be estimated. The host emits the diagnostic of the
+/// python implementation from it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SparseAnswer {
+    /// The result, without sample dimensions.
+    pub result: AnalysisResult,
+    /// The number of batches of the variance.
+    pub n_batches: usize,
+    /// The batches holding fewer than two animals.
+    pub singletons: usize,
 }
 
 #[cfg(test)]
@@ -142,16 +154,18 @@ mod tests {
     }
 
     #[test]
-    fn zero_rows_or_zero_columns_is_rejected() {
+    fn an_empty_shape_is_accepted_the_way_python_accepts_it() {
         let mut r = request();
         r.n_rows = 0;
         r.values.clear();
-        assert!(r.validate().is_err());
+        assert_eq!(r.validate(), Ok(()));
         let mut r = request();
         r.n_cols = 0;
         r.values.clear();
         r.times.clear();
-        assert!(r.validate().is_err());
+        assert_eq!(r.validate(), Ok(()));
+        r.design = SparseDesign::Batch;
+        assert_eq!(r.validate(), Ok(()));
     }
 
     #[test]

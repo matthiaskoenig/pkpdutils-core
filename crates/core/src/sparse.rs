@@ -14,7 +14,8 @@
 
 use crate::KernelError;
 use pkpdutils_abi::{
-    AnalysisResult, Attributes, NcaFlag, NcaOptions, ParameterColumn, PointVariable, SparseRequest,
+    AnalysisResult, Attributes, NcaFlag, NcaOptions, ParameterColumn, PointVariable, SparseAnswer,
+    SparseRequest,
 };
 use pkpdutils_units::{UnitContext, parameter_unit};
 use std::collections::BTreeMap;
@@ -29,6 +30,12 @@ const SPARSE_VARIABLES: [(&str, &str); 7] = [
     ("cmax_se", "{unit}"),
     ("tmax", "{time}"),
 ];
+
+/// The rows of a validated row-major `(n_rows, n_cols)` matrix; `n_cols` may be 0, which gives
+/// `n_rows` empty rows.
+fn rows(values: &[f64], n_rows: usize, n_cols: usize) -> impl Iterator<Item = &[f64]> {
+    (0..n_rows).map(move |i| &values[i * n_cols..(i + 1) * n_cols])
+}
 
 /// The block of numpy's pairwise summation, `PW_BLOCKSIZE`.
 const PAIRWISE_BLOCK: usize = 128;
@@ -114,7 +121,7 @@ pub(crate) fn point_statistics(
 ) -> (Vec<f64>, Vec<f64>, Vec<i64>) {
     let mut count = vec![0_i64; n_cols];
     let mut total = vec![0.0; n_cols];
-    for row in values.chunks(n_cols.max(1)).take(n_rows) {
+    for row in rows(values, n_rows, n_cols) {
         for (j, &v) in row.iter().enumerate() {
             if v.is_finite() {
                 count[j] += 1;
@@ -124,7 +131,7 @@ pub(crate) fn point_statistics(
     }
     let mean_of: Vec<f64> = (0..n_cols).map(|j| total[j] / count[j] as f64).collect();
     let mut squares = vec![0.0; n_cols];
-    for row in values.chunks(n_cols.max(1)).take(n_rows) {
+    for row in rows(values, n_rows, n_cols) {
         for (j, &v) in row.iter().enumerate() {
             if v.is_finite() {
                 let d = v - mean_of[j];
@@ -182,15 +189,27 @@ pub(crate) fn area_window(observed: &[bool], mean: &[f64]) -> Vec<bool> {
 /// bits. An animal without a usable sample is no batch. The variance and the degrees of freedom
 /// are `NaN` when any batch holds a single animal, whose contribution cannot be estimated, and
 /// when there is no batch at all (then with a count of 0).
+#[cfg(test)]
 pub(crate) fn bailer_variance(
     weights: &[f64],
     values: &[f64],
     n_rows: usize,
     n_cols: usize,
 ) -> (f64, f64, usize) {
+    let (variance, df, sizes) = bailer_batches(weights, values, n_rows, n_cols);
+    (variance, df, sizes.len())
+}
+
+/// [`bailer_variance`] with the size of every batch instead of their number.
+fn bailer_batches(
+    weights: &[f64],
+    values: &[f64],
+    n_rows: usize,
+    n_cols: usize,
+) -> (f64, f64, Vec<usize>) {
     let used_at = |v: f64, j: usize| v.is_finite() && weights[j] != 0.0;
     let mut n_per_time = vec![0_usize; n_cols];
-    for row in values.chunks(n_cols.max(1)).take(n_rows) {
+    for row in rows(values, n_rows, n_cols) {
         for (j, &v) in row.iter().enumerate() {
             if used_at(v, j) {
                 n_per_time[j] += 1;
@@ -208,7 +227,7 @@ pub(crate) fn bailer_variance(
         .collect();
     // the pattern of a row is the key, the animals of that pattern in order of appearance
     let mut batches: BTreeMap<Vec<bool>, Vec<f64>> = BTreeMap::new();
-    for row in values.chunks(n_cols.max(1)).take(n_rows) {
+    for row in rows(values, n_rows, n_cols) {
         let pattern: Vec<bool> = row
             .iter()
             .enumerate()
@@ -238,10 +257,10 @@ pub(crate) fn bailer_variance(
         });
     }
     if terms.is_empty() {
-        return (f64::NAN, f64::NAN, 0);
+        return (f64::NAN, f64::NAN, sizes);
     }
     if sizes.iter().any(|&size| size < 2) {
-        return (f64::NAN, f64::NAN, sizes.len());
+        return (f64::NAN, f64::NAN, sizes);
     }
     let variance = numpy_sum(&terms);
     let parts: Vec<f64> = terms
@@ -255,7 +274,7 @@ pub(crate) fn bailer_variance(
     } else {
         f64::NAN
     };
-    (variance, df, sizes.len())
+    (variance, df, sizes)
 }
 
 /// The area `sum(w * mean)` over the non-`NaN` means, `NaN` when no weight is non-zero.
@@ -295,7 +314,7 @@ fn weighted_area(weights: &[f64], mean: &[f64]) -> f64 {
 ///
 /// [`KernelError::Sparse`] when [`SparseRequest::validate`] refuses the request, and
 /// [`KernelError::Unsupported`] or [`KernelError::Batch`] for a unit which cannot be derived.
-pub fn nca_sparse(request: &SparseRequest) -> Result<AnalysisResult, KernelError> {
+pub fn nca_sparse(request: &SparseRequest) -> Result<SparseAnswer, KernelError> {
     request.validate().map_err(KernelError::Sparse)?;
     let (n_rows, n_cols) = (request.n_rows, request.n_cols);
     let t = &request.times;
@@ -328,7 +347,9 @@ pub fn nca_sparse(request: &SparseRequest) -> Result<AnalysisResult, KernelError
 
     let auc_last = weighted_area(&last_weights, &mean);
     let auc_all = weighted_area(&all_weights, &mean);
-    let (variance, df, _) = bailer_variance(&last_weights, y, n_rows, n_cols);
+    let (variance, df, sizes) = bailer_batches(&last_weights, y, n_rows, n_cols);
+    let n_batches = sizes.len();
+    let singletons = sizes.iter().filter(|&&size| size < 2).count();
 
     let mut peak: Option<usize> = None;
     for j in (0..n_cols).filter(|&j| observed[j]) {
@@ -391,7 +412,11 @@ pub fn nca_sparse(request: &SparseRequest) -> Result<AnalysisResult, KernelError
         values: n.iter().map(|&c| c as f64).collect(),
     });
     result.flags = vec![flags.bits()];
-    Ok(result)
+    Ok(SparseAnswer {
+        result,
+        n_batches,
+        singletons,
+    })
 }
 
 #[cfg(test)]
@@ -465,7 +490,9 @@ mod tests {
         let (t, y) = serial();
         let (_, df, _) = bailer_variance(&trapezoid_weights(&t), &y, 7, 3);
         close(df, 289.0 / 89.0);
-        let result = nca_sparse(&request(&t, &y, SparseDesign::Serial)).unwrap();
+        let result = nca_sparse(&request(&t, &y, SparseDesign::Serial))
+            .unwrap()
+            .result;
         let value = |name: &str| {
             result
                 .parameters
@@ -525,7 +552,9 @@ mod tests {
         assert!(variance.is_nan() && df.is_nan());
         assert_eq!(batches, 3);
         // and through the front end the area is still there, only its error is not
-        let result = nca_sparse(&request(&[0.0, 1.0, 2.0], &y, SparseDesign::Batch)).unwrap();
+        let answer = nca_sparse(&request(&[0.0, 1.0, 2.0], &y, SparseDesign::Batch)).unwrap();
+        assert_eq!((answer.n_batches, answer.singletons), (3, 1));
+        let result = answer.result;
         let get = |name: &str| {
             result
                 .parameters
@@ -558,7 +587,9 @@ mod tests {
     #[test]
     fn one_sampling_time_gives_a_nan_area() {
         let y = [1.0, NAN, 3.0, NAN];
-        let result = nca_sparse(&request(&[0.0, 1.0], &y, SparseDesign::Serial)).unwrap();
+        let result = nca_sparse(&request(&[0.0, 1.0], &y, SparseDesign::Serial))
+            .unwrap()
+            .result;
         let get = |name: &str| {
             result
                 .parameters
@@ -599,5 +630,92 @@ mod tests {
         let mut r = request(&[0.0, 1.0], &[1.0, 2.0], SparseDesign::Serial);
         r.n_rows = 3;
         assert!(matches!(nca_sparse(&r), Err(KernelError::Sparse(_))));
+    }
+
+    #[test]
+    fn the_pairwise_summation_matches_numpy_at_every_block_boundary() {
+        // `np.sum` of a[i] = (-1)^i (i + 1) 1e-3 + 1e8, as the bit pattern numpy produced; every
+        // one differs from a left to right sum, so each runs the pairwise path: 8 is one block,
+        // 9 a block and a tail, 16 two blocks, 128 the last single block, 129 and 200 the
+        // recursion
+        let expected: [(usize, u64); 6] = [
+            (8, 0x41c7_d783_ffff_7cee),
+            (9, 0x41ca_d274_8000_a3d8),
+            (16, 0x41d7_d783_ffff_7cee),
+            (128, 0x4207_d783_ffff_7cee),
+            (129, 0x4208_0733_0800_851f),
+            (200, 0x4212_a05f_1fff_999a),
+        ];
+        for (n, bits) in expected {
+            let a: Vec<f64> = (0..n)
+                .map(|i| (if i % 2 == 0 { 1.0 } else { -1.0 }) * (i + 1) as f64 * 1e-3 + 1e8)
+                .collect();
+            assert_eq!(numpy_sum(&a).to_bits(), bits, "n = {n}");
+        }
+    }
+
+    #[test]
+    fn twelve_sampling_times_reach_the_pairwise_sums_through_the_front_end() {
+        // 40 animals at 12 times in several batches; the seven parameters as the bit patterns
+        // of `nca_sparse` of the python host (numpy sums) on the same values
+        let (r, c) = (40_usize, 12_usize);
+        let mut y = vec![NAN; r * c];
+        for i in 0..r {
+            for j in 0..c {
+                if (i * 5 + j * 3) % 4 != 0 && (i % 3 != 0 || j % 2 == 0) {
+                    y[i * c + j] = ((i * 7 + j * 13) % 17) as f64 * 0.37
+                        + 0.11 * j as f64
+                        + 1.0 / (1 + i) as f64;
+                }
+            }
+        }
+        let t: Vec<f64> = (0..c).map(|j| (j as f64).powf(1.3)).collect();
+        let answer = nca_sparse(&request(&t, &y, SparseDesign::Batch)).unwrap();
+        let expected: [(&str, u64); 7] = [
+            ("auc_last", 4635719407022746458),
+            ("auc_last_se", 4612750861153895999),
+            ("auc_last_df", 4624867174836361197),
+            ("auc_all", 4635719407022746458),
+            ("cmax", 4616649554149344940),
+            ("cmax_se", 4599778889821543669),
+            ("tmax", 4626309381818504046),
+        ];
+        for (name, bits) in expected {
+            let column = answer.result.parameters.iter().find(|p| p.name == name);
+            assert_eq!(column.unwrap().values[0].to_bits(), bits, "{name}");
+        }
+        assert_eq!(answer.singletons, 0);
+    }
+
+    #[test]
+    fn an_empty_shape_gives_the_no_data_result_of_python() {
+        for (n_rows, n_cols) in [(0_usize, 3_usize), (4, 0), (0, 0)] {
+            let times: Vec<f64> = (0..n_cols).map(|j| j as f64).collect();
+            let r = SparseRequest {
+                times,
+                values: vec![NAN; n_rows * n_cols],
+                n_rows,
+                n_cols,
+                design: SparseDesign::Serial,
+                unit: "mg/l".to_string(),
+                time_unit: "h".to_string(),
+                dose_unit: None,
+            };
+            let answer = nca_sparse(&r).unwrap();
+            assert!(answer.result.validate().is_ok());
+            assert_eq!(answer.result.flags, vec![NcaFlag::NO_DATA.bits()]);
+            assert_eq!(answer.result.parameters.len(), 7);
+            for p in &answer.result.parameters {
+                assert!(p.values[0].is_nan(), "{} for {n_rows}x{n_cols}", p.name);
+            }
+            assert_eq!(answer.result.point_variables[0].size, n_cols);
+            assert!(
+                answer.result.point_variables[0]
+                    .values
+                    .iter()
+                    .all(|&v| v == 0.0)
+            );
+            assert_eq!((answer.n_batches, answer.singletons), (0, 0));
+        }
     }
 }
