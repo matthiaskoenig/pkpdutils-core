@@ -120,6 +120,14 @@ const OPTION_KEYS: [&str; 24] = [
 /// are not is what `the_predicate_agrees_with_the_kernel` exists to catch: a predicate wider
 /// than the kernel turns into an exception at the user's call site, and a narrower one sends
 /// work this build carries down the slow path for good.
+///
+/// Those seven are every refusal which can be read off a batch and its options. The kernel has
+/// an eighth which cannot - a unit string its curated registry cannot read, answered by deriving
+/// the units of the result - and it is deliberately not mirrored here: a copy of that registry
+/// is a list which drifts in silence, where the refusal itself is exact. `None` is therefore
+/// "nothing here refuses it" and not a promise that the analysis will run, and `analyze_batch`
+/// stays the authority. It reports that one with the same `UnsupportedError` as every refusal of
+/// this list, so a host which routes on the type is right either way.
 pub(crate) fn unsupported_reason(batch: &Batch, options: &NcaOptions) -> Option<String> {
     let reason = |what: &str| Some(what.to_string());
     if options.kind == Kind::Effect {

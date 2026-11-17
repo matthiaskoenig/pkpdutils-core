@@ -48,14 +48,26 @@ use crate::terminal::Candidate;
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum KernelError {
-    /// The batch itself is malformed, with the reason `pkpdutils_abi::Batch::validate` gave,
-    /// or one of its units is no unit, which that check does not cover (`crate::assemble`).
+    /// The batch itself is malformed, with the reason `pkpdutils_abi::Batch::validate` gave, or
+    /// it carries doses without a dose unit, which that check does not cover
+    /// (`crate::assemble`). A unit string this build cannot read is
+    /// [`KernelError::Unsupported`] instead, whatever the reason the parser gives: what this
+    /// build reads is a property of the build, and the batch is analysable by a host which reads
+    /// it.
     #[error("the batch is not analysable: {0}")]
     Batch(String),
     /// The options are malformed or contradict each other.
     #[error("the options are not analysable: {0}")]
     Options(String),
     /// An analysis this build does not carry, named by what was asked for.
+    ///
+    /// Every one of these but one is decided before a row runs and is therefore also what
+    /// `is_supported` of the python binding answers (`refuse_what_is_not_carried`). The one
+    /// which is not is a unit of the batch which the curated registry of `pkpdutils-units`
+    /// cannot read: answering it means deriving the unit of every parameter, which is the
+    /// analysis, so it is reported where that happens (`crate::assemble::unit_of`) and the
+    /// predicate does not see it. A host which routes on the type rather than on the predicate
+    /// is unaffected, which is what both are documented to do.
     #[error("{what} is not implemented by this build")]
     Unsupported {
         /// The analysis, the option or the route which is missing.
@@ -103,7 +115,9 @@ pub fn analyze(request: &AnalysisRequest) -> Result<AnalysisResult, KernelError>
 /// [`KernelError::Options`] for a malformed input, naming the field, and
 /// [`KernelError::Unsupported`] for an analysis of another plan: an effect curve, a multiple
 /// dose protocol, a partial area, the acceptance criteria, the propagation of an uncertainty and
-/// the unit conversion of the result.
+/// the unit conversion of the result - and for a unit string of the batch which the curated
+/// registry of this build cannot read (`week`, `U/l`), the one refusal which is decided while the
+/// result is assembled rather than before the rows run.
 pub fn analyze_batch(batch: &Batch, options: &NcaOptions) -> Result<AnalysisResult, KernelError> {
     let shards = automatic_shards(batch.n_samples(), batch.n_time);
     analyze_batch_in_shards(batch, options, shards)
@@ -227,6 +241,12 @@ impl Rows<'_> {
 ///
 /// Every one of these is a different parameter set or a step beyond the single dose analysis, so
 /// a wrong number is the alternative to a named error.
+///
+/// These are the refusals which are decided from the batch and the options alone, which is why
+/// the predicate of the python binding (`unsupported_reason`) is these seven and is held to them
+/// by a test. The eighth refusal of this build, a unit string the registry cannot read, is not
+/// here: it is answered by deriving the units of the parameters, which is what the analysis does
+/// (`assemble::unit_of`).
 fn refuse_what_is_not_carried(batch: &Batch, options: &NcaOptions) -> Result<(), KernelError> {
     let unsupported = |what: &str| {
         Err(KernelError::Unsupported {
@@ -392,9 +412,23 @@ const WINDOW_DEFAULT_KEY: &str = "*";
 
 /// Whether a sample label and a key of the window mapping are the same label.
 ///
+/// `TerminalPhase.windows` is a python `dict` and the check of its keys a python `set`, so what
+/// "the same label" means is what `==` means there, and python compares the numbers of its
+/// numeric tower across their types: `1 == 1.0`, `True == 1` and `False == 0.0` are all true, and
+/// a `dict` keyed `1` is read by `1.0` because the two also hash alike. A column of a batch
+/// carries one dtype, so a float coordinate of `[1.0, 2.0]` with a window keyed `1` is a batch
+/// `pkpdutils` 1.4.0 analyses and nothing on the host side has anything to flag; this comparison
+/// is where the two could disagree, so this is where they are held together
+/// (`a_numeric_label_matches_a_key_of_another_type_as_python_does`).
+///
+/// Numbers are therefore compared by value, with a boolean as the `1` and `0` python makes of it,
+/// and exactly: python compares an `int` and a `float` without rounding the `int` to a double, so
+/// the float is taken to the integers and not the other way round ([`int_is_float`]). A `NaN`
+/// label equals nothing, itself included, as in python.
+///
 /// `WindowLabel` tells a date and a datetime from a string, where a coordinate of a batch has no
 /// dtype for either and carries both as text, so a date key is matched against the text of the
-/// coordinate. Everything else compares as itself.
+/// coordinate. Text, `None` and a tuple compare as themselves, element by element.
 fn same_label(label: &WindowLabel, key: &WindowLabel) -> bool {
     match (label, key) {
         (WindowLabel::Str(text), WindowLabel::Date(key) | WindowLabel::Datetime(key)) => {
@@ -403,8 +437,66 @@ fn same_label(label: &WindowLabel, key: &WindowLabel) -> bool {
         (WindowLabel::Tuple(label), WindowLabel::Tuple(key)) => {
             label.len() == key.len() && label.iter().zip(key).all(|(l, k)| same_label(l, k))
         }
-        _ => label == key,
+        _ => match (numeric_label(label), numeric_label(key)) {
+            (Some(label), Some(key)) => same_number(label, key),
+            // not both numbers: a number is no string, no date and no `None`, exactly as in
+            // python, and two labels of the same kind compare as themselves
+            _ => label == key,
+        },
     }
+}
+
+/// A label as the number python would compare, `None` for a label which is no number.
+///
+/// A boolean is a number in python, `True` being `1` and `False` being `0`, and it is a label of
+/// a batch because a coordinate may be a boolean column.
+fn numeric_label(label: &WindowLabel) -> Option<Number> {
+    match label {
+        WindowLabel::Int(value) => Some(Number::Int(*value)),
+        WindowLabel::Bool(value) => Some(Number::Int(i64::from(*value))),
+        WindowLabel::Float(value) => Some(Number::Float(*value)),
+        WindowLabel::Tuple(_)
+        | WindowLabel::None
+        | WindowLabel::Datetime(_)
+        | WindowLabel::Date(_)
+        | WindowLabel::Str(_) => None,
+    }
+}
+
+/// One label of [`numeric_label`]: a python `int` (a boolean among them) or a python `float`.
+#[derive(Clone, Copy)]
+enum Number {
+    /// An integer, and a boolean as the integer python makes of it.
+    Int(i64),
+    /// A float.
+    Float(f64),
+}
+
+/// Whether two numeric labels are equal as python's `==` has them.
+fn same_number(label: Number, key: Number) -> bool {
+    match (label, key) {
+        (Number::Int(label), Number::Int(key)) => label == key,
+        // `NaN` equals nothing, itself included, which is what the float comparison already does
+        (Number::Float(label), Number::Float(key)) => label == key,
+        (Number::Int(int), Number::Float(float)) | (Number::Float(float), Number::Int(int)) => {
+            int_is_float(int, float)
+        }
+    }
+}
+
+/// Whether an integer and a float are the same number, as python compares the two.
+///
+/// Python compares an `int` and a `float` exactly and does not round the `int` to a double, so
+/// `10**17 + 1 == 1e17` is false there although both sides are the same `f64`. The float is
+/// therefore taken to the integers and never the other way round, and a float which is not an
+/// integer, which is not finite or which is outside the range of an `i64` is equal to no `i64`:
+/// `fract` of an infinity and of a `NaN` is a `NaN`, which fails the first test, and the range
+/// is checked before the cast, which saturates.
+fn int_is_float(int: i64, float: f64) -> bool {
+    // `i64::MIN` is a power of two and exact as an `f64`, and so is its negation, which is one
+    // past `i64::MAX` and therefore an exclusive bound
+    let min = i64::MIN as f64;
+    float.fract() == 0.0 && float >= min && float < -min && float as i64 == int
 }
 
 /// The label of every sample of a batch, in the row order of the analysis.
@@ -461,6 +553,8 @@ fn dimension_labels(batch: &Batch, dim: &str, size: usize) -> Vec<WindowLabel> {
 
 #[cfg(test)]
 mod tests {
+    use pkpdutils_abi::{SampleCoordinate, TerminalPhase};
+
     use super::*;
 
     #[test]
@@ -480,6 +574,134 @@ mod tests {
             .to_string(),
             "sparse sampling is not implemented by this build"
         );
+    }
+
+    #[test]
+    fn a_numeric_label_matches_a_key_of_another_type_as_python_does() {
+        // `TerminalPhase.windows` is a python `dict` and the check of its keys a python `set`, so
+        // a label and a key are the same label when python's `==` says so, and python compares
+        // its numeric tower across the types: a float coordinate of `[1.0, 2.0]` with a window
+        // keyed `1` is a batch `pkpdutils` 1.4.0 analyses. The column of a batch carries one
+        // dtype, so nothing on the host side has anything to flag and this comparison is the
+        // only place the two engines could disagree.
+        let int = WindowLabel::Int;
+        let float = WindowLabel::Float;
+        let bool_label = WindowLabel::Bool;
+        for (label, key) in [
+            (float(1.0), int(1)),
+            (int(1), float(1.0)),
+            (bool_label(true), int(1)),
+            (int(1), bool_label(true)),
+            (bool_label(false), float(0.0)),
+            (float(0.0), bool_label(false)),
+            (float(-2.0), int(-2)),
+            // exactly representable on both sides, and python says they are equal
+            (float(1e17), int(100_000_000_000_000_000)),
+            (int(i64::MIN), float(-9_223_372_036_854_775_808.0)),
+            // and a label of the same kind, which compared equal before this one did
+            (int(7), int(7)),
+            (float(1.5), float(1.5)),
+            (bool_label(true), bool_label(true)),
+            (
+                WindowLabel::Tuple(vec![float(1.0), int(2)]),
+                WindowLabel::Tuple(vec![int(1), float(2.0)]),
+            ),
+        ] {
+            assert!(same_label(&label, &key), "{label:?} is not {key:?}");
+            assert!(same_label(&key, &label), "{key:?} is not {label:?}");
+        }
+
+        // and the other half, which a comparison made loose enough to fix the above could start
+        // matching: every one of these is `False` in python too
+        for (label, key) in [
+            (int(2), bool_label(true)),
+            (float(1.5), int(1)),
+            (float(1.0), int(2)),
+            // python compares an int and a float exactly and does not round the int to a double,
+            // so this pair is `False` there although both sides are the same `f64`
+            (int(100_000_000_000_000_001), float(1e17)),
+            // beyond the range of an `i64`, where a saturating cast would match `i64::MAX`
+            (int(i64::MAX), float(9.3e18)),
+            (int(i64::MIN), float(-9.3e18)),
+            // 2^63 exactly, the one float which separates an exclusive upper bound from an
+            // inclusive one: it is one above `i64::MAX`, so python says it is no `i64` at all
+            (int(i64::MAX), float(9_223_372_036_854_775_808.0)),
+            (int(0), float(f64::INFINITY)),
+            (int(0), float(f64::NEG_INFINITY)),
+            // a `NaN` equals nothing, itself included, as in python
+            (float(f64::NAN), float(f64::NAN)),
+            (int(0), float(f64::NAN)),
+            // a number is no string, no date, no `None` and no tuple
+            (int(1), WindowLabel::Str("1".to_string())),
+            (float(1.0), WindowLabel::Str("1.0".to_string())),
+            (int(1), WindowLabel::None),
+            (bool_label(true), WindowLabel::Str("True".to_string())),
+            (int(1), WindowLabel::Tuple(vec![int(1)])),
+            (
+                WindowLabel::Tuple(vec![int(1), int(2)]),
+                WindowLabel::Tuple(vec![int(1)]),
+            ),
+        ] {
+            assert!(!same_label(&label, &key), "{label:?} is {key:?}");
+            assert!(!same_label(&key, &label), "{key:?} is {label:?}");
+        }
+
+        // the reproduction, end to end, and the mutation beside it: a key which genuinely names
+        // no sample has to go on being refused, which is what a comparison made loose enough to
+        // fix the above would stop doing
+        let times = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
+        let curve = [1.0, 10.0, 8.0, 6.0, 4.0, 2.0];
+        let labelled = |values: Coordinate| Batch {
+            coords: vec![SampleCoordinate {
+                name: "subject".to_string(),
+                dims: vec!["subject".to_string()],
+                values,
+            }],
+            ..parameters::tests::one(&times, &curve)
+        };
+        let windowed = |key: Option<WindowLabel>| NcaOptions {
+            terminal: TerminalPhase {
+                windows: key.map(|key| [(key, (1.0, 3.0))].into()),
+                ..TerminalPhase::default()
+            },
+            ..parameters::tests::linear()
+        };
+        let t_last = |result: &AnalysisResult| parameters::tests::value(result, "lambda_z_t_last");
+
+        // without the window the regression of this curve runs to its last point, so the
+        // assertions below say that the window was found and not that the number is 3.0 anyway
+        let open = parameters::tests::run(&labelled(Coordinate::Float(vec![1.0])), &windowed(None));
+        assert_eq!(t_last(&open), 5.0);
+
+        for (coordinate, key) in [
+            (Coordinate::Float(vec![1.0]), int(1)),
+            (Coordinate::Int(vec![1]), float(1.0)),
+            (Coordinate::Bool(vec![true]), int(1)),
+            (Coordinate::Int(vec![1]), bool_label(true)),
+        ] {
+            let batch = labelled(coordinate.clone());
+            let result = parameters::tests::run(&batch, &windowed(Some(key.clone())));
+            assert_eq!(
+                t_last(&result),
+                3.0,
+                "the window of {key:?} did not reach {coordinate:?}"
+            );
+        }
+
+        for (coordinate, key) in [
+            (Coordinate::Float(vec![1.0]), int(2)),
+            (Coordinate::Float(vec![1.5]), int(1)),
+            (Coordinate::Int(vec![2]), bool_label(true)),
+            (Coordinate::Int(vec![1]), WindowLabel::Str("1".to_string())),
+            (Coordinate::Float(vec![f64::NAN]), float(f64::NAN)),
+        ] {
+            let batch = labelled(coordinate.clone());
+            let error = analyze_batch(&batch, &windowed(Some(key.clone()))).unwrap_err();
+            assert!(
+                matches!(&error, KernelError::Options(message) if message.contains("names no sample")),
+                "the window of {key:?} reached {coordinate:?}: {error}"
+            );
+        }
     }
 
     #[test]

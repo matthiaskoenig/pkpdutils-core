@@ -94,9 +94,10 @@ const CANDIDATE_VARIABLES: [CandidateVariable; 3] = [
 ///
 /// # Errors
 ///
-/// [`KernelError::Batch`] naming the variable whose unit could not be derived: the units of a
-/// batch are no part of `Batch::validate`, so a string which is no unit, and a batch with doses
-/// but without a dose unit, reach this point. Python raises in the same place.
+/// Whatever [`unit_of`] refuses: the units of a batch are no part of `Batch::validate`, so a
+/// unit this build cannot read and a batch with doses but without a dose unit both reach this
+/// point. The first is a [`KernelError::Unsupported`] a host routes its own path on, the second
+/// a [`KernelError::Batch`] naming the variable.
 pub(crate) fn result_of(
     batch: &Batch,
     options: &NcaOptions,
@@ -331,15 +332,34 @@ fn acceptance_variables(n_samples: usize) -> Vec<BooleanColumn> {
 ///
 /// # Errors
 ///
-/// [`KernelError::Batch`] naming the variable and the reason, which is a unit of the batch the
-/// registry does not read or a placeholder the batch does not provide.
+/// [`KernelError::Unsupported`] for a unit of the batch the registry of this build could not
+/// read, whatever the reason (`UnitError::is_unsupported`): a time in `week`, a concentration in
+/// `U/l`, a prefixed `kilohour`, pint's `mg l` or `hr ** 0.5`, a spelling pint over-forgives
+/// (`mg//l`, which it reads as `mg / l`) and a string which is no unit anywhere. What this build
+/// reads is a property of this build, so a host whose own engine reads it analyses the batch
+/// there and the refusal is one a host routes on rather than an error at its user. Every one of
+/// these quotes the offending unit string itself, which is why the refusal does not carry the
+/// variable name: the variable is wherever the derivation happened to reach it first and says
+/// nothing about the batch.
+///
+/// [`KernelError::Batch`] naming the variable for the failures which are not about reading a
+/// string: a placeholder the batch does not provide, which is a batch with doses and no dose
+/// unit and whose variable is the one piece of information in that message. Python raises in the
+/// same place.
 fn unit_of(
     name: &str,
     expression: &str,
     context: &UnitContext,
 ) -> Result<(String, f64), KernelError> {
-    parameter_unit(expression, context)
-        .map_err(|e| KernelError::Batch(format!("the unit of {name} cannot be derived: {e}")))
+    parameter_unit(expression, context).map_err(|e| {
+        if e.is_unsupported() {
+            KernelError::Unsupported {
+                what: format!("a unit which the registry of this build does not read ({e})"),
+            }
+        } else {
+            KernelError::Batch(format!("the unit of {name} cannot be derived: {e}"))
+        }
+    })
 }
 
 #[cfg(test)]
@@ -925,21 +945,116 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_unit_the_batch_cannot_spell_is_refused_by_name() {
-        // The units of a batch are no part of `Batch::validate`, so a string which is no unit
-        // reaches the assembly; python raises there too (`ureg.parse_units`).
-        let nonsense = Batch {
-            unit: "banana".to_string(),
-            ..oral_curve()
-        };
-        let error = crate::analyze_batch(&nonsense, &linear()).unwrap_err();
-        assert!(
-            matches!(&error, crate::KernelError::Batch(message) if message.contains("banana")),
-            "{error}"
-        );
+    /// The batch of `oral_curve` with one of its three unit strings replaced.
+    fn with_unit(which: &str, unit: &str) -> Batch {
+        let mut batch = oral_curve();
+        match which {
+            "unit" => batch.unit = unit.to_string(),
+            "time_unit" => batch.time_unit = unit.to_string(),
+            "dose_unit" => batch.dose_unit = Some(unit.to_string()),
+            other => panic!("'{other}' is no unit of a batch"),
+        }
+        batch
+    }
 
-        // a dose dependent parameter needs a dose unit, which a batch with doses may lack
+    #[test]
+    fn a_unit_the_registry_cannot_read_is_a_refusal_and_not_a_batch_error() {
+        // What this build reads is a property of this build, so a unit it cannot read is not a
+        // defect of the batch: the batch is analysable, by a host whose own engine reads the
+        // string, and `KernelError::Unsupported` is what says so. Reported as
+        // `KernelError::Batch` it reaches the user of that host as an exception, since the
+        // fallback catches the refusal and deliberately nothing broader, and none of these is a
+        // corner case: `week` is the time base of a monoclonal antibody study, `U/l` a clinical
+        // concentration, and `mg//l` is read by pint as `mg / l` and therefore computed by
+        // `pkpdutils` 1.4.0.
+        //
+        // Every way the parse can fail, as the unit of the values, of the times and of the
+        // doses, since each reaches the derivation through another placeholder and a dose unit
+        // reaches it only for some parameters.
+        let deep = format!("{}hr{}", "(".repeat(80), ")".repeat(80));
+        for spelling in [
+            // a unit pint has and this registry does not
+            "week",
+            "month",
+            "year",
+            "U/l",
+            // a prefix on a unit which is not prefixable
+            "kilohour",
+            "hectoliter",
+            // pint's implicit product and its fractional exponent
+            "mg l",
+            "hr**0.5",
+            // the two limits this build puts on an expression it would otherwise read
+            "hr**100",
+            deep.as_str(),
+            // a spelling pint over-forgives, which 1.4.0 computes: `mg/l` and `hr**2`
+            "mg//l",
+            "hr**--2",
+            // and a string which is no unit anywhere. The host refuses these before a batch is
+            // built at all (`Timecourses.from_arrays` parses every unit with pint), so the
+            // classification is invisible from there; it is uniform because the rule is one
+            // line, and a direct caller of the binding gets the same answer as everyone else
+            "mg/",
+            "/mg",
+            "()",
+            "(mg",
+            "mg)",
+            "2*mg",
+            "mg**",
+            "mg.l",
+            "",
+        ] {
+            for which in ["unit", "time_unit", "dose_unit"] {
+                let batch = with_unit(which, spelling);
+                let error = crate::analyze_batch(&batch, &linear()).unwrap_err();
+                let crate::KernelError::Unsupported { what } = &error else {
+                    panic!("{which} = '{spelling}' is {error}, not a refusal");
+                };
+                // the refusal quotes the unit itself, which is why it names no variable: the
+                // variable is wherever the derivation reached it first. Clipped, as every error
+                // of the registry clips the host string it echoes
+                let quoted: String = spelling
+                    .chars()
+                    .take(pkpdutils_units::MAX_ERROR_TEXT)
+                    .collect();
+                assert!(
+                    what.contains(&quoted),
+                    "the refusal of {which} = '{spelling}' does not quote it: {what}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_unit_which_reads_is_analysed_and_one_the_batch_lacks_is_a_batch_error() {
+        // The other side of the rule above, and the mutation which would catch a classification
+        // that refuses wholesale: the ordinary units of a batch are read and analysed here and
+        // not handed back to the host.
+        for (unit, time_unit, dose_unit) in [
+            ("mg/l", "hr", "mg"),
+            ("ug/ml", "min", "mg/kg"),
+            ("mmol/l", "day", "mmol"),
+            ("IU/l", "s", "IU"),
+            ("mg/l", "hour", "milligram"),
+        ] {
+            let batch = Batch {
+                unit: unit.to_string(),
+                time_unit: time_unit.to_string(),
+                dose_unit: Some(dose_unit.to_string()),
+                ..oral_curve()
+            };
+            let result = crate::analyze_batch(&batch, &linear());
+            assert!(
+                result.is_ok(),
+                "'{unit}' over '{time_unit}' with a dose in '{dose_unit}' is {:?}",
+                result.err()
+            );
+        }
+
+        // and the one unit failure which is no failure to read a string: a dose dependent
+        // parameter needs a dose unit, which a batch with doses may lack. The batch is
+        // incomplete rather than unreadable, python raises in the same place, and the variable
+        // the message names is the one piece of information in it
         let doseless = Batch {
             dose_unit: None,
             ..oral_curve()

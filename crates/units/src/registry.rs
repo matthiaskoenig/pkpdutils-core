@@ -10,7 +10,11 @@
 //! What it deliberately does not mirror is pint beyond those units: a prefix
 //! outside [`PREFIXES`] (no `hectoliter`), a prefixed unit which is not
 //! `prefixable` (no `kilohour`), pint's implicit product (`mg l`) and its
-//! fractional exponents (`hr ** 0.5`), all of which are an error here.
+//! fractional exponents (`hr ** 0.5`), all of which are an error here. What
+//! this registry can read is a property of this build and not of the string,
+//! which is what [`UnitError::is_unsupported`] tells a host, so that a host
+//! which reads the string itself can analyse such a batch instead of raising at
+//! its user.
 //!
 //! One spelling names the same quantity differently: pint has `fermi`, whose
 //! symbol is `fm` and whose exact match beats the prefix decomposition, so `fm`
@@ -233,6 +237,73 @@ pub enum UnitError {
         /// Its dimension.
         dimension: String,
     },
+    /// Two units with no operator between them, pint's implicit product.
+    #[error("'{unit}' writes a product without a '*', which this registry does not read")]
+    ImplicitProduct {
+        /// The unit string.
+        unit: String,
+    },
+    /// An exponent which is not an integer, which pint reads and this registry does not.
+    #[error("an exponent of '{unit}' is not an integer, which this registry does not read")]
+    FractionalExponent {
+        /// The unit string.
+        unit: String,
+    },
+}
+
+impl UnitError {
+    /// Whether the error is a string this build could not read, rather than a unit it read and
+    /// the context cannot use.
+    ///
+    /// The rule is one line, and it is the one a host routes on: **a unit string this build
+    /// cannot read is not supported by this build.** Readability is a property of the build and
+    /// of nothing else, which is what `KernelError::Unsupported` of `pkpdutils-core` and
+    /// `UnsupportedError` in python mean, so a host whose own engine reads the string analyses
+    /// the batch there and no user sees an exception for it.
+    ///
+    /// `true`, therefore, for every way the parser can fail: a unit outside this curated
+    /// registry ([`UnitError::Unknown`]: `week`, `month`, `year`, `U`, and a prefix on a unit
+    /// which is not prefixable, `kilohour`, `hectoliter`), the syntax it deliberately does not
+    /// mirror ([`UnitError::ImplicitProduct`], pint's `mg l`;
+    /// [`UnitError::FractionalExponent`], pint's `hr ** 0.5`), the limits it puts on an
+    /// expression it would otherwise read ([`UnitError::Exponent`], [`UnitError::Nesting`]),
+    /// the empty string ([`UnitError::Empty`]) and whatever is left
+    /// ([`UnitError::Syntax`]).
+    ///
+    /// [`UnitError::Syntax`] belongs in that list even though pint refuses most of what lands
+    /// there, and the reason is a measurement rather than a taste: pint reads `mg//l` as
+    /// `mg / l` and `hr**--2` as `hr ** 2`, so `pkpdutils` 1.4.0 computes a batch spelled that
+    /// way and this parser does not. Refusing it as a malformed batch would narrow the input a
+    /// released library accepts, which is a defect whatever one thinks of the spelling, and
+    /// pint's permissiveness is not something a port of its kernel gets to change as a side
+    /// effect. Tightening it is a change against the host's own validation, where it would apply
+    /// with or without this build.
+    ///
+    /// `false` for the three errors which are not about reading a string at all, where the unit
+    /// read and the context is what is wrong:
+    ///
+    /// - [`UnitError::MissingPlaceholder`], a batch with doses and no dose unit, which is
+    ///   incomplete rather than unreadable and which python raises on in the same place,
+    /// - [`UnitError::UnknownPlaceholder`], an expression of this build and not of the host,
+    /// - [`UnitError::NotADose`], a unit which reads and whose dimension is wrong for a dose.
+    ///
+    /// The match is exhaustive on purpose: a variant added later has to be classified by hand
+    /// here, where the two kinds are written down, instead of falling into one of them.
+    #[must_use]
+    pub fn is_unsupported(&self) -> bool {
+        match self {
+            UnitError::Empty
+            | UnitError::Unknown { .. }
+            | UnitError::Syntax { .. }
+            | UnitError::Exponent { .. }
+            | UnitError::Nesting { .. }
+            | UnitError::ImplicitProduct { .. }
+            | UnitError::FractionalExponent { .. } => true,
+            UnitError::MissingPlaceholder { .. }
+            | UnitError::UnknownPlaceholder { .. }
+            | UnitError::NotADose { .. } => false,
+        }
+    }
 }
 
 /// One named unit of a [`Unit`] with its exponent.
@@ -618,6 +689,11 @@ enum Token {
     Close,
 }
 
+/// Whether `chars` holds an ascii digit at `at`.
+fn digit_at(chars: &[char], at: usize) -> bool {
+    chars.get(at).is_some_and(char::is_ascii_digit)
+}
+
 fn tokenize(s: &str) -> Result<Vec<Token>, String> {
     let chars: Vec<char> = s.chars().collect();
     let mut tokens = Vec::new();
@@ -644,10 +720,20 @@ fn tokenize(s: &str) -> Result<Vec<Token>, String> {
         } else if c == ')' {
             tokens.push(Token::Close);
             i += 1;
-        } else if c.is_ascii_digit() {
+        } else if c.is_ascii_digit() || (c == '.' && digit_at(&chars, i + 1)) {
             let start = i;
             while i < chars.len() && chars[i].is_ascii_digit() {
                 i += 1;
+            }
+            // a decimal point belongs to the number only between digits, so that the parser can
+            // tell a fractional exponent, which pint reads and this registry deliberately
+            // refuses (`UnitError::FractionalExponent`), from a stray '.', which is no unit
+            // anywhere and stays a syntax error
+            if chars.get(i) == Some(&'.') && digit_at(&chars, i + 1) {
+                i += 1;
+                while i < chars.len() && chars[i].is_ascii_digit() {
+                    i += 1;
+                }
             }
             tokens.push(Token::Number(chars[start..i].iter().collect()));
         } else if c == '%' {
@@ -675,6 +761,10 @@ enum Failure {
     Unknown(String),
     Exponent,
     Nesting,
+    /// Two atoms with no operator between them, pint's implicit product.
+    ImplicitProduct,
+    /// An exponent which is not an integer, pint's fractional exponent.
+    Fractional,
 }
 
 struct Parser {
@@ -701,6 +791,11 @@ impl Parser {
                     self.pos += 1;
                     left = left.over(&self.term()?).ok_or(Failure::Exponent)?;
                 }
+                // a term where an operator belongs is pint's implicit product (`mg l`, `mg (l)`,
+                // `(mg)(l)`), which this registry deliberately does not read. It is answered
+                // here rather than by the leftover check of `parse_unit`, so that the one inside
+                // a parenthesis (`(mg l)/hr`) is the same error and not a missing parenthesis
+                Some(Token::Name(_) | Token::Open) => return Err(Failure::ImplicitProduct),
                 _ => return Ok(left),
             }
         }
@@ -728,6 +823,11 @@ impl Parser {
         }
         match self.peek() {
             Some(Token::Number(digits)) => {
+                // a decimal point is in the token only between digits (`tokenize`), so this is
+                // pint's fractional exponent and not a number too long for an `i32`
+                if digits.contains('.') {
+                    return Err(Failure::Fractional);
+                }
                 let n: i32 = digits.parse().map_err(|_| Failure::Exponent)?;
                 self.pos += 1;
                 bounded(sign * n).ok_or(Failure::Exponent)
@@ -833,5 +933,7 @@ pub fn parse_unit(s: &str) -> Result<Unit, UnitError> {
             name: clipped(&name),
             unit: clipped(s),
         }),
+        Err(Failure::ImplicitProduct) => Err(UnitError::ImplicitProduct { unit: clipped(s) }),
+        Err(Failure::Fractional) => Err(UnitError::FractionalExponent { unit: clipped(s) }),
     }
 }

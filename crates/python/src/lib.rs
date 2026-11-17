@@ -51,11 +51,16 @@ create_exception!(
      other way, and it is a type and not a sentence so that the rule can be written as one \
      line which cannot be got wrong: catch `UnsupportedError` and fall back, let everything \
      else through. The failures it must not be confused with - an options dict carrying a key \
-     or an enumeration value this build does not spell, a batch the kernel refuses - mean that \
-     the caller and this build disagree about the contract or that the data is malformed, and \
-     both of those are defects to fix rather than work to route elsewhere. Several of them are \
-     a plain `ValueError`, so a host which caught `ValueError` would swallow exactly the \
-     disagreement this design exists to make loud.\n\n\
+     or an enumeration value this build does not spell, a malformed batch the kernel refuses - \
+     mean that the caller and this build disagree about the contract or that the data is \
+     malformed, and both of those are defects to fix rather than work to route elsewhere. \
+     Several of them are a plain `ValueError`, so a host which caught `ValueError` would \
+     swallow exactly the disagreement this design exists to make loud.\n\n\
+     A unit string of the batch which the curated registry of this build cannot read (a time in \
+     `week`, a concentration in `U/l`) is one of these refusals and not one of those defects: \
+     what this build reads is a property of this build, and a host whose own engine reads the \
+     string analyses the batch there. It is the one refusal `is_supported` does not see, since \
+     answering it means deriving the units of the result.\n\n\
      It subclasses `ValueError`, which is what this refusal was before it had a type of its \
      own, so a caller which catches `ValueError` keeps catching it.\n\n\
      `is_supported` asks the same question without raising, and a host asks it first."
@@ -84,14 +89,18 @@ create_exception!(
 /// - an [`UnsupportedError`], and nothing else is one. The batch and the options are well
 ///   formed and this build does not carry the analysis they ask for. This is the one a host
 ///   answers by taking its own path; [`is_supported`] is the same question without an
-///   exception, and a host asks it first.
+///   exception, and a host asks it first. One of these refusals is one the predicate cannot
+///   answer: a unit string the curated registry of the kernel cannot read (a time in `week`, a
+///   concentration in `U/l`, pint's `mg l`, a spelling pint over-forgives such as `mg//l`). A
+///   host which routes on the type, which is what this one is for, sees no difference; a host
+///   which took the predicate as the whole answer would raise at its user.
 /// - a `KeyError`, a `TypeError` or a `ValueError` naming a key of the batch or of the options.
 ///   The caller and this build disagree about the contract, which is a defect of one of the
 ///   two and never a reason to analyse the batch some other way. A field or an enumeration
 ///   value `NCAOptions` gains without a release of this crate lands here, loudly, in the test
 ///   suite of the host.
-/// - a `ValueError` carrying what the kernel refused the batch with: a malformed batch, a unit
-///   which is no unit, options which contradict each other.
+/// - a `ValueError` carrying what the kernel refused the batch with: a malformed batch, doses
+///   without a dose unit, options which contradict each other.
 ///
 /// A `RuntimeError` is the fourth and is a bug: see [`guarded`] and [`result_into_python`].
 #[pyfunction]
@@ -143,6 +152,15 @@ fn unsupported(refusal: &kernel::KernelError) -> PyErr {
 /// carry goes down its own path instead of reaching the user as an exception. The text is the
 /// kernel's own, bare: it names the analysis which is missing and not this build, since the
 /// host writes it into a line of its own and [`analyze_batch`] is what raises.
+///
+/// `None` is "nothing here says this build would refuse it" and not a promise that it will not:
+/// one refusal of the kernel is invisible here, a unit string of the batch which its curated
+/// registry cannot read (a time in `week`, a concentration in `U/l`). Answering that one means
+/// deriving the unit of every parameter of the result, which is the analysis itself, so it is
+/// [`analyze_batch`] which reports it - as an [`UnsupportedError`], like every other refusal, so
+/// a host which routes on the type is right either way. Mirroring the registry here, or in the
+/// host, would be a second copy of a curated list which drifts from the first in silence, and
+/// that is worse than the one call which answers it exactly.
 ///
 /// # Errors
 ///
@@ -570,14 +588,57 @@ mod tests {
             assert!(message.contains("is_supported"), "{message}");
 
             // and what the kernel itself refuses, which the predicate does not answer for: a
-            // unit no registry knows is found while the result is assembled
+            // batch with doses and no dose unit, found while the result is assembled
             let batch = batch_dict(py, 2);
-            batch.set_item("unit", "banana/l").unwrap();
+            batch.set_item("dose_unit", py.None()).unwrap();
             let err = analyze_batch(py, &batch, &options_dict(py), None).unwrap_err();
             assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
             let message = err.to_string();
             assert!(message.contains("the batch is not analysable"), "{message}");
-            assert!(message.contains("banana"), "{message}");
+            assert!(message.contains("cl_f"), "{message}");
+        });
+    }
+
+    #[test]
+    fn a_unit_the_registry_cannot_read_reaches_the_host_as_a_refusal() {
+        // The one refusal of the kernel the predicate does not answer for, and the reason this
+        // test exists: `week` is the time base of a monoclonal antibody, a depot and an oncology
+        // study, `U/l` an ordinary clinical concentration and `mg//l` a typo pint forgives and
+        // `pkpdutils` 1.4.0 therefore computes. Reported as a plain `ValueError` every one of
+        // them reaches the user of the host, whose fallback catches `UnsupportedError` and,
+        // deliberately, nothing broader.
+        Python::attach(|py| {
+            for (key, spelling) in [
+                ("time_unit", "week"),
+                ("time_unit", "month"),
+                ("unit", "U/l"),
+                ("dose_unit", "kilohour"),
+                ("unit", "mg l"),
+                ("unit", "mg//l"),
+                ("time_unit", "hr**--2"),
+                ("unit", "mg/"),
+            ] {
+                let batch = batch_dict(py, 2);
+                batch.set_item(key, spelling).unwrap();
+                // the predicate reads nothing about the units and says so
+                assert_eq!(
+                    is_supported(py, &batch, &options_dict(py)).unwrap(),
+                    None,
+                    "{key} = {spelling}"
+                );
+                let err = analyze_batch(py, &batch, &options_dict(py), None).unwrap_err();
+                assert!(
+                    err.is_instance_of::<UnsupportedError>(py),
+                    "{key} = {spelling}: {err}"
+                );
+                let message = err.to_string();
+                assert!(message.contains(spelling), "{message}");
+                assert!(
+                    message.contains("does not carry this analysis"),
+                    "{message}"
+                );
+            }
         });
     }
 
@@ -611,10 +672,12 @@ mod tests {
             let err = analyze_batch(py, &batch_dict(py, 2), &unknown, None).unwrap_err();
             assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
 
-            // and a batch the kernel itself refuses, which is malformed data and not an
-            // analysis of another plan
+            // and a batch the kernel itself refuses, which is incomplete data and not an
+            // analysis of another plan: doses without a dose unit, where a unit this build
+            // cannot read is a refusal
+            // (`a_unit_the_registry_cannot_read_reaches_the_host_as_a_refusal`)
             let batch = batch_dict(py, 2);
-            batch.set_item("unit", "banana/l").unwrap();
+            batch.set_item("dose_unit", py.None()).unwrap();
             let err = analyze_batch(py, &batch, &options_dict(py), None).unwrap_err();
             assert!(err.is_instance_of::<PyValueError>(py), "{err}");
             assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");

@@ -338,7 +338,7 @@ mod tests {
         use UnitError::*;
         let syntax = |e: UnitError| matches!(e, Syntax { .. });
         for input in [
-            "mg/", "/mg", "mg*", "()", "mg//l", "mg**", "mg**1.5", "(mg", "mg)",
+            "mg/", "/mg", "mg*", "()", "mg//l", "mg**", "(mg", "mg)", "mg.l", "mg**1.", ".5*mg",
         ] {
             assert!(syntax(parse_unit(input).unwrap_err()), "{input}");
         }
@@ -368,6 +368,119 @@ mod tests {
     }
 
     #[test]
+    fn the_two_refusals_of_the_curation_have_an_error_of_their_own() {
+        // pint's implicit product and its fractional exponent are refused here deliberately
+        // (see the module documentation of `registry`), and each says so instead of landing in
+        // the catch-all of the parser: "a product needs a '*'" is what a person reading a
+        // fallback warning can act on, where "unexpected Name(\"l\")" is not.
+        for input in ["mg l", "mg (l)", "(mg)(l)", "(mg l)/hr", "mg l hr", "1 mg"] {
+            assert!(
+                matches!(
+                    parse_unit(input).unwrap_err(),
+                    UnitError::ImplicitProduct { .. }
+                ),
+                "{input}"
+            );
+        }
+        for input in [
+            "hr**0.5",
+            "mg**1.5",
+            "hr ** 0.5",
+            "mg**-1.5",
+            "mg**1.0",
+            "hr**.5",
+        ] {
+            assert!(
+                matches!(
+                    parse_unit(input).unwrap_err(),
+                    UnitError::FractionalExponent { .. }
+                ),
+                "{input}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_string_this_registry_cannot_read_is_told_apart_from_a_unit_the_context_cannot_use() {
+        // The classification a host routes on, and the rule is one line: a string this build
+        // cannot read is not supported by this build, whatever the reason the parser gives. A
+        // new variant of `UnitError` is classified by hand in `is_unsupported`, where the
+        // exhaustive match refuses to compile without it.
+        let deep = format!(
+            "{}mg{}",
+            "(".repeat(MAX_DEPTH + 1),
+            ")".repeat(MAX_DEPTH + 1)
+        );
+        for input in [
+            // the time base of a monoclonal antibody, a depot or an oncology study, and the
+            // clinical spelling of an enzyme activity: the defect this classification was
+            // written for
+            "week",
+            "weeks",
+            "month",
+            "year",
+            "yr",
+            "U",
+            "U/l",
+            "mU/l",
+            // a prefix on a unit the registry does not let a prefix on
+            "kilohour",
+            "hectoliter",
+            // pint's syntax beyond this parser
+            "mg l",
+            "hr**0.5",
+            // the two limits of this build on an expression it would otherwise read
+            "mg**65",
+            deep.as_str(),
+            // a spelling pint over-forgives and `pkpdutils` 1.4.0 therefore computes (`mg/l`
+            // and `mg**2`): refusing the batch for it would narrow what a released library
+            // accepts, which is the defect and not the spelling
+            "mg//l",
+            "mg**--2",
+            // and a string which is no unit anywhere. Uniform with the rest because the rule is
+            // one line and because the host parses every unit with pint before a batch exists,
+            // so nothing of this class reaches the kernel through it anyway
+            "",
+            "mg/",
+            "/mg",
+            "()",
+            "(mg",
+            "mg)",
+            "2*mg",
+            "mg.l",
+        ] {
+            let error = parse_unit(input).unwrap_err();
+            assert!(error.is_unsupported(), "{input}: {error}");
+        }
+        // every spelling of the package reads, so none of them is ever classified at all
+        for input in [
+            "mg/l", "ug/ml", "hr", "min", "day", "s", "IU", "mIU/l", "mmol/l", "%",
+        ] {
+            assert!(parse_unit(input).is_ok(), "{input}");
+        }
+        // a unit which reads and is no dose is a defect of the batch and not of this build
+        let not_a_dose = check_dose_unit("mg/l").unwrap_err();
+        assert!(!not_a_dose.is_unsupported(), "{not_a_dose}");
+        // and so is an expression which needs a unit the context does not carry
+        let context = UnitContext {
+            unit: "mg/l",
+            time: "hr",
+            dose: None,
+            amount: None,
+            volume: None,
+        };
+        let missing = parameter_unit("{dose}/({unit})", &context).unwrap_err();
+        assert!(!missing.is_unsupported(), "{missing}");
+        // while the same expression over a unit this registry does not carry is a refusal
+        let week = UnitContext {
+            time: "week",
+            ..context.clone()
+        };
+        let refused = parameter_unit("{unit} * {time}", &week).unwrap_err();
+        assert!(refused.is_unsupported(), "{refused}");
+    }
+
+    #[test]
     fn every_error_clips_the_host_string_it_echoes() {
         // a unit string crosses a host boundary and is unbounded, so no error
         // message may carry it whole into a console or a traceback
@@ -379,6 +492,7 @@ mod tests {
             parse_unit(&digits).unwrap_err(),
             parse_unit(&format!("mg {long}")).unwrap_err(),
             parse_unit(&format!("mg**{digits}")).unwrap_err(),
+            parse_unit(&format!("mg**1.{digits}")).unwrap_err(),
             parse_unit(&format!("{}mg{}", "(".repeat(5_000), ")".repeat(5_000))).unwrap_err(),
             check_dose_unit(&format!("mmHg{}", "*1".repeat(5_000))).unwrap_err(),
             parameter_unit(
