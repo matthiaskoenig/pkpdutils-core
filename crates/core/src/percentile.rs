@@ -21,8 +21,6 @@
 ///
 /// `n_cols == 0` gives an empty result, and a trailing partial row of a slice whose length is no
 /// multiple of `n_cols` is ignored.
-// the summary statistics and the bootstrap of the later tasks of the plan are its callers
-#[cfg_attr(not(test), expect(dead_code))]
 pub(crate) fn nan_percentile_rows(values: &[f64], n_cols: usize, q: f64) -> Vec<f64> {
     if n_cols == 0 {
         return Vec::new();

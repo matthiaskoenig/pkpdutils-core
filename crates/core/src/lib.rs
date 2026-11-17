@@ -23,8 +23,10 @@ mod parameters;
 mod percentile;
 mod shard;
 mod stats;
+mod summarize;
 
 pub use crate::stats::{normal_isf, student_t_isf, student_t_sf};
+pub use crate::summarize::summarize;
 mod steady_state;
 mod terminal;
 
