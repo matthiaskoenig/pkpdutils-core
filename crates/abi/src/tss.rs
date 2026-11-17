@@ -133,6 +133,31 @@ mod tests {
     }
 
     #[test]
+    fn an_array_longer_or_shorter_than_the_shape_is_named_by_its_own_length() {
+        for name in ["time", "value", "start", "valid"] {
+            for longer in [true, false] {
+                let mut r = request();
+                match (name, longer) {
+                    ("time", true) => r.time.push(0.0),
+                    ("value", true) => r.value.push(0.0),
+                    ("start", true) => r.start.push(0.0),
+                    ("valid", true) => r.valid.push(false),
+                    ("time", false) => drop(r.time.pop()),
+                    ("value", false) => drop(r.value.pop()),
+                    ("start", false) => drop(r.start.pop()),
+                    _ => drop(r.valid.pop()),
+                }
+                let message = r.validate().unwrap_err();
+                let expected = if longer { "7" } else { "5" };
+                assert!(
+                    message.contains(&format!("{expected} {name} entries")),
+                    "{name} {longer}: {message}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn each_malformation_is_named() {
         let mut r = request();
         r.value.pop();

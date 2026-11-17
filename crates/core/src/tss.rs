@@ -555,6 +555,67 @@ mod tests {
     }
 
     #[test]
+    fn the_fraction_and_the_level_of_the_request_are_the_ones_used() {
+        let mono = |fraction: f64| {
+            let mut r = request(TssMethod::Monoexponential);
+            r.fraction = fraction;
+            time_to_steady_state(&r).unwrap()
+        };
+        let (half, ninety) = (mono(0.5), mono(0.9));
+        // -ln(1 - f) / k: the same k, the time scales with ln(1 - f)
+        let ratio = (1.0f64 - 0.5).ln() / (1.0f64 - 0.9).ln();
+        assert!(
+            ((half.tss[1] - 0.0) / (ninety.tss[1] - 0.0) - ratio).abs() < 1e-9,
+            "{} {}",
+            half.tss[1],
+            ninety.tss[1]
+        );
+        // the troughs of one noisy row trend at a strict level and not at a lax one
+        let v = [1.0, 1.8, 2.3, 2.4, 2.38, 2.41];
+        let step = |alpha: f64| {
+            let r = TssRequest {
+                time: vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
+                value: v.to_vec(),
+                start: vec![0.0, 10.0, 20.0, 30.0, 40.0, 50.0],
+                valid: vec![true; 6],
+                n_rows: 1,
+                n_cols: 6,
+                method: TssMethod::Stepwise,
+                fraction: 0.9,
+                alpha,
+            };
+            time_to_steady_state(&r).unwrap().tss[0]
+        };
+        let found: Vec<f64> = [0.001, 0.05, 0.5, 0.9].iter().map(|&a| step(a)).collect();
+        assert!(
+            found.windows(2).any(|w| w[0].to_bits() != w[1].to_bits()),
+            "{found:?}"
+        );
+        assert_eq!(found[1], 10.0);
+    }
+
+    #[test]
+    fn a_request_without_columns_or_without_troughs_is_nan_and_never_a_panic() {
+        for n_cols in [0, 7] {
+            let r = TssRequest {
+                time: vec![f64::NAN; 2 * n_cols],
+                value: vec![f64::NAN; 2 * n_cols],
+                start: vec![f64::NAN; 2 * n_cols],
+                valid: vec![false; 2 * n_cols],
+                n_rows: 2,
+                n_cols,
+                method: TssMethod::Monoexponential,
+                fraction: 0.9,
+                alpha: 0.05,
+            };
+            let answer = time_to_steady_state(&r).unwrap();
+            assert!(answer.tss.iter().all(|x| x.is_nan()));
+            assert_eq!(answer.tss.len(), 2);
+            assert_eq!(answer.c_ss.len(), 2);
+        }
+    }
+
+    #[test]
     fn a_malformed_request_is_an_error_and_not_a_nan() {
         let mut r = request(TssMethod::Monoexponential);
         r.value.pop();
