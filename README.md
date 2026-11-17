@@ -168,6 +168,10 @@ uv run --with-editable path/to/pkpdutils python scripts/crosswalk_gate.py --chec
 
 `scripts/pint_gate.py` writes `crates/units/tests/data/pint_gate.json`, pint's answer for every unit spelling of the package and every derived parameter unit, and `scripts/crosswalk_gate.py` writes `crates/oracles/tests/data/crosswalk.json`, the map from the variables of `pkpdutils` to the column names of the three NCA tools; the sections above describe both. `scripts/vendor_oracles.py --check` is the third, and it needs no checkout unless `--source` is given.
 
+## Release
+
+A tag `vx.y.z` publishes the distribution to PyPI and creates the release of this repository from `release-notes/x.y.z.md`. [docs/release.md](docs/release.md) has the steps.
+
 ## License
 
 MIT, see `LICENSE`.
