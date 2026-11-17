@@ -30,15 +30,43 @@ pub struct SummaryRequest {
 }
 
 impl SummaryRequest {
-    /// Whether the lengths of `values`, `lognormal` and `discrete` agree with the dimensions.
-    pub fn is_consistent(&self) -> bool {
+    /// Check that the lengths of `values`, `lognormal` and `discrete` agree with the dimensions
+    /// (without overflowing) and that `ci_level` is strictly between 0 and 1.
+    pub fn validate(&self) -> Result<(), String> {
         let size = self
             .n_vars
             .checked_mul(self.n_groups)
-            .and_then(|n| n.checked_mul(self.n_samples));
-        size == Some(self.values.len())
-            && self.lognormal.len() == self.n_vars
-            && self.discrete.len() == self.n_vars
+            .and_then(|n| n.checked_mul(self.n_samples))
+            .ok_or_else(|| {
+                format!(
+                    "{} variables x {} groups x {} samples overflow",
+                    self.n_vars, self.n_groups, self.n_samples
+                )
+            })?;
+        if size != self.values.len() {
+            return Err(format!(
+                "{} values for {} variables x {} groups x {} samples",
+                self.values.len(),
+                self.n_vars,
+                self.n_groups,
+                self.n_samples
+            ));
+        }
+        if self.lognormal.len() != self.n_vars || self.discrete.len() != self.n_vars {
+            return Err(format!(
+                "{} lognormal and {} discrete flags for {} variables",
+                self.lognormal.len(),
+                self.discrete.len(),
+                self.n_vars
+            ));
+        }
+        if !(self.ci_level > 0.0 && self.ci_level < 1.0) {
+            return Err(format!(
+                "ci_level {} is not strictly between 0 and 1",
+                self.ci_level
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -114,16 +142,16 @@ mod tests {
         assert_eq!(back.values[0], 1.0);
         assert!(back.values[1].is_nan());
         assert_eq!(back.values[2], f64::INFINITY);
-        assert!(request.is_consistent());
+        assert!(request.validate().is_ok());
         let short = SummaryRequest {
             n_samples: 3,
             ..request.clone()
         };
-        assert!(!short.is_consistent());
+        assert!(short.validate().unwrap_err().contains("values for"));
         let flags = SummaryRequest {
             discrete: vec![],
             ..request
         };
-        assert!(!flags.is_consistent());
+        assert!(flags.validate().unwrap_err().contains("flags"));
     }
 }

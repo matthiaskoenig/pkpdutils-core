@@ -20,6 +20,7 @@
 //! not read: every statistic is computed for every variable, and the host drops the ones which
 //! do not apply to it.
 
+use crate::KernelError;
 use crate::percentile::nan_percentile_rows;
 use crate::stats::student_t_isf;
 use pkpdutils_abi::{SummaryAnswer, SummaryRequest};
@@ -168,19 +169,16 @@ fn summarize_group(values: &[f64], alpha: f64) -> Group {
 
 /// Summarize the groups of a request, every statistic of every variable.
 ///
-/// A request whose lengths disagree with its dimensions (`SummaryRequest::is_consistent`) gives
-/// an answer of empty vectors, and a `ci_level` which is not strictly between 0 and 1 gives a
-/// `NaN` interval, where python raises, since a kernel does not panic.
-pub fn summarize(request: &SummaryRequest) -> SummaryAnswer {
-    let rows = request.n_vars.saturating_mul(request.n_groups);
-    let consistent = request.is_consistent();
-    let rows = if consistent { rows } else { 0 };
+/// # Errors
+///
+/// [`KernelError::Summary`] when `SummaryRequest::validate` refuses the request: lengths which
+/// disagree with the dimensions, an overflowing product of them, or a `ci_level` not strictly
+/// between 0 and 1 (python raises there as well).
+pub fn summarize(request: &SummaryRequest) -> Result<SummaryAnswer, KernelError> {
+    request.validate().map_err(KernelError::Summary)?;
+    let rows = request.n_vars * request.n_groups;
     let n_samples = request.n_samples;
-    let alpha = if request.ci_level > 0.0 && request.ci_level < 1.0 {
-        1.0 - request.ci_level
-    } else {
-        f64::NAN
-    };
+    let alpha = 1.0 - request.ci_level;
     let mut answer = SummaryAnswer {
         mean: Vec::with_capacity(rows),
         sd: Vec::with_capacity(rows),
@@ -226,7 +224,7 @@ pub fn summarize(request: &SummaryRequest) -> SummaryAnswer {
         answer.q25 = nan_percentile_rows(&filled, n_samples, 25.0);
         answer.q75 = nan_percentile_rows(&filled, n_samples, 75.0);
     }
-    answer
+    Ok(answer)
 }
 
 #[cfg(test)]
@@ -246,6 +244,19 @@ mod tests {
             lognormal: vec![true],
             discrete: vec![false],
         })
+        .unwrap()
+    }
+
+    fn request(n_vars: usize, n_groups: usize, n_samples: usize, len: usize) -> SummaryRequest {
+        SummaryRequest {
+            values: vec![1.0; len],
+            n_vars,
+            n_groups,
+            n_samples,
+            ci_level: 0.95,
+            lognormal: vec![true; n_vars],
+            discrete: vec![false; n_vars],
+        }
     }
 
     fn close(got: f64, want: f64, rel: f64) {
@@ -368,10 +379,6 @@ mod tests {
         let half = 2.919985580353725 * a.se[0];
         close(a.ci_low[0], 5.0 - half, 1e-12);
         close(a.ci_high[0], 5.0 + half, 1e-12);
-        // an invalid level is a NaN interval and nothing else
-        let bad = one(&[2.0, 4.0, 9.0], 1.0);
-        assert!(bad.ci_low[0].is_nan() && bad.ci_high[0].is_nan());
-        assert_eq!(bad.mean, [5.0]);
     }
 
     #[test]
@@ -453,7 +460,7 @@ mod tests {
             lognormal: vec![true, false],
             discrete: vec![false, true],
         };
-        let a = summarize(&request);
+        let a = summarize(&request).unwrap();
         assert_eq!(a.mean, [2.0, 30.0, 5.0, 4.0]);
         assert_eq!(a.count, [3.0, 3.0, 1.0, 3.0]);
         assert_eq!(a.median, [2.0, 20.0, 5.0, 4.0]);
@@ -465,18 +472,39 @@ mod tests {
         assert!(a.sd[2].is_nan());
     }
 
+    fn refusal(request: &SummaryRequest) -> String {
+        match summarize(request) {
+            Err(KernelError::Summary(reason)) => reason,
+            other => panic!("expected KernelError::Summary, got {other:?}"),
+        }
+    }
+
     #[test]
-    fn an_inconsistent_request_answers_with_nothing() {
-        let a = summarize(&SummaryRequest {
-            values: vec![1.0, 2.0, 3.0],
-            n_vars: 2,
-            n_groups: 1,
-            n_samples: 2,
-            ci_level: 0.95,
-            lognormal: vec![true, true],
-            discrete: vec![false, false],
-        });
-        assert!(a.mean.is_empty() && a.median.is_empty() && a.geocv.is_empty());
+    fn a_malformed_request_is_an_error_and_not_an_empty_answer() {
+        // too few values, flags of the wrong length, an overflowing product
+        assert!(refusal(&request(2, 1, 2, 3)).contains("3 values for 2 variables"));
+        let mut flags = request(2, 1, 2, 4);
+        flags.lognormal = vec![true];
+        assert!(refusal(&flags).contains("flags"));
+        let mut overflow = request(1, 2, 1, 0);
+        overflow.n_vars = usize::MAX;
+        assert!(refusal(&overflow).contains("overflow"));
+        // the level must be strictly between 0 and 1
+        for level in [0.0, 1.0, -0.5, 1.5, f64::NAN] {
+            let mut r = request(1, 1, 2, 2);
+            r.ci_level = level;
+            assert!(refusal(&r).contains("ci_level"), "{level}");
+        }
+        assert!(summarize(&request(1, 1, 2, 2)).is_ok());
+    }
+
+    #[test]
+    fn no_variables_or_no_groups_is_an_empty_answer() {
+        for (n_vars, n_groups) in [(0, 3), (2, 0), (0, 0)] {
+            let a = summarize(&request(n_vars, n_groups, 4, 0)).unwrap();
+            assert!(a.mean.is_empty() && a.median.is_empty() && a.q25.is_empty());
+            assert!(a.count.is_empty() && a.geocv.is_empty());
+        }
     }
 
     #[test]

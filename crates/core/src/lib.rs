@@ -82,6 +82,10 @@ pub enum KernelError {
         /// The analysis, the option or the route which is missing.
         what: String,
     },
+    /// A summary request whose lengths disagree with its dimensions or whose `ci_level` is not
+    /// strictly between 0 and 1, with the reason `SummaryRequest::validate` gave.
+    #[error("the summary request is malformed: {0}")]
+    Summary(String),
     /// The kernel built a result which is not well formed, which is a bug in this build and
     /// not an answer to anything the caller sent.
     #[error("the kernel built a result which is not readable: {0}")]
