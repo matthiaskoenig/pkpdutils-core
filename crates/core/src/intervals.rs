@@ -305,4 +305,51 @@ mod tests {
         assert_eq!(intervals[0].n_points, 1.0);
         assert_eq!(intervals[1].n_points, 0.0);
     }
+
+    #[test]
+    fn the_limit_of_quantification_does_not_change_the_samples_an_interval_counts() {
+        // python hands `compute_intervals` the raw times and values (`compute_steady_state`
+        // BLQ-treats only the copy the point parameters read), verified by running it:
+        // lloq 0.5 on this row gives interval_n_points [4, 3], the same as without a limit
+        use crate::parameters::tests::linear;
+        use crate::parameters::{RowInput, Scratch, compute_row};
+        use pkpdutils_abi::{NcaOptions, Route};
+
+        let times = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
+        let values = [5.0, 4.0, 0.1, 2.0, 1.0, 0.5];
+        let doses = [0.0, 3.0];
+        let counts = |lloq: Option<f64>| {
+            let input = RowInput {
+                times: &times,
+                values: &values,
+                dose: crate::dose::ReferenceDose {
+                    amount: 10.0,
+                    time: 0.0,
+                    duration: Some(f64::NAN),
+                },
+                route: Some(Route::Oral),
+                has_dose: true,
+                lloq,
+                window: None,
+                manual: None,
+                single_dose: false,
+                dose_times: &doses,
+            };
+            let options = NcaOptions {
+                tau: Some(3.0),
+                ..linear()
+            };
+            let mut intervals = Vec::new();
+            compute_row(
+                &input,
+                &options,
+                &mut Scratch::new(6),
+                None,
+                Some(&mut intervals),
+            );
+            intervals.iter().map(|i| i.n_points).collect::<Vec<_>>()
+        };
+        assert_eq!(counts(None), [4.0, 3.0]);
+        assert_eq!(counts(Some(0.5)), [4.0, 3.0]);
+    }
 }
