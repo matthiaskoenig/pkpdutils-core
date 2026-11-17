@@ -60,7 +60,7 @@ pub(crate) fn batch_from_python(py: Python<'_>, obj: &Bound<'_, PyDict>) -> PyRe
 }
 
 /// The value of a key the dict must carry.
-fn required<'py>(obj: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>> {
+pub(crate) fn required<'py>(obj: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>> {
     obj.get_item(key)?.ok_or_else(|| {
         PyKeyError::new_err(format!(
             "{BATCH_CONTRACT} needs the key `{key}`, which is absent"
@@ -87,7 +87,7 @@ pub(crate) fn at_key(py: Python<'_>, key: &str, err: PyErr) -> PyErr {
 }
 
 /// The value of a required key, extracted into `T` and named on a type mismatch.
-fn field<'py, T>(py: Python<'_>, obj: &Bound<'py, PyDict>, key: &str) -> PyResult<T>
+pub(crate) fn field<'py, T>(py: Python<'_>, obj: &Bound<'py, PyDict>, key: &str) -> PyResult<T>
 where
     T: for<'a> FromPyObject<'a, 'py, Error = PyErr>,
 {

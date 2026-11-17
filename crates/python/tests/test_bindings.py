@@ -464,3 +464,26 @@ def test_the_wheel_is_built_against_the_stable_abi() -> None:
     assert tags, wheel
     for tag in tags:
         assert tag.startswith("cp313-abi3-"), f"{tag} is no abi3 tag of the 3.13 floor"
+
+
+def test_the_wheel_summarizes_and_refuses_a_malformed_request_as_a_value_error() -> None:
+    request = {
+        "values": np.array([[[1.0, 2.0, 4.0, np.nan]]]),
+        "n_vars": 1,
+        "n_groups": 1,
+        "n_samples": 4,
+        "ci_level": 0.95,
+        "lognormal": [True],
+        "discrete": [False],
+    }
+    answer = pkpdutils_core.summarize(request)
+    assert answer["count"].shape == (1, 1)
+    assert answer["count"][0, 0] == 3.0
+    # the geometric mean of 1, 2 and 4 is 2
+    assert answer["geomean"][0, 0] == pytest.approx(2.0, rel=1e-14)
+    # a request of the wrong size is a ValueError, and not the refusal a host answers
+    # by analysing in python
+    request["n_samples"] = 5
+    with pytest.raises(ValueError, match="4 values for 1 variables x 1 groups x 5") as raised:
+        pkpdutils_core.summarize(request)
+    assert not isinstance(raised.value, pkpdutils_core.UnsupportedError)

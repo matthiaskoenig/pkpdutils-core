@@ -33,13 +33,13 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 // `::` is not decoration: `#[pymodule]` expands to a module of the same name as the crate, which
 // an unqualified path would resolve to instead
 use ::pkpdutils_core as kernel;
-use numpy::{PyArray1, PyReadonlyArray1};
+use numpy::{PyArray1, PyArrayMethods, PyReadonlyArray1, PyReadonlyArrayDyn};
 use pyo3::create_exception;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::convert::batch_from_python;
+use crate::convert::{at_key, batch_from_python, field, required};
 use crate::options::{options_from_python, unsupported_reason};
 use crate::result::result_into_python;
 
@@ -133,6 +133,66 @@ fn analyze_batch<'py>(
         _ => PyValueError::new_err(error.to_string()),
     })?;
     result_into_python(py, result)
+}
+
+/// The summary statistics of raw parameter values, `ParameterResult.summarize` of the host.
+///
+/// `request` is a dict of the fields of the kernel's `SummaryRequest`: `values` (a float array
+/// of any shape, read in C order, `NaN` or infinite for a missing value), `n_vars`, `n_groups`,
+/// `n_samples`, `ci_level` and the per-variable lists `lognormal` and `discrete`. The answer is
+/// a dict of the fourteen statistics `mean`, `sd`, `se`, `cv`, `ci_low`, `ci_high`, `median`,
+/// `q25`, `q75`, `min`, `max`, `count`, `geomean` and `geocv`, each a float array of shape
+/// `(n_vars, n_groups)`. The kernel computes every statistic of every variable and the host
+/// keeps the ones the classification of the parameter wants.
+///
+/// # Errors
+///
+/// A `KeyError` for a missing field and a `TypeError` for a field of the wrong type. A request
+/// whose lengths disagree with its dimensions or whose `ci_level` is not strictly between 0 and
+/// 1 is a plain `ValueError` and never an `UnsupportedError`: a host answers a refusal by taking
+/// its own path, and a request which is wrong must reach the caller instead of being answered
+/// by a second implementation.
+#[pyfunction]
+fn summarize<'py>(py: Python<'py>, request: &Bound<'py, PyDict>) -> PyResult<Bound<'py, PyDict>> {
+    let values: PyReadonlyArrayDyn<'_, f64> = required(request, "values")?
+        .extract()
+        .map_err(|err| at_key(py, "values", err))?;
+    let request = kernel::pkpdutils_abi::SummaryRequest {
+        values: values.as_array().iter().copied().collect(),
+        n_vars: field(py, request, "n_vars")?,
+        n_groups: field(py, request, "n_groups")?,
+        n_samples: field(py, request, "n_samples")?,
+        ci_level: field(py, request, "ci_level")?,
+        lognormal: field(py, request, "lognormal")?,
+        discrete: field(py, request, "discrete")?,
+    };
+    let (n_vars, n_groups) = (request.n_vars, request.n_groups);
+    let answer = py
+        .detach(|| guarded(|| kernel::summarize(&request)))?
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let out = PyDict::new(py);
+    for (name, column) in [
+        ("mean", answer.mean),
+        ("sd", answer.sd),
+        ("se", answer.se),
+        ("cv", answer.cv),
+        ("ci_low", answer.ci_low),
+        ("ci_high", answer.ci_high),
+        ("median", answer.median),
+        ("q25", answer.q25),
+        ("q75", answer.q75),
+        ("min", answer.min),
+        ("max", answer.max),
+        ("count", answer.count),
+        ("geomean", answer.geomean),
+        ("geocv", answer.geocv),
+    ] {
+        out.set_item(
+            name,
+            PyArray1::from_vec(py, column).reshape([n_vars, n_groups])?,
+        )?;
+    }
+    Ok(out)
 }
 
 /// The exception of an analysis this build does not carry.
@@ -301,6 +361,7 @@ fn pkpdutils_core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     module.add_function(wrap_pyfunction!(analyze_batch, module)?)?;
     module.add_function(wrap_pyfunction!(is_supported, module)?)?;
+    module.add_function(wrap_pyfunction!(summarize, module)?)?;
     module.add_function(wrap_pyfunction!(normal_isf, module)?)?;
     module.add_function(wrap_pyfunction!(student_t_isf, module)?)?;
     module.add_function(wrap_pyfunction!(student_t_sf, module)?)?;
@@ -314,7 +375,7 @@ mod tests {
     use std::thread;
     use std::time::Instant;
 
-    use numpy::PyArray2;
+    use numpy::{PyArray2, PyUntypedArrayMethods};
     use pyo3::exceptions::{PyKeyError, PyRuntimeError};
     use pyo3::types::PyType;
 
@@ -878,6 +939,74 @@ mod tests {
                 "{refusal}"
             );
             assert!(refusal.is(py.get_type::<UnsupportedError>()), "{refusal}");
+        });
+    }
+
+    /// The request of one variable and one group over the values given.
+    fn summary_request<'py>(
+        py: Python<'py>,
+        values: &[f64],
+        n_samples: usize,
+    ) -> Bound<'py, PyDict> {
+        let request = PyDict::new(py);
+        request
+            .set_item("values", PyArray1::from_slice(py, values))
+            .unwrap();
+        request.set_item("n_vars", 1).unwrap();
+        request.set_item("n_groups", 1).unwrap();
+        request.set_item("n_samples", n_samples).unwrap();
+        request.set_item("ci_level", 0.95).unwrap();
+        request.set_item("lognormal", vec![true]).unwrap();
+        request.set_item("discrete", vec![false]).unwrap();
+        request
+    }
+
+    #[test]
+    fn summarize_returns_the_statistics_of_a_group_as_arrays_of_variables_by_groups() {
+        Python::attach(|py| {
+            let answer =
+                summarize(py, &summary_request(py, &[1.0, 2.0, 4.0, f64::NAN], 4)).unwrap();
+            let get = |name: &str| -> Vec<f64> {
+                let array = answer.get_item(name).unwrap().unwrap();
+                let array = array.cast::<numpy::PyArray2<f64>>().unwrap();
+                assert_eq!(array.shape(), [1, 1], "{name}");
+                array.readonly().as_array().iter().copied().collect()
+            };
+            assert_eq!(get("count"), [3.0]);
+            assert!((get("mean")[0] - 7.0 / 3.0).abs() < 1e-15);
+            // the geometric mean is the cube root of 1 * 2 * 4, which is 2
+            assert!((get("geomean")[0] - 2.0).abs() < 1e-14);
+            assert_eq!(get("median"), [2.0]);
+            assert_eq!(get("min"), [1.0]);
+            assert_eq!(get("max"), [4.0]);
+        });
+    }
+
+    #[test]
+    fn a_malformed_summary_request_is_a_value_error_and_never_a_refusal() {
+        Python::attach(|py| {
+            // three values for a group of four samples
+            let short = summary_request(py, &[1.0, 2.0, 4.0], 4);
+            let err = summarize(py, &short).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+            let message = err.value(py).to_string();
+            assert!(message.contains("3 values"), "{message}");
+            assert!(message.contains("4 samples"), "{message}");
+
+            // a confidence level of 1 is no level
+            let level = summary_request(py, &[1.0, 2.0, 4.0], 3);
+            level.set_item("ci_level", 1.0).unwrap();
+            let err = summarize(py, &level).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+
+            // a missing field is a KeyError which names it
+            let absent = summary_request(py, &[1.0], 1);
+            absent.del_item("n_groups").unwrap();
+            let err = summarize(py, &absent).unwrap_err();
+            assert!(err.is_instance_of::<PyKeyError>(py), "{err}");
+            assert!(err.value(py).to_string().contains("n_groups"));
         });
     }
 }
