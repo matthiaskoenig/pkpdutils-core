@@ -160,7 +160,7 @@ mod tests {
         // the exact minimum of the profiled cost: the root of its derivative computed at 40
         // decimal digits with mpmath, not any optimizer's output. Python's default LM tolerances
         // stop at 8.054337149, 2.9e-7 short of it, which is a looseness this test must not pin
-        let (ref_tss, ref_plateau) = (8.05433948904572512, 10.2101619636571784);
+        let (ref_tss, ref_plateau) = (8.054339489045725, 10.210161963657178);
         assert!((tss / ref_tss - 1.0).abs() < 1e-6, "{tss}");
         assert!((plateau / ref_plateau - 1.0).abs() < 1e-6, "{plateau}");
     }
