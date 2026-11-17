@@ -174,6 +174,23 @@ pub(crate) const INTERVAL_VARIABLES: &[IntervalVariable] = &[
 /// The relative tolerance of a sample at the end of an interval (`_interval_column`).
 const END_TOLERANCE: f64 = 1e-9;
 
+/// The largest value among the samples at the end of an interval, `None` with no sample there.
+///
+/// A sample is at the end when its time is within `END_TOLERANCE * max(1, |end|)` of `end`, a
+/// tolerance relative to the time frame of the interval bounds (absolute host times). Shared by
+/// [`count_points`] and [`interval_curve`] so the two cannot drift; each applies its own rule on
+/// top of it (`n_points` against the post-dose sample, `covered` against the next dose).
+///
+/// Mirrors `tolerance`, `at_end` and `c_sample_at_end` of `_interval_column` of
+/// `src/pkpdutils/nca/intervals.py`.
+fn largest_at_end(samples: impl Iterator<Item = (f64, f64)>, end: f64) -> Option<f64> {
+    let tolerance = END_TOLERANCE * end.abs().max(1.0);
+    samples
+        .filter(|&(t, _)| (t - end).abs() <= tolerance)
+        .map(|(_, c)| c)
+        .reduce(f64::max)
+}
+
 /// The bounds of every interval of a row, written to `out` (cleared first, one entry per dose
 /// column).
 ///
@@ -247,19 +264,15 @@ pub(crate) fn count_points(
         if !(start.is_finite() && end.is_finite()) {
             continue;
         }
-        let tolerance = END_TOLERANCE * end.abs().max(1.0);
         let (mut before, mut inside) = (0usize, 0usize);
-        let mut at_end: Option<f64> = None;
-        for (t, c) in valid() {
+        for (t, _) in valid() {
             if t < start {
                 before += 1;
             } else if t < end {
                 inside += 1;
             }
-            if (t - end).abs() <= tolerance {
-                at_end = Some(at_end.map_or(c, |m| m.max(c)));
-            }
         }
+        let at_end = largest_at_end(valid(), end);
         // the samples of the interval are a block of the packed row, so the last one inside is
         // `before + inside - 1` of it. A position past the row reads as `NaN` here (python clips the
         // index instead); the two differ only for an unsorted row, which is out of scope and untested
@@ -469,14 +482,7 @@ pub(crate) fn interval_curve(
     let mut c_end = interpolate_at(t, c, n_valid, end, options.auc_method);
 
     // a sample at the end of the interval, and the largest of them
-    let tolerance = END_TOLERANCE * end.abs().max(1.0);
-    let at_end = |x: f64| (x - end).abs() <= tolerance;
-    let sample_at_end = t
-        .iter()
-        .zip(c)
-        .filter(|&(&x, _)| at_end(x))
-        .map(|(_, &v)| v)
-        .reduce(f64::max);
+    let sample_at_end = largest_at_end(t.iter().copied().zip(c.iter().copied()), end);
     let last_inside = inside.checked_sub(1).map_or(f64::NAN, |i| c[before + i]);
     let post_dose = route == Some(Route::IvBolus)
         && ends_at_dose
@@ -1639,6 +1645,83 @@ mod tests {
         let (i, flags) = at(12.0 + 1e-3);
         assert_eq!(i[0].ctrough, 8.998175456135966);
         assert!(!flags.contains(NcaFlag::EXTRAPOLATED_TROUGH));
+    }
+
+    #[test]
+    fn the_end_tolerance_scales_with_the_time_and_is_floored_at_one() {
+        // `1e-9 * max(1, |end|)`, values from python. Late: the end is 1e5 + 12, so the tolerance
+        // is 1e-4 and a sample 5e-5 (5e-10 relative) away is the one at the end; a flat 1e-9
+        // would miss it. 5e-4 is out of both
+        let t0 = 1e5;
+        let v = [10.0, 8.0, 6.4, 4.1, 1.7, 9.0, 7.0, 5.0, 2.0];
+        let late = |offset: f64| {
+            let times: Vec<f64> = [0.0, 1.0, 2.0, 4.0, 8.0, 12.0 + offset, 13.0, 16.0, 24.0]
+                .iter()
+                .map(|x| t0 + x)
+                .collect();
+            row_of(
+                &times,
+                &v,
+                &[t0, t0 + 12.0],
+                Route::IvBolus,
+                AucMethod::Linear,
+                None,
+            )
+        };
+        let (i, flags) = late(5e-5);
+        assert_eq!(i[0].ctrough, 0.7022990702526931);
+        assert!(flags.contains(NcaFlag::EXTRAPOLATED_TROUGH));
+        let (i, flags) = late(5e-4);
+        assert_eq!(i[0].ctrough, 8.999087614058014);
+        assert!(!flags.contains(NcaFlag::EXTRAPOLATED_TROUGH));
+        // Early: the end is 0.5, a tolerance of 1e-9 from the floor (5e-10 without it). A sample
+        // 8e-10 away is at the end; 3e-9 away is not
+        let small = |offset: f64| {
+            let times = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5 + offset, 0.6, 0.8, 1.0];
+            row_of(
+                &times,
+                &v,
+                &[0.0, 0.5],
+                Route::IvBolus,
+                AucMethod::Linear,
+                None,
+            )
+        };
+        let (i, flags) = small(8e-10);
+        assert_eq!(i[0].ctrough, 0.9420483605210609);
+        assert!(flags.contains(NcaFlag::EXTRAPOLATED_TROUGH));
+        let (i, flags) = small(3e-9);
+        assert_eq!(i[0].ctrough, 8.999999781000005);
+        assert!(!flags.contains(NcaFlag::EXTRAPOLATED_TROUGH));
+    }
+
+    #[test]
+    fn the_largest_of_several_samples_at_the_end_decides() {
+        // two samples within the tolerance of 12, the higher (9.0) first. The largest is above
+        // the last one inside (1.7), so the interval is post-dose; the last of them (1.0) is
+        // not. Python: ctrough 0.7022990702519408, flagged, n_points 5
+        let times = [0.0, 1.0, 2.0, 4.0, 8.0, 12.0, 12.0 + 5e-10, 16.0, 24.0];
+        let (i, flags) = row_of(
+            &times,
+            &[10.0, 8.0, 6.4, 4.1, 1.7, 9.0, 1.0, 5.0, 2.0],
+            &[0.0, 12.0],
+            Route::IvBolus,
+            AucMethod::Linear,
+            None,
+        );
+        assert_eq!((i[0].ctrough, i[0].n_points), (TROUGH, 5.0));
+        assert!(flags.contains(NcaFlag::EXTRAPOLATED_TROUGH));
+        // the same with the lower one first: the maximum still is 9.0
+        let (i, flags) = row_of(
+            &times,
+            &[10.0, 8.0, 6.4, 4.1, 1.7, 1.0, 9.0, 5.0, 2.0],
+            &[0.0, 12.0],
+            Route::IvBolus,
+            AucMethod::Linear,
+            None,
+        );
+        assert_eq!((i[0].ctrough, i[0].n_points), (TROUGH, 5.0));
+        assert!(flags.contains(NcaFlag::EXTRAPOLATED_TROUGH));
     }
 
     #[test]
