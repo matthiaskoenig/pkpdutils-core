@@ -43,6 +43,16 @@ use crate::convert::{at_key, batch_from_python, field, required};
 use crate::options::{options_from_python, unsupported_reason};
 use crate::result::result_into_python;
 
+/// How an error of [`summarize`] names the dict it was given.
+///
+/// The batch names its contract (`pkpdutils_abi::BATCH_CONTRACT`), which a summary request has
+/// none of: `SummaryRequest` is the argument of one entry point and is named after it.
+pub(crate) const SUMMARY_REQUEST: &str = "a `summarize` request";
+
+/// How an error of [`time_to_steady_state`] names the dict it was given, as
+/// [`SUMMARY_REQUEST`] does.
+pub(crate) const TSS_REQUEST: &str = "a `time_to_steady_state` request";
+
 create_exception!(
     pkpdutils_core,
     UnsupportedError,
@@ -154,17 +164,17 @@ fn analyze_batch<'py>(
 /// by a second implementation.
 #[pyfunction]
 fn summarize<'py>(py: Python<'py>, request: &Bound<'py, PyDict>) -> PyResult<Bound<'py, PyDict>> {
-    let values: PyReadonlyArrayDyn<'_, f64> = required(request, "values")?
+    let values: PyReadonlyArrayDyn<'_, f64> = required(request, "values", SUMMARY_REQUEST)?
         .extract()
         .map_err(|err| at_key(py, "values", err))?;
     let request = kernel::pkpdutils_abi::SummaryRequest {
         values: values.as_array().iter().copied().collect(),
-        n_vars: field(py, request, "n_vars")?,
-        n_groups: field(py, request, "n_groups")?,
-        n_samples: field(py, request, "n_samples")?,
-        ci_level: field(py, request, "ci_level")?,
-        lognormal: field(py, request, "lognormal")?,
-        discrete: field(py, request, "discrete")?,
+        n_vars: field(py, request, "n_vars", SUMMARY_REQUEST)?,
+        n_groups: field(py, request, "n_groups", SUMMARY_REQUEST)?,
+        n_samples: field(py, request, "n_samples", SUMMARY_REQUEST)?,
+        ci_level: field(py, request, "ci_level", SUMMARY_REQUEST)?,
+        lognormal: field(py, request, "lognormal", SUMMARY_REQUEST)?,
+        discrete: field(py, request, "discrete", SUMMARY_REQUEST)?,
     };
     let (n_vars, n_groups) = (request.n_vars, request.n_groups);
     let answer = py
@@ -217,15 +227,15 @@ fn time_to_steady_state<'py>(
     request: &Bound<'py, PyDict>,
 ) -> PyResult<Bound<'py, PyDict>> {
     let floats = |key: &str| -> PyResult<Vec<f64>> {
-        let array: PyReadonlyArrayDyn<'_, f64> = required(request, key)?
+        let array: PyReadonlyArrayDyn<'_, f64> = required(request, key, TSS_REQUEST)?
             .extract()
             .map_err(|err| at_key(py, key, err))?;
         Ok(array.as_array().iter().copied().collect())
     };
-    let valid: PyReadonlyArrayDyn<'_, bool> = required(request, "valid")?
+    let valid: PyReadonlyArrayDyn<'_, bool> = required(request, "valid", TSS_REQUEST)?
         .extract()
         .map_err(|err| at_key(py, "valid", err))?;
-    let method: String = field(py, request, "method")?;
+    let method: String = field(py, request, "method", TSS_REQUEST)?;
     let method = match method.as_str() {
         "monoexponential" => kernel::pkpdutils_abi::TssMethod::Monoexponential,
         "stepwise" => kernel::pkpdutils_abi::TssMethod::Stepwise,
@@ -240,11 +250,11 @@ fn time_to_steady_state<'py>(
         value: floats("value")?,
         start: floats("start")?,
         valid: valid.as_array().iter().copied().collect(),
-        n_rows: field(py, request, "n_rows")?,
-        n_cols: field(py, request, "n_cols")?,
+        n_rows: field(py, request, "n_rows", TSS_REQUEST)?,
+        n_cols: field(py, request, "n_cols", TSS_REQUEST)?,
         method,
-        fraction: field(py, request, "fraction")?,
-        alpha: field(py, request, "alpha")?,
+        fraction: field(py, request, "fraction", TSS_REQUEST)?,
+        alpha: field(py, request, "alpha", TSS_REQUEST)?,
     };
     let answer = py
         .detach(|| guarded(|| kernel::time_to_steady_state(&request)))?
@@ -1139,6 +1149,36 @@ mod tests {
             absent.del_item("alpha").unwrap();
             let err = time_to_steady_state(py, &absent).unwrap_err();
             assert!(err.is_instance_of::<PyKeyError>(py), "{err}");
+        });
+    }
+
+    #[test]
+    fn a_missing_key_names_the_request_it_belongs_to() {
+        // one helper reads the required keys of all three entry points, and its message has to
+        // send the caller to the dict it really passed: a summary request which forgot
+        // `n_groups` used to report that `batch/1` needs it, and `batch/1` has no such key
+        Python::attach(|py| {
+            let contract = kernel::pkpdutils_abi::BATCH_CONTRACT;
+
+            let batch = batch_dict(py, 2);
+            batch.del_item("times").unwrap();
+            let err = analyze_batch(py, &batch, &options_dict(py), None).unwrap_err();
+            let message = err.value(py).to_string();
+            assert!(err.is_instance_of::<PyKeyError>(py), "{err}");
+            assert!(message.contains(contract), "{message}");
+
+            let summary = summary_request(py, &[1.0], 1);
+            summary.del_item("n_groups").unwrap();
+            let message = summarize(py, &summary).unwrap_err().value(py).to_string();
+            assert!(message.contains(SUMMARY_REQUEST), "{message}");
+            assert!(!message.contains(contract), "{message}");
+
+            let tss = tss_request(py, "stepwise");
+            tss.del_item("valid").unwrap();
+            let err = time_to_steady_state(py, &tss).unwrap_err();
+            let message = err.value(py).to_string();
+            assert!(message.contains(TSS_REQUEST), "{message}");
+            assert!(!message.contains(contract), "{message}");
         });
     }
 }

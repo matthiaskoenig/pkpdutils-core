@@ -188,7 +188,9 @@ pub(crate) fn stepwise(
 ///
 /// The monoexponential estimate fits the troughs of a row read from the start of its first
 /// interval and reports the start back added, as `time_to_steady_state` of the host does; a row
-/// without a trough is `NaN`. The stepwise estimate is [`stepwise`] and has no plateau.
+/// without a trough is `NaN`. The stepwise estimate is `stepwise` and has no plateau; the link
+/// is plain code because that function is private and `cargo doc -D warnings` refuses a link
+/// into a private item from the documentation of a public one.
 ///
 /// # Errors
 ///
