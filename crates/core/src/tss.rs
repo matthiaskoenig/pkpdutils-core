@@ -9,6 +9,9 @@
 //! over `log10(k)` by a golden-section search on a bracket around each start, and the lowest cost
 //! of the three wins, so the two agree on the minimum and not on the iterates.
 
+use crate::stats::student_t_sf;
+use crate::terminal::{WindowStats, window_statistics};
+
 /// The starting values of `k`, as multiples of `1 / t_last` (`_STARTS` of `tss.py`).
 const STARTS: [f64; 3] = [0.5, 2.0, 8.0];
 
@@ -120,6 +123,67 @@ pub(crate) fn monoexponential(time: &[f64], value: &[f64], fraction: f64) -> (f6
         return nan;
     }
     (-(-fraction).ln_1p() / k, profiled_plateau(k, time, value))
+}
+
+/// Whether the troughs of one window no longer trend: the two-sided t test of its slope against
+/// zero with `n - 2` degrees of freedom does not reject at `alpha`.
+///
+/// A window which is no window (`n` is `NaN`) has no answer. An exact straight line has no
+/// residual scatter, `se_slope` is 0 and the t statistic is `|slope| / 0`: the p value is not
+/// read there, a slope of exactly 0 is no trend and any other slope is one (`_stepwise` of
+/// `tss.py`).
+fn no_trend(window: &WindowStats, alpha: f64) -> bool {
+    if !window.n.is_finite() {
+        return false;
+    }
+    if window.se_slope == 0.0 {
+        return window.slope == 0.0;
+    }
+    let t_statistic = window.slope.abs() / window.se_slope;
+    2.0 * student_t_sf(t_statistic, window.n - 2.0) > alpha
+}
+
+/// The first interval from which the troughs no longer trend, per row: the port of `_stepwise`
+/// of `tss.py` (PKNCA `pk.tss.stepwise.linear`).
+///
+/// `time`, `value`, `start` and `valid` are `n_rows * n_cols` row-major arrays: the troughs of a
+/// row, the start of the interval of each and which entries are troughs. Every window (a suffix
+/// of the troughs) is regressed at once by [`window_statistics`] and the answer of a row is the
+/// `start` of the first window whose slope test does not reject at `alpha`, `NaN` when every
+/// window of at least three troughs still trends. Arrays shorter than the shape give all `NaN`.
+// no caller yet: the time to steady state front end of the next task
+#[cfg_attr(not(test), expect(dead_code))]
+pub(crate) fn stepwise(
+    time: &[f64],
+    value: &[f64],
+    start: &[f64],
+    valid: &[bool],
+    n_rows: usize,
+    n_cols: usize,
+    alpha: f64,
+) -> Vec<f64> {
+    let Some(size) = n_rows.checked_mul(n_cols) else {
+        return vec![f64::NAN; n_rows];
+    };
+    if time.len() < size || value.len() < size || start.len() < size || valid.len() < size {
+        return vec![f64::NAN; n_rows];
+    }
+    let mut windows = vec![WindowStats::NONE; n_cols];
+    (0..n_rows)
+        .map(|r| {
+            let row = r * n_cols..(r + 1) * n_cols;
+            window_statistics(
+                &time[row.clone()],
+                &value[row.clone()],
+                &valid[row.clone()],
+                &mut windows,
+            );
+            windows
+                .iter()
+                .position(|w| no_trend(w, alpha))
+                .map_or(f64::NAN, |s| start[row.start + s])
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -252,5 +316,118 @@ mod tests {
         assert!(nan(&[1.0, f64::NAN, 3.0], &[1.0, 2.0, 3.0]));
         assert!(nan(&[1.0, 2.0, 3.0], &[1.0, 2.0])); // length mismatch
         assert!(nan(&[], &[]));
+    }
+
+    /// One row padded to six columns: starts are `10 * (time - 1)`, so a start is not a time.
+    fn padded(rows: &[(&[f64], &[f64])]) -> (Vec<f64>, Vec<f64>, Vec<f64>, Vec<bool>) {
+        let (mut t, mut v, mut s, mut ok) = (vec![], vec![], vec![], vec![]);
+        for (time, value) in rows {
+            for c in 0..6 {
+                let here = c < time.len();
+                t.push(if here { time[c] } else { 0.0 });
+                v.push(if here { value[c] } else { 0.0 });
+                s.push(if here { time[c] * 10.0 - 10.0 } else { 0.0 });
+                ok.push(here);
+            }
+        }
+        (t, v, s, ok)
+    }
+
+    fn walk(rows: &[(&[f64], &[f64])], alpha: f64) -> Vec<f64> {
+        let (t, v, s, ok) = padded(rows);
+        stepwise(&t, &v, &s, &ok, rows.len(), 6, alpha)
+    }
+
+    const T6: [f64; 6] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+
+    #[test]
+    fn a_series_which_stops_trending_returns_the_start_of_the_first_flat_window() {
+        // python p values of the windows from index 0: 0.03501005, 0.11054577, 0.19824607,
+        // 0.78770438 (scipy t.sf, df 4, 3, 2, 1)
+        let v = [1.0, 1.8, 2.3, 2.4, 2.38, 2.41];
+        assert_eq!(walk(&[(&T6, &v)], 0.05), [10.0]);
+        // the p value of the first window sits 1e-5 either side of alpha
+        assert_eq!(walk(&[(&T6, &v)], 0.0350), [0.0]);
+        assert_eq!(walk(&[(&T6, &v)], 0.0351), [10.0]);
+    }
+
+    #[test]
+    fn an_exact_straight_line_is_a_trend_unless_its_slope_is_zero() {
+        // a line of slope 1 has se_slope 0 and is a trend in every window: no answer
+        assert!(walk(&[(&T6[..5], &[1.0, 2.0, 3.0, 4.0, 5.0])], 0.05)[0].is_nan());
+        let line = |slope: f64, se_slope: f64| WindowStats {
+            n: 5.0,
+            slope,
+            se_slope,
+            ..WindowStats::NONE
+        };
+        assert!(!no_trend(&line(1.0, 0.0), 0.05));
+        assert!(!no_trend(&line(-1.0, 0.0), 0.05));
+        assert!(no_trend(&line(0.0, 0.0), 0.05));
+        // alpha at its extremes does not change the verdict: the p value is never read
+        assert!(!no_trend(&line(1.0, 0.0), 0.0));
+        assert!(no_trend(&line(0.0, 0.0), 1.0));
+    }
+
+    #[test]
+    fn a_p_value_either_side_of_alpha_decides_on_n_minus_two_degrees_of_freedom() {
+        let w = |n: f64| WindowStats {
+            n,
+            slope: 1.0,
+            se_slope: 1.0,
+            ..WindowStats::NONE
+        };
+        // df 1, t = 1: p = 1 - 2 atan(1) / pi = 0.5 exactly
+        assert!(no_trend(&w(3.0), 0.5 - 1e-6));
+        assert!(!no_trend(&w(3.0), 0.5 + 1e-6));
+        // df 2, t = 1: p = 1 - 1 / sqrt(3) = 0.42264973081
+        assert!(no_trend(&w(4.0), 0.42264973 - 1e-6));
+        assert!(!no_trend(&w(4.0), 0.42264973 + 1e-6));
+        // the sign of the slope does not matter
+        let neg = WindowStats {
+            slope: -1.0,
+            ..w(3.0)
+        };
+        assert!(no_trend(&neg, 0.5 - 1e-6) && !no_trend(&neg, 0.5 + 1e-6));
+        // a window which is no window has no answer, whatever alpha
+        assert!(!no_trend(&WindowStats::NONE, 0.0));
+        assert!(!no_trend(&WindowStats::NONE, 1.0));
+    }
+
+    #[test]
+    fn a_series_which_trends_throughout_is_nan() {
+        // python: every window p < 0.05, the last of three points included
+        let v = [1.0, 1.5, 2.2, 3.1, 4.2, 5.4];
+        assert!(walk(&[(&T6, &v)], 0.05)[0].is_nan());
+    }
+
+    #[test]
+    fn a_window_of_fewer_than_three_troughs_is_not_an_answer() {
+        // two troughs: no window at all
+        assert!(walk(&[(&T6[..2], &[1.0, 2.0])], 0.05)[0].is_nan());
+        // three troughs are the smallest window: python p = 0.12103772 > 0.05 at index 0
+        assert_eq!(walk(&[(&T6[..3], &[1.0, 2.0, 2.5])], 0.05), [0.0]);
+        // constant troughs have no spread: no window either, not a flat one
+        assert!(walk(&[(&T6[..4], &[2.0, 2.0, 2.0, 2.0])], 0.05)[0].is_nan());
+    }
+
+    #[test]
+    fn rows_are_independent_and_an_invalid_entry_is_skipped() {
+        let v0 = [1.0, 1.8, 2.3, 2.4, 2.38, 2.41];
+        let v1 = [1.0, 1.5, 2.2, 3.1, 4.2, 5.4];
+        let v2 = [1.0, 2.0, 2.5];
+        let (t, v, s, ok) = padded(&[(&T6, &v0), (&T6, &v1), (&T6[..3], &v2)]);
+        let got = stepwise(&t, &v, &s, &ok, 3, 6, 0.05);
+        assert_eq!(got[0], 10.0);
+        assert!(got[1].is_nan());
+        assert_eq!(got[2], 0.0);
+        // python: a 9.0 at index 2 marked invalid; p = 0.03234161, 0.07684945 -> start of index 1
+        let w = [1.0, 1.8, 9.0, 2.3, 2.4, 2.38];
+        let (t, v, s, mut ok) = padded(&[(&T6, &w)]);
+        ok[2] = false;
+        assert_eq!(stepwise(&t, &v, &s, &ok, 1, 6, 0.05), [10.0]);
+        // short arrays and a zero shape are all NaN / empty, never a panic
+        assert!(stepwise(&t[..5], &v, &s, &ok, 1, 6, 0.05)[0].is_nan());
+        assert!(stepwise(&t, &v, &s, &ok, 0, 6, 0.05).is_empty());
     }
 }
