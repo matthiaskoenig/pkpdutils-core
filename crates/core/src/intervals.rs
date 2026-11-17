@@ -1161,6 +1161,22 @@ mod tests {
             &options,
         );
         assert_eq!((i.cmin, i.swing), (0.0, f64::INFINITY));
+        // python: area 4, cavg 2, fluctuation (4 - 0) / 2
+        assert_eq!((i.cavg, i.fluctuation), (2.0, 2.0));
+    }
+
+    #[test]
+    fn an_all_zero_curve_has_a_not_a_number_fluctuation_and_swing() {
+        // python (measured): cavg 0, fluctuation 0 / 0 = NaN, swing 0 / 0 = NaN, not infinity
+        let options = with(AucMethod::Linear, C0Method::LogBackExtrapolation);
+        let mut i = Interval {
+            start: 0.0,
+            end: 2.0,
+            ..Interval::EMPTY
+        };
+        interval_parameters(&[0.0, 1.0, 2.0], &[0.0; 3], 3, 0.0, true, &mut i, &options);
+        assert_eq!((i.auc, i.cavg, i.cmax, i.cmin), (0.0, 0.0, 0.0, 0.0));
+        assert!(i.fluctuation.is_nan() && i.swing.is_nan());
     }
 
     #[test]
