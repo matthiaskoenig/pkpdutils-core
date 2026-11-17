@@ -3,7 +3,10 @@
 //! Mirrors `src/pkpdutils/nca/intervals.py`: interval `k` of a row runs from the dose time `t_k`
 //! to the next dose time `t_{k+1}`, the last one from `t_K` to `t_K + tau`. This module holds the
 //! bounds of the intervals and the number of samples each one uses, which need no concentration
-//! maths, and the table of the variables the result reports over the dimension `interval`.
+//! maths, the table of the variables the result reports over the dimension `interval`, the
+//! interpolation of a curve at a time and the curve of one interval.
+
+use pkpdutils_abi::{AucMethod, C0Method, NcaOptions, Route};
 
 /// One dosing interval of one row, in the time frame of the curve as the host sent it.
 ///
@@ -160,6 +163,163 @@ pub(crate) fn count_points(
         let counted_end = usize::from(at_end.is_some() && !post_dose);
         interval.n_points = (inside + counted_end) as f64;
     }
+}
+
+/// The value of a packed curve at a query time, by interpolation between the bracketing samples.
+///
+/// `t` and `c` are the packed points of a row and `n_valid` how many of them are valid, so the
+/// padding behind them is never read. Between two samples the value is linear, or log-linear
+/// `exp(ln c1 + f (ln c2 - ln c1))` on a segment the trapezoid `method` treats logarithmically
+/// (`Log` where both values are positive and differ, `LinearLog` where it also falls). A query
+/// exactly at the last time is that sample, one before the first or after the last time, or a
+/// `NaN`, is `NaN`. A query at an inner sample takes the segment which starts there, so the log
+/// rule may return it up to one rounding off.
+///
+/// Mirrors `interpolate_at` of `src/pkpdutils/nca/auc.py`, with the same expressions.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "reached by the multiple dose analysis, which a later task wires in"
+    )
+)]
+pub(crate) fn interpolate_at(
+    t: &[f64],
+    c: &[f64],
+    n_valid: usize,
+    t_query: f64,
+    method: AucMethod,
+) -> f64 {
+    let n_valid = n_valid.min(t.len()).min(c.len());
+    if n_valid == 0 {
+        return f64::NAN;
+    }
+    if t_query == t[n_valid - 1] {
+        return c[n_valid - 1];
+    }
+    // the number of valid points at or before the query time; `count < n_valid` also keeps `i2`
+    // inside the row
+    let count = t[..n_valid].iter().filter(|&&x| x <= t_query).count();
+    if count == 0 || count >= n_valid {
+        return f64::NAN;
+    }
+    let (t1, t2, c1, c2) = (t[count - 1], t[count], c[count - 1], c[count]);
+    let fraction = (t_query - t1) / (t2 - t1);
+    let positive = c1 > 0.0 && c2 > 0.0 && c1 != c2;
+    let use_log = match method {
+        AucMethod::Linear => false,
+        AucMethod::LinearLog => positive && c2 < c1,
+        AucMethod::Log => positive,
+    };
+    if use_log {
+        (c1.ln() + fraction * (c2.ln() - c1.ln())).exp()
+    } else {
+        c1 + fraction * (c2 - c1)
+    }
+}
+
+/// The value at the start of an interval of an intravenous bolus whose first sample comes later.
+///
+/// The log-linear back-extrapolation of the first two samples after `start`,
+/// `exp(ln c1 - (ln c2 - ln c1) / (t2 - t1) (t1 - start))`; the first sample when there is only
+/// one, when either is not positive, when the pair does not decline, or when `c0_method` is not
+/// `LogBackExtrapolation` (`FirstValue`, and `None`, which says that the `C0` of a dose is not
+/// estimated while an interval still needs a value at its start). `NaN` with no sample after
+/// `start`.
+///
+/// Mirrors `_back_extrapolate` of `src/pkpdutils/nca/intervals.py`.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "reached by the multiple dose analysis, which a later task wires in"
+    )
+)]
+fn back_extrapolate(t: &[f64], c: &[f64], n_valid: usize, start: f64, method: C0Method) -> f64 {
+    let first = t[..n_valid].iter().filter(|&&x| x <= start).count();
+    let n_after = n_valid - first;
+    if n_after == 0 {
+        return f64::NAN;
+    }
+    let first_value = c[first];
+    if method != C0Method::LogBackExtrapolation || n_after < 2 {
+        return first_value;
+    }
+    let (t1, c1, t2, c2) = (t[first], c[first], t[first + 1], c[first + 1]);
+    if c1 > 0.0 && c2 > 0.0 && c2 < c1 && t2 > t1 {
+        (c1.ln() - (c2.ln() - c1.ln()) / (t2 - t1) * (t1 - start)).exp()
+    } else {
+        first_value
+    }
+}
+
+/// The curve of one interval: the samples inside it plus both bounds, into `out_t` and `out_c`
+/// (cleared first), the number of points returned.
+///
+/// The samples are those with `start <= t < end` of the packed row (`t`, `c`, `n_valid`), the
+/// contiguous block behind the ones before the start. The value at the start is interpolated
+/// by `options.auc_method`, and for [`Route::IvBolus`] only, where that is `NaN` (the start lies
+/// before the first sample) it is [`back_extrapolate`]d; the value at the end is interpolated.
+/// A bound whose time or value is not finite is not inserted, so an interval beyond the data or
+/// an [`Interval::EMPTY`] gives a shorter curve. A sample recorded exactly at the start (compared
+/// with `==`, no tolerance) and the bound carry the same time, and their two values are swapped so
+/// the observed one stays in front, which makes a zero-width step of the trapezoid rule.
+///
+/// The trough of a bolus interval whose sample at the next dose is a post-dose value is not
+/// replaced here: that is the regression of `_extrapolate_end`, which needs the next dose.
+///
+/// Mirrors the block, the start and end values and `_with_bounds` of `_interval_column` of
+/// `src/pkpdutils/nca/intervals.py`.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "reached by the multiple dose analysis, which a later task wires in"
+    )
+)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn interval_curve(
+    t: &[f64],
+    c: &[f64],
+    n_valid: usize,
+    interval: &Interval,
+    route: Option<Route>,
+    options: &NcaOptions,
+    out_t: &mut Vec<f64>,
+    out_c: &mut Vec<f64>,
+) -> usize {
+    out_t.clear();
+    out_c.clear();
+    let n_valid = n_valid.min(t.len()).min(c.len());
+    let (start, end) = (interval.start, interval.end);
+    let (t, c) = (&t[..n_valid], &c[..n_valid]);
+    let before = t.iter().filter(|&&x| x < start).count();
+    let inside = t.iter().filter(|&&x| x >= start && x < end).count();
+    let mut c_start = interpolate_at(t, c, n_valid, start, options.auc_method);
+    if route == Some(Route::IvBolus) && c_start.is_nan() {
+        c_start = back_extrapolate(t, c, n_valid, start, options.c0_method);
+    }
+    let c_end = interpolate_at(t, c, n_valid, end, options.auc_method);
+    let has_start = start.is_finite() && c_start.is_finite();
+    let tie = has_start && inside >= 1 && t[before] == start;
+    if has_start {
+        // on a tie the observed value goes in front and the interpolated one takes its place
+        out_t.push(start);
+        out_c.push(if tie { c[before] } else { c_start });
+    }
+    for (k, (&time, &value)) in t[before..before + inside]
+        .iter()
+        .zip(&c[before..before + inside])
+        .enumerate()
+    {
+        out_t.push(time);
+        out_c.push(if tie && k == 0 { c_start } else { value });
+    }
+    if end.is_finite() && c_end.is_finite() {
+        out_t.push(end);
+        out_c.push(c_end);
+    }
+    out_t.len()
 }
 
 #[cfg(test)]
@@ -358,5 +518,231 @@ mod tests {
         };
         assert_eq!(counts(None), [4.0, 3.0]);
         assert_eq!(counts(Some(0.5)), [4.0, 3.0]);
+    }
+
+    fn eval(t: &[f64], c: &[f64], q: f64, m: AucMethod) -> f64 {
+        interpolate_at(t, c, t.len(), q, m)
+    }
+
+    #[test]
+    fn interpolation_is_linear_or_log_linear_by_the_area_method() {
+        let (t, c) = ([0.0, 2.0, 4.0], [8.0, 4.0, 6.0]);
+        // the falling segment, query at its middle: linear 6, log-linear the geometric mean
+        let geo = 32.0_f64.sqrt();
+        assert_eq!(eval(&t, &c, 1.0, AucMethod::Linear), 6.0);
+        assert!((eval(&t, &c, 1.0, AucMethod::LinearLog) - geo).abs() < 1e-14);
+        assert!((eval(&t, &c, 1.0, AucMethod::Log) - geo).abs() < 1e-14);
+        // the rising segment: only `Log` is logarithmic, linear-up/log-down stays linear
+        assert_eq!(eval(&t, &c, 3.0, AucMethod::Linear), 5.0);
+        assert_eq!(eval(&t, &c, 3.0, AucMethod::LinearLog), 5.0);
+        assert!((eval(&t, &c, 3.0, AucMethod::Log) - 24.0_f64.sqrt()).abs() < 1e-14);
+        // a segment the logarithm is undefined on is linear under every method: a zero, a
+        // negative value and a flat segment (`positive` of `interpolate_at`)
+        for (pair, expected) in [([4.0, 0.0], 2.0), ([4.0, -2.0], 1.0), ([3.0, 3.0], 3.0)] {
+            for m in [AucMethod::Linear, AucMethod::LinearLog, AucMethod::Log] {
+                assert_eq!(eval(&[0.0, 2.0], &pair, 1.0, m), expected);
+            }
+        }
+        // a query exactly on an inner sample takes the segment which starts there
+        assert_eq!(eval(&t, &c, 2.0, AucMethod::Linear), 4.0);
+        // the interpolation reads the first `n_valid` points only
+        let t = [0.0, 2.0, 4.0, 5.0];
+        let c = [8.0, 4.0, 6.0, 99.0];
+        assert_eq!(interpolate_at(&t, &c, 3, 1.0, AucMethod::Linear), 6.0);
+    }
+
+    #[test]
+    fn interpolation_beyond_the_data_is_not_a_number() {
+        let (t, c) = ([1.0, 2.0, 4.0], [8.0, 4.0, 2.0]);
+        for m in [AucMethod::Linear, AucMethod::LinearLog, AucMethod::Log] {
+            assert!(eval(&t, &c, 0.5, m).is_nan(), "before the first sample");
+            assert!(eval(&t, &c, 4.5, m).is_nan(), "after the last sample");
+            assert!(eval(&t, &c, f64::NAN, m).is_nan(), "a query of NaN");
+            // the first sample is inside (the log rule returns it to a rounding) and the last
+            // one is the sample itself, exactly
+            assert!((eval(&t, &c, 1.0, m) - 8.0).abs() < 1e-14);
+            assert_eq!(eval(&t, &c, 4.0, m), 2.0);
+        }
+        // the last time is the last VALID point, not the end of the slice, and a row of no valid
+        // point has no value at all
+        let (t, c) = ([1.0, 2.0, 4.0, 6.0], [8.0, 4.0, 2.0, 1.0]);
+        let m = AucMethod::Linear;
+        assert!(interpolate_at(&t, &c, 3, 5.0, m).is_nan(), "past n_valid");
+        assert!(
+            interpolate_at(&t, &c, 3, 6.0, m).is_nan(),
+            "padding is no sample"
+        );
+        assert_eq!(interpolate_at(&t, &c, 3, 4.0, m), 2.0);
+        assert!(interpolate_at(&t, &c, 0, 4.0, m).is_nan());
+        assert!(interpolate_at(&[], &[], 0, 4.0, m).is_nan());
+        assert!(interpolate_at(&[3.0], &[5.0], 1, 2.0, m).is_nan());
+        assert_eq!(interpolate_at(&[3.0], &[5.0], 1, 3.0, m), 5.0);
+    }
+
+    fn curve(
+        t: &[f64],
+        c: &[f64],
+        (start, end): (f64, f64),
+        route: Option<Route>,
+        options: &NcaOptions,
+    ) -> (Vec<f64>, Vec<f64>, usize) {
+        let interval = Interval {
+            start,
+            end,
+            n_points: f64::NAN,
+        };
+        let (mut out_t, mut out_c) = (vec![9.0], vec![9.0]);
+        let n = interval_curve(
+            t,
+            c,
+            t.len(),
+            &interval,
+            route,
+            options,
+            &mut out_t,
+            &mut out_c,
+        );
+        (out_t, out_c, n)
+    }
+
+    fn with(method: AucMethod, c0: C0Method) -> NcaOptions {
+        NcaOptions {
+            auc_method: method,
+            c0_method: c0,
+            ..NcaOptions::default()
+        }
+    }
+
+    #[test]
+    fn a_sample_exactly_at_the_interval_start_keeps_the_observed_value_first() {
+        // Log-linear interpolation at an inner sample is exp(ln 3), which is 3 + 1 ulp: the
+        // observed value and the interpolated one are told apart, and the observed one goes first
+        // (numbers from python `_with_bounds`)
+        let log = with(AucMethod::Log, C0Method::LogBackExtrapolation);
+        let (t, c) = ([0.0, 1.0, 2.0, 3.0], [5.0, 3.0, 2.0, 1.0]);
+        let (ot, oc, n) = curve(&t, &c, (1.0, 3.0), Some(Route::Oral), &log);
+        assert_eq!((ot, n), (vec![1.0, 1.0, 2.0, 3.0], 4));
+        let interpolated = 3.0 + f64::EPSILON * 2.0;
+        assert_eq!(interpolate_at(&t, &c, 4, 1.0, AucMethod::Log), interpolated);
+        assert_eq!(oc, [3.0, interpolated, 2.0, 1.0]);
+    }
+
+    #[test]
+    fn samples_coincident_with_an_interval_bound_keep_their_input_order() {
+        let lin = with(AucMethod::Linear, C0Method::LogBackExtrapolation);
+        // two samples at the start: python gives [5, 6, 6, 4, 3] (the value at the start is the
+        // second duplicate, swapped behind the first, which stays in front)
+        let (t, c) = ([0.0, 1.0, 1.0, 2.0, 3.0], [9.0, 5.0, 6.0, 4.0, 3.0]);
+        let (ot, oc, n) = curve(&t, &c, (1.0, 3.0), Some(Route::Oral), &lin);
+        assert_eq!(ot, [1.0, 1.0, 1.0, 2.0, 3.0]);
+        assert_eq!(oc, [5.0, 6.0, 6.0, 4.0, 3.0]);
+        assert_eq!(n, 5);
+        // the comparison with the start is exact, not by a tolerance: a sample 1e-12 after it is
+        // no tie, so the bound goes first with its interpolated value (python: 4.000000000001622)
+        let log = with(AucMethod::Log, C0Method::LogBackExtrapolation);
+        let (t, c) = ([0.0, 1.0, 2.0 + 1e-12, 4.0], [8.0, 6.0, 4.0, 2.0]);
+        let (ot, oc, _) = curve(&t, &c, (2.0, 4.0), Some(Route::Oral), &log);
+        assert_eq!(ot, [2.0, 2.0 + 1e-12, 4.0]);
+        assert_eq!(oc[0], 4.000000000001622);
+        assert_eq!(&oc[1..], [4.0, 2.0]);
+        // and one 1e-12 before it is no sample of the interval at all
+        let (t, c) = ([0.0, 2.0 - 1e-12, 3.0, 4.0], [8.0, 4.0, 3.0, 2.0]);
+        let (ot, _, n) = curve(&t, &c, (2.0, 4.0), Some(Route::Oral), &lin);
+        assert_eq!((ot, n), (vec![2.0, 3.0, 4.0], 3));
+        // a sample exactly at the end is not inside, the end is inserted from the interpolation
+        let (t, c) = ([0.0, 1.0, 2.0, 3.0], [8.0, 6.0, 4.0, 2.0]);
+        let (ot, oc, _) = curve(&t, &c, (0.0, 2.0), Some(Route::Oral), &lin);
+        assert_eq!(
+            (ot, oc),
+            (vec![0.0, 0.0, 1.0, 2.0], vec![8.0, 8.0, 6.0, 4.0])
+        );
+    }
+
+    #[test]
+    fn a_bolus_interval_back_extrapolates_a_start_the_data_does_not_reach() {
+        let t = [1.0, 2.0, 4.0, 6.0];
+        let c = [8.0, 4.0, 2.0, 1.0];
+        let log = with(AucMethod::Linear, C0Method::LogBackExtrapolation);
+        let (ot, oc, n) = curve(&t, &c, (0.0, 4.0), Some(Route::IvBolus), &log);
+        assert_eq!((ot, n), (vec![0.0, 1.0, 2.0, 4.0], 4));
+        assert_eq!(
+            oc,
+            [15.999999999999991, 8.0, 4.0, 2.0],
+            "bit for bit with python"
+        );
+        // the line runs from the sample, so a start away from zero is told from the dose at zero
+        let (t2, c2) = ([2.0, 3.0, 5.0], [8.0, 4.0, 2.0]);
+        let (_, oc, _) = curve(&t2, &c2, (0.5, 3.5), Some(Route::IvBolus), &log);
+        assert_eq!(oc, [22.627416997969508, 8.0, 4.0, 3.5]);
+        // the other routes and the other methods do not extrapolate
+        let (ot, oc, n) = curve(&t, &c, (0.0, 4.0), Some(Route::Oral), &log);
+        assert_eq!((ot, oc, n), (vec![1.0, 2.0, 4.0], vec![8.0, 4.0, 2.0], 3));
+        let (_, oc, _) = curve(&t, &c, (0.0, 4.0), None, &log);
+        assert_eq!(oc.len(), 3);
+        let (_, oc, _) = curve(&t, &c, (0.0, 4.0), Some(Route::IvInfusion), &log);
+        assert_eq!(oc.len(), 3);
+        // a start after the last sample has no value, a bolus included, so no start is inserted
+        let (ot, oc, n) = curve(&t, &c, (7.0, 9.0), Some(Route::IvBolus), &log);
+        assert_eq!((ot.len(), oc.len(), n), (0, 0, 0));
+        // an interval which does not exist is an empty curve
+        let empty = Interval::EMPTY;
+        let (mut a, mut b) = (vec![1.0], vec![1.0]);
+        let n = interval_curve(
+            &t,
+            &c,
+            4,
+            &empty,
+            Some(Route::IvBolus),
+            &log,
+            &mut a,
+            &mut b,
+        );
+        assert_eq!((n, a.len(), b.len()), (0, 0, 0));
+        // only the first n_valid points are read
+        let interval = Interval {
+            start: 0.0,
+            end: 4.0,
+            n_points: f64::NAN,
+        };
+        let n = interval_curve(
+            &t,
+            &c,
+            2,
+            &interval,
+            Some(Route::IvBolus),
+            &log,
+            &mut a,
+            &mut b,
+        );
+        assert_eq!(
+            (n, a.clone()),
+            (3, vec![0.0, 1.0, 2.0]),
+            "no end beyond the data"
+        );
+    }
+
+    #[test]
+    fn a_bolus_start_falls_back_to_the_first_sample_when_the_pair_does_not_decline() {
+        let t = [1.0, 2.0, 4.0, 6.0];
+        let bolus = Some(Route::IvBolus);
+        let first = |c: &[f64], options: &NcaOptions| curve(&t, c, (0.0, 4.0), bolus, options).1[0];
+        let on = with(AucMethod::Linear, C0Method::LogBackExtrapolation);
+        // rising, a zero second value and a zero first value (python: 8, 8, 0)
+        assert_eq!(first(&[8.0, 9.0, 2.0, 1.0], &on), 8.0);
+        assert_eq!(first(&[8.0, 0.0, 2.0, 1.0], &on), 8.0);
+        assert_eq!(first(&[0.0, 0.0, 2.0, 1.0], &on), 0.0);
+        // equal values do not decline either
+        assert_eq!(first(&[8.0, 8.0, 2.0, 1.0], &on), 8.0);
+        // one sample after the start: nothing to extrapolate with
+        let (_, oc, _) = curve(&[1.0], &[8.0], (0.0, 4.0), bolus, &on);
+        assert_eq!(oc, [8.0, 8.0]);
+        // the option: the first value and no estimate both start at the first sample, which a
+        // dosing interval needs anyway
+        let c = [8.0, 4.0, 2.0, 1.0];
+        for method in [C0Method::FirstValue, C0Method::None] {
+            let o = with(AucMethod::Linear, method);
+            assert_eq!(first(&c, &o), 8.0, "{method:?}");
+        }
+        assert!((first(&c, &on) - 16.0).abs() < 1e-12);
     }
 }

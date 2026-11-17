@@ -857,7 +857,7 @@ fn infusion_end(route: Option<Route>, duration: Option<f64>) -> Option<f64> {
 ///
 /// Over every valid point, the values a rule kept or imputed among them, and never over the
 /// point the route put at the dose time, which lives in another row (`terminal.md` hazard 8).
-fn first_maximum(cp: &[f64], n_valid: usize) -> usize {
+pub(crate) fn first_maximum(cp: &[f64], n_valid: usize) -> usize {
     let mut index = 0;
     let mut peak = f64::NEG_INFINITY;
     for (j, &value) in cp.iter().take(n_valid).enumerate() {
@@ -870,7 +870,7 @@ fn first_maximum(cp: &[f64], n_valid: usize) -> usize {
 }
 
 /// The packed index of the first smallest value of a row, `0` for a row without a point.
-fn first_minimum(cp: &[f64], n_valid: usize) -> usize {
+pub(crate) fn first_minimum(cp: &[f64], n_valid: usize) -> usize {
     let mut index = 0;
     let mut trough = f64::INFINITY;
     for (j, &value) in cp.iter().take(n_valid).enumerate() {
