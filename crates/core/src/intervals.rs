@@ -659,6 +659,15 @@ mod tests {
     }
 
     #[test]
+    fn a_sample_at_the_start_which_is_the_last_sample_is_a_tie_too() {
+        // the value at the start is the `on_last` branch of `interpolate_at`, not a segment
+        let lin = with(AucMethod::Linear, C0Method::LogBackExtrapolation);
+        let (t, c) = ([0.0, 1.0, 2.0], [5.0, 3.0, 2.0]);
+        let (ot, oc, n) = curve(&t, &c, (2.0, 4.0), Some(Route::Oral), &lin);
+        assert_eq!((ot, oc, n), (vec![2.0, 2.0], vec![2.0, 2.0], 2));
+    }
+
+    #[test]
     fn a_bolus_interval_back_extrapolates_a_start_the_data_does_not_reach() {
         let t = [1.0, 2.0, 4.0, 6.0];
         let c = [8.0, 4.0, 2.0, 1.0];
@@ -733,6 +742,10 @@ mod tests {
         assert_eq!(first(&[0.0, 0.0, 2.0, 1.0], &on), 0.0);
         // equal values do not decline either
         assert_eq!(first(&[8.0, 8.0, 2.0, 1.0], &on), 8.0);
+        // two samples at the same time are no pair to extrapolate with (`t2 > t1`): the first
+        // value, not the infinity a division by the zero width gives
+        let (_, oc, _) = curve(&[1.0, 1.0], &[8.0, 4.0], (0.0, 4.0), bolus, &on);
+        assert_eq!(oc, [8.0, 8.0, 4.0]);
         // one sample after the start: nothing to extrapolate with
         let (_, oc, _) = curve(&[1.0], &[8.0], (0.0, 4.0), bolus, &on);
         assert_eq!(oc, [8.0, 8.0]);
