@@ -6,7 +6,10 @@
 //! maths, the table of the variables the result reports over the dimension `interval`, the
 //! interpolation of a curve at a time and the curve of one interval.
 
-use pkpdutils_abi::{AucMethod, C0Method, NcaOptions, Route};
+use pkpdutils_abi::{AucMethod, Batch, C0Method, NcaOptions, Route};
+
+use crate::auc::trapezoid;
+use crate::parameters::{first_maximum, first_minimum};
 
 /// One dosing interval of one row, in the time frame of the curve as the host sent it.
 ///
@@ -18,8 +21,28 @@ pub(crate) struct Interval {
     pub start: f64,
     /// The time it ends at (`interval_end`).
     pub end: f64,
+    /// The dose amount of the interval (`interval_dose`), reported only for a batch with doses.
+    pub dose: f64,
     /// The number of samples the interval uses (`interval_n_points`).
     pub n_points: f64,
+    /// The area under the curve of the interval (`interval_auc`).
+    pub auc: f64,
+    /// The largest value of the interval curve (`interval_cmax`).
+    pub cmax: f64,
+    /// The time of the first largest value, after the start of the interval (`interval_tmax`).
+    pub tmax: f64,
+    /// The smallest value of the interval curve (`interval_cmin`).
+    pub cmin: f64,
+    /// The value at the end of the interval (`interval_ctrough`).
+    pub ctrough: f64,
+    /// The value at the start of the interval (`interval_c_start`).
+    pub c_start: f64,
+    /// The average over the interval, area over length (`interval_cavg`).
+    pub cavg: f64,
+    /// `(cmax - cmin) / cavg` (`interval_fluctuation`).
+    pub fluctuation: f64,
+    /// `(cmax - cmin) / cmin` (`interval_swing`).
+    pub swing: f64,
 }
 
 impl Interval {
@@ -27,7 +50,17 @@ impl Interval {
     pub(crate) const EMPTY: Interval = Interval {
         start: f64::NAN,
         end: f64::NAN,
+        dose: f64::NAN,
         n_points: f64::NAN,
+        auc: f64::NAN,
+        cmax: f64::NAN,
+        tmax: f64::NAN,
+        cmin: f64::NAN,
+        ctrough: f64::NAN,
+        c_start: f64::NAN,
+        cavg: f64::NAN,
+        fluctuation: f64::NAN,
+        swing: f64::NAN,
     };
 }
 
@@ -41,6 +74,19 @@ pub(crate) struct IntervalVariable {
     pub unit: &'static str,
     /// The field of the interval it reports.
     pub read: fn(&Interval) -> f64,
+    /// Whether the batch reports the variable: `interval_dose` only for a batch which carries
+    /// dose amounts (`has_dose` of `interval_variables` in `intervals.py`), every other one always.
+    pub present: fn(&Batch) -> bool,
+}
+
+/// The variables a batch reports whatever its protocol.
+fn always(_: &Batch) -> bool {
+    true
+}
+
+/// A batch which carries dose amounts, which `max_doses > 0` says (as `has_dose` of `assemble.rs`).
+fn has_amounts(batch: &Batch) -> bool {
+    batch.max_doses > 0
 }
 
 /// The per-interval variables this build reports, in the order python writes them.
@@ -49,16 +95,79 @@ pub(crate) const INTERVAL_VARIABLES: &[IntervalVariable] = &[
         name: "interval_start",
         unit: "{time}",
         read: |i| i.start,
+        present: always,
     },
     IntervalVariable {
         name: "interval_end",
         unit: "{time}",
         read: |i| i.end,
+        present: always,
+    },
+    IntervalVariable {
+        name: "interval_dose",
+        unit: "{dose}",
+        read: |i| i.dose,
+        present: has_amounts,
     },
     IntervalVariable {
         name: "interval_n_points",
         unit: "dimensionless",
         read: |i| i.n_points,
+        present: always,
+    },
+    IntervalVariable {
+        name: "interval_auc",
+        unit: "({unit}) * ({time})",
+        read: |i| i.auc,
+        present: always,
+    },
+    IntervalVariable {
+        name: "interval_cmax",
+        unit: "{unit}",
+        read: |i| i.cmax,
+        present: always,
+    },
+    IntervalVariable {
+        name: "interval_tmax",
+        unit: "{time}",
+        read: |i| i.tmax,
+        present: always,
+    },
+    IntervalVariable {
+        name: "interval_cmin",
+        unit: "{unit}",
+        read: |i| i.cmin,
+        present: always,
+    },
+    IntervalVariable {
+        name: "interval_ctrough",
+        unit: "{unit}",
+        read: |i| i.ctrough,
+        present: always,
+    },
+    IntervalVariable {
+        name: "interval_c_start",
+        unit: "{unit}",
+        read: |i| i.c_start,
+        present: always,
+    },
+    IntervalVariable {
+        name: "interval_cavg",
+        unit: "{unit}",
+        read: |i| i.cavg,
+        present: always,
+    },
+    IntervalVariable {
+        name: "interval_fluctuation",
+        unit: "dimensionless",
+        read: |i| i.fluctuation,
+        present: always,
+    },
+    IntervalVariable {
+        name: "interval_swing",
+        unit: "dimensionless",
+        read: |i| i.swing,
+        present: always,
     },
 ];
 
@@ -93,7 +202,7 @@ pub(crate) fn interval_bounds(
             Interval {
                 start,
                 end,
-                n_points: f64::NAN,
+                ..Interval::EMPTY
             }
         } else {
             Interval::EMPTY
@@ -320,6 +429,93 @@ pub(crate) fn interval_curve(
         out_c.push(c_end);
     }
     out_t.len()
+}
+
+/// Write the dose amount of every interval which exists (`interval_dose`).
+///
+/// `amounts` are the dose amounts of the row, in the order of its dose times; interval `k` takes
+/// `amounts[k]`, and an interval which does not exist, or has no amount, keeps `NaN`.
+///
+/// Mirrors `np.where(usable, amounts, np.nan)` in `compute_intervals`.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "reached by the multiple dose analysis, which a later task wires in"
+    )
+)]
+pub(crate) fn fill_doses(intervals: &mut [Interval], amounts: &[f64]) {
+    for (k, interval) in intervals.iter_mut().enumerate() {
+        interval.dose = if interval.start.is_finite() {
+            amounts.get(k).copied().unwrap_or(f64::NAN)
+        } else {
+            f64::NAN
+        };
+    }
+}
+
+/// The nine concentration variables of one interval, from the curve of the interval.
+///
+/// `t` and `c` are the first `n` points of the curve [`interval_curve`] built: the samples inside
+/// plus both bounds. `c_start` is the value at the start as [`interval_curve`] computed it (not
+/// the first point of the curve, which is the observed sample on a tie), and `covered` whether
+/// the interval has an observation of its own: a sample inside it, or at its end when no dose
+/// follows (`covering >= 1` of `_interval_column`, which the caller knows from the raw row).
+///
+/// An interval is complete when it exists, its curve reaches its end and has two points, and it is
+/// covered. Only a complete interval reports the area, the extremes, the trough and what is built
+/// from them; `c_start` is reported for every interval which exists. `tmax` is the time of the
+/// first largest value after the start, `fluctuation` is `(cmax - cmin) / cavg` and `swing`
+/// `(cmax - cmin) / cmin`, with the IEEE division of numpy where a denominator is zero.
+///
+/// Mirrors the concentration branch of `_interval_column` of `src/pkpdutils/nca/intervals.py`
+/// (Gabrielsson & Weiner 2016, ch. 2.8 for the fluctuation and the swing).
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "reached by the multiple dose analysis, which a later task wires in"
+    )
+)]
+pub(crate) fn interval_parameters(
+    t: &[f64],
+    c: &[f64],
+    n: usize,
+    c_start: f64,
+    covered: bool,
+    interval: &mut Interval,
+    options: &NcaOptions,
+) {
+    let nan = f64::NAN;
+    let exists = interval.start.is_finite() && interval.end.is_finite();
+    interval.c_start = if exists { c_start } else { nan };
+    let n = n.min(t.len()).min(c.len());
+    let (t, c) = (&t[..n], &c[..n]);
+    // the curve reaches the end of the interval only when a finite value at the end was inserted
+    let complete = exists && covered && n >= 2 && t[n - 1] == interval.end;
+    if !complete {
+        (
+            interval.auc,
+            interval.cmax,
+            interval.tmax,
+            interval.cmin,
+            interval.ctrough,
+            interval.cavg,
+            interval.fluctuation,
+            interval.swing,
+        ) = (nan, nan, nan, nan, nan, nan, nan, nan);
+        return;
+    }
+    let area = trapezoid(t, c, options.auc_method).auc;
+    let imax = first_maximum(c, n);
+    interval.auc = area;
+    interval.cmax = c[imax];
+    interval.tmax = t[imax] - interval.start;
+    interval.cmin = c[first_minimum(c, n)];
+    interval.ctrough = c[n - 1];
+    interval.cavg = area / (interval.end - interval.start);
+    interval.fluctuation = (interval.cmax - interval.cmin) / interval.cavg;
+    interval.swing = (interval.cmax - interval.cmin) / interval.cmin;
 }
 
 #[cfg(test)]
@@ -589,7 +785,7 @@ mod tests {
         let interval = Interval {
             start,
             end,
-            n_points: f64::NAN,
+            ..Interval::EMPTY
         };
         let (mut out_t, mut out_c) = (vec![9.0], vec![9.0]);
         let n = interval_curve(
@@ -711,7 +907,7 @@ mod tests {
         let interval = Interval {
             start: 0.0,
             end: 4.0,
-            n_points: f64::NAN,
+            ..Interval::EMPTY
         };
         let n = interval_curve(
             &t,
@@ -757,5 +953,308 @@ mod tests {
             assert_eq!(first(&c, &o), 8.0, "{method:?}");
         }
         assert!((first(&c, &on) - 16.0).abs() < 1e-12);
+    }
+
+    // ---- the nine concentration variables ----
+
+    /// The variables of one interval, from the curve `interval_curve` builds for it.
+    fn parameters_of(
+        t: &[f64],
+        c: &[f64],
+        (start, end): (f64, f64),
+        method: AucMethod,
+        route: Route,
+    ) -> Interval {
+        let options = with(method, C0Method::LogBackExtrapolation);
+        let mut interval = Interval {
+            start,
+            end,
+            ..Interval::EMPTY
+        };
+        let (mut ot, mut oc) = (Vec::new(), Vec::new());
+        let n = interval_curve(
+            t,
+            c,
+            t.len(),
+            &interval,
+            Some(route),
+            &options,
+            &mut ot,
+            &mut oc,
+        );
+        let c_start = interpolate_at(t, c, t.len(), start, options.auc_method);
+        interval_parameters(&ot, &oc, n, c_start, true, &mut interval, &options);
+        interval
+    }
+
+    fn near(a: f64, b: f64) {
+        assert!((a - b).abs() <= 1e-12 * b.abs().max(1.0), "{a} vs {b}");
+    }
+
+    #[test]
+    fn the_parameters_of_one_interval_match_the_closed_form_of_a_mono_exponential() {
+        // noise free c0*exp(-k t): with the log rule the trapezoid is the integral, so the area of
+        // [start, end] is c0/k*(exp(-k*start) - exp(-k*end)); the peak is the first sample and the
+        // trough the last. The second interval starts at 6 (not 0), so a tmax which forgot to
+        // subtract the start would be 6, not 0
+        let (c0, k) = (10.0_f64, 0.3_f64);
+        let t: Vec<f64> = (0..=12).map(f64::from).collect();
+        let c: Vec<f64> = t.iter().map(|&x| c0 * (-k * x).exp()).collect();
+        let f = |x: f64| c0 * (-k * x).exp();
+        for (start, end) in [(0.0, 6.0), (6.0, 12.0)] {
+            let i = parameters_of(&t, &c, (start, end), AucMethod::Log, Route::Oral);
+            near(i.auc, c0 / k * ((-k * start).exp() - (-k * end).exp()));
+            near(i.cmax, f(start));
+            assert_eq!(i.tmax, 0.0);
+            near(i.cmin, f(end));
+            near(i.ctrough, f(end));
+            near(i.c_start, f(start));
+            near(i.cavg, i.auc / (end - start));
+            near(i.fluctuation, (f(start) - f(end)) / i.cavg);
+            near(i.swing, (f(start) - f(end)) / f(end));
+        }
+    }
+
+    #[test]
+    fn a_hump_in_the_interval_separates_the_extremes_from_the_ends() {
+        // samples 4..8 = 3, 1, 9, 6, 2 (hand computed, linear): the minimum 1 is inside, not the
+        // trough 2; the peak 9 is at 6, 2 after the start of the interval. Area 2 + 5 + 7.5 + 4.
+        // swing uses cmin (8 / 1), not the trough (8 / 2); the fluctuation the mean (8 / 4.625)
+        let t = [4.0, 5.0, 6.0, 7.0, 8.0];
+        let c = [3.0, 1.0, 9.0, 6.0, 2.0];
+        let i = parameters_of(&t, &c, (4.0, 8.0), AucMethod::Linear, Route::Oral);
+        assert_eq!(
+            (i.auc, i.cmax, i.tmax, i.cmin, i.ctrough, i.c_start),
+            (18.5, 9.0, 2.0, 1.0, 2.0, 3.0)
+        );
+        assert_eq!(i.cavg, 4.625);
+        assert_eq!(i.swing, 8.0);
+        near(i.fluctuation, 8.0 / 4.625);
+    }
+
+    #[test]
+    fn a_tied_maximum_reports_the_first_time() {
+        // 9 at 6 and at 7: tmax is 2, not 3
+        let t = [4.0, 5.0, 6.0, 7.0, 8.0];
+        let c = [3.0, 1.0, 9.0, 9.0, 2.0];
+        let i = parameters_of(&t, &c, (4.0, 8.0), AucMethod::Linear, Route::Oral);
+        assert_eq!((i.tmax, i.auc), (2.0, 21.5));
+    }
+
+    #[test]
+    fn a_trough_which_is_the_minimum_and_a_peak_at_the_end_are_found() {
+        // the extremes are searched over the whole curve, the end included: a rising interval
+        // peaks at its end (tmax is the interval length) and its minimum is the start
+        let t = [0.0, 1.0, 2.0];
+        let c = [1.0, 2.0, 5.0];
+        let i = parameters_of(&t, &c, (0.0, 2.0), AucMethod::Linear, Route::Oral);
+        assert_eq!((i.cmax, i.tmax, i.cmin, i.ctrough), (5.0, 2.0, 1.0, 5.0));
+    }
+
+    #[test]
+    fn the_start_value_is_the_one_given_not_the_first_point_of_the_curve() {
+        // on a tie the curve starts with the observed value; the variable is the interpolated one
+        let options = NcaOptions::default();
+        let mut i = Interval {
+            start: 0.0,
+            end: 2.0,
+            ..Interval::EMPTY
+        };
+        interval_parameters(
+            &[0.0, 0.0, 2.0],
+            &[5.0, 4.0, 1.0],
+            3,
+            4.0,
+            true,
+            &mut i,
+            &options,
+        );
+        assert_eq!((i.c_start, i.cmax), (4.0, 5.0));
+    }
+
+    #[test]
+    fn an_interval_without_an_observation_of_its_own_reports_only_its_start_value() {
+        let options = with(AucMethod::Linear, C0Method::LogBackExtrapolation);
+        let mut i = Interval {
+            start: 0.0,
+            end: 2.0,
+            ..Interval::EMPTY
+        };
+        interval_parameters(&[0.0, 2.0], &[5.0, 1.0], 2, 5.0, false, &mut i, &options);
+        assert_eq!(i.c_start, 5.0);
+        for v in [
+            i.auc,
+            i.cmax,
+            i.tmax,
+            i.cmin,
+            i.ctrough,
+            i.cavg,
+            i.fluctuation,
+            i.swing,
+        ] {
+            assert!(v.is_nan());
+        }
+    }
+
+    #[test]
+    fn a_curve_which_is_short_or_does_not_reach_its_end_is_incomplete() {
+        let options = with(AucMethod::Linear, C0Method::LogBackExtrapolation);
+        let run = |t: &[f64], c: &[f64]| {
+            let mut i = Interval {
+                start: 0.0,
+                end: 2.0,
+                ..Interval::EMPTY
+            };
+            interval_parameters(t, c, t.len(), 5.0, true, &mut i, &options);
+            i
+        };
+        // one point: no area
+        assert!(run(&[0.0], &[5.0]).auc.is_nan());
+        // two points which stop before the end (no value at the end): not complete
+        let short = run(&[0.0, 1.0], &[5.0, 3.0]);
+        assert!(short.auc.is_nan() && short.ctrough.is_nan());
+        assert_eq!(short.c_start, 5.0);
+        // n smaller than the slices: only the first n points are read
+        let mut i = Interval {
+            start: 0.0,
+            end: 2.0,
+            ..Interval::EMPTY
+        };
+        interval_parameters(
+            &[0.0, 1.0, 2.0, 3.0],
+            &[5.0, 3.0, 1.0, 99.0],
+            3,
+            5.0,
+            true,
+            &mut i,
+            &options,
+        );
+        assert_eq!((i.cmax, i.cmin), (5.0, 1.0));
+    }
+
+    #[test]
+    fn an_interval_which_does_not_exist_is_all_not_a_number() {
+        let options = NcaOptions::default();
+        let mut i = Interval::EMPTY;
+        interval_parameters(&[0.0, 2.0], &[5.0, 1.0], 2, 5.0, true, &mut i, &options);
+        assert!(i.c_start.is_nan() && i.auc.is_nan() && i.cmax.is_nan());
+    }
+
+    #[test]
+    fn a_zero_trough_gives_the_infinite_swing_of_numpy() {
+        let options = with(AucMethod::Linear, C0Method::LogBackExtrapolation);
+        let mut i = Interval {
+            start: 0.0,
+            end: 2.0,
+            ..Interval::EMPTY
+        };
+        interval_parameters(
+            &[0.0, 1.0, 2.0],
+            &[4.0, 2.0, 0.0],
+            3,
+            4.0,
+            true,
+            &mut i,
+            &options,
+        );
+        assert_eq!((i.cmin, i.swing), (0.0, f64::INFINITY));
+    }
+
+    #[test]
+    fn the_dose_of_an_interval_follows_its_dose_and_only_an_existing_interval_has_one() {
+        let mut v = Vec::new();
+        interval_bounds(&[0.0, 2.0, f64::NAN], 2, Some(2.0), &mut v);
+        v.push(Interval::EMPTY);
+        fill_doses(&mut v, &[10.0, 20.0]);
+        assert_eq!((v[0].dose, v[1].dose), (10.0, 20.0));
+        assert!(v[2].dose.is_nan() && v[3].dose.is_nan());
+        // a shorter amount list leaves the rest not a number
+        fill_doses(&mut v, &[7.0]);
+        assert_eq!(v[0].dose, 7.0);
+        assert!(v[1].dose.is_nan());
+    }
+
+    #[test]
+    fn the_interval_variables_are_the_names_python_emits_in_its_order() {
+        // copied from `interval_variables` and `CONCENTRATION_VARIABLES` of intervals.py
+        let names: Vec<&str> = INTERVAL_VARIABLES.iter().map(|v| v.name).collect();
+        assert_eq!(
+            names,
+            [
+                "interval_start",
+                "interval_end",
+                "interval_dose",
+                "interval_n_points",
+                "interval_auc",
+                "interval_cmax",
+                "interval_tmax",
+                "interval_cmin",
+                "interval_ctrough",
+                "interval_c_start",
+                "interval_cavg",
+                "interval_fluctuation",
+                "interval_swing",
+            ]
+        );
+        let units: Vec<&str> = INTERVAL_VARIABLES.iter().map(|v| v.unit).collect();
+        assert_eq!(
+            units,
+            [
+                "{time}",
+                "{time}",
+                "{dose}",
+                "dimensionless",
+                "({unit}) * ({time})",
+                "{unit}",
+                "{time}",
+                "{unit}",
+                "{unit}",
+                "{unit}",
+                "{unit}",
+                "dimensionless",
+                "dimensionless",
+            ]
+        );
+    }
+
+    #[test]
+    fn interval_dose_is_emitted_only_for_a_batch_with_amounts() {
+        use crate::assemble::{RowResult, result_of};
+        use crate::parameters::tests::{many, regimen};
+
+        let times = [0.0, 1.0, 2.0, 3.0];
+        let plain = many(&[&times], &[&[4.0, 3.0, 2.0, 1.0]]);
+        let dosed = regimen(plain.clone(), Route::Oral, 10.0, &[0.0, 2.0]);
+        let row = |dose: f64| {
+            let mut intervals = Vec::new();
+            interval_bounds(&[0.0, 2.0], 2, Some(2.0), &mut intervals);
+            fill_doses(&mut intervals, &[dose, dose]);
+            RowResult {
+                route: Some(Route::Oral),
+                dose_amount: dose,
+                parameters: crate::parameters::RowParameters::EMPTY,
+                intervals,
+            }
+        };
+        let emitted = |batch: &Batch| -> Vec<String> {
+            let rows = [row(10.0)];
+            let result = result_of(batch, &NcaOptions::default(), &rows, &[]).unwrap();
+            result
+                .point_variables
+                .iter()
+                .map(|v| v.name.clone())
+                .collect()
+        };
+        let with_dose = emitted(&dosed);
+        let without = emitted(&Batch {
+            max_doses: 0,
+            ..plain
+        });
+        assert!(with_dose.contains(&"interval_dose".to_string()));
+        assert!(!without.contains(&"interval_dose".to_string()));
+        // everything else is in both, in one order
+        let others: Vec<_> = with_dose.iter().filter(|n| *n != "interval_dose").collect();
+        assert_eq!(others, without.iter().collect::<Vec<_>>());
+        assert!(without.contains(&"interval_swing".to_string()));
     }
 }

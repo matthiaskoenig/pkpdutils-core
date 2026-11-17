@@ -338,6 +338,7 @@ fn interval_variables(
         .max(rows.iter().map(|r| r.intervals.len()).max().unwrap_or(0));
     INTERVAL_VARIABLES
         .iter()
+        .filter(|variable| (variable.present)(batch))
         .map(|variable| {
             let (unit, factor) = unit_of(variable.name, variable.unit, context)?;
             let values = rows
