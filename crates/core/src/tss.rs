@@ -424,10 +424,13 @@ mod tests {
         let v0 = [1.0, 1.8, 2.3, 2.4, 2.38, 2.41];
         let v1 = [1.0, 1.5, 2.2, 3.1, 4.2, 5.4];
         let v2 = [1.0, 2.0, 2.5];
-        let (t, v, s, ok) = padded(&[(&T6, &v0), (&T6, &v1), (&T6[..3], &v2), (&T6, &v0)]);
+        let (t, v, mut s, ok) = padded(&[(&T6, &v0), (&T6, &v1), (&T6[..3], &v2), (&T6, &v0)]);
+        for start in &mut s[18..] {
+            *start += 100.0;
+        }
         let got = stepwise(&t, &v, &s, &ok, 4, 6, 0.05);
         // the last row reads its own starts, not those of the first row
-        assert_eq!(got[3], 10.0);
+        assert_eq!(got[3], 110.0);
         assert_eq!(got[0], 10.0);
         assert!(got[1].is_nan());
         assert_eq!(got[2], 0.0);
