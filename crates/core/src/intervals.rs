@@ -1110,6 +1110,9 @@ mod tests {
         };
         // one point: no area
         assert!(run(&[0.0], &[5.0]).auc.is_nan());
+        // a lone point at the end is no interval either
+        let lone = run(&[2.0], &[1.0]);
+        assert!(lone.auc.is_nan() && lone.cmax.is_nan());
         // two points which stop before the end (no value at the end): not complete
         let short = run(&[0.0, 1.0], &[5.0, 3.0]);
         assert!(short.auc.is_nan() && short.ctrough.is_nan());
@@ -1165,7 +1168,8 @@ mod tests {
         let mut v = Vec::new();
         interval_bounds(&[0.0, 2.0, f64::NAN], 2, Some(2.0), &mut v);
         v.push(Interval::EMPTY);
-        fill_doses(&mut v, &[10.0, 20.0]);
+        // amounts for the empty intervals too: they must not be written
+        fill_doses(&mut v, &[10.0, 20.0, 30.0, 40.0]);
         assert_eq!((v[0].dose, v[1].dose), (10.0, 20.0));
         assert!(v[2].dose.is_nan() && v[3].dose.is_nan());
         // a shorter amount list leaves the rest not a number
