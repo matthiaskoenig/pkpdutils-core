@@ -466,7 +466,10 @@ def test_the_wheel_is_built_against_the_stable_abi() -> None:
         assert tag.startswith("cp313-abi3-"), f"{tag} is no abi3 tag of the 3.13 floor"
 
 
-def test_the_wheel_summarizes_and_refuses_a_malformed_request_as_a_value_error() -> None:
+def test_the_wheel_summarizes_and_refuses_a_malformed_request_as_a_value_error() -> (
+    None
+):
+    """The installed wheel summarizes, and answers a malformed request with a `ValueError`."""
     request = {
         "values": np.array([[[1.0, 2.0, 4.0, np.nan]]]),
         "n_vars": 1,
@@ -484,6 +487,8 @@ def test_the_wheel_summarizes_and_refuses_a_malformed_request_as_a_value_error()
     # a request of the wrong size is a ValueError, and not the refusal a host answers
     # by analysing in python
     request["n_samples"] = 5
-    with pytest.raises(ValueError, match="4 values for 1 variables x 1 groups x 5") as raised:
+    with pytest.raises(
+        ValueError, match="4 values for 1 variables x 1 groups x 5"
+    ) as raised:
         pkpdutils_core.summarize(request)
     assert not isinstance(raised.value, pkpdutils_core.UnsupportedError)

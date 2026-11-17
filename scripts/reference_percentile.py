@@ -13,17 +13,20 @@ import numpy as np
 
 
 def lit(x: float) -> str:
+    """The rust literal of a float, `f64::NAN` for a NaN."""
     if np.isnan(x):
         return "f64::NAN"
     return repr(float(x))
 
 
 def row(v: np.ndarray, q: float) -> str:
+    """One case of the table: the values, the percentile and what numpy answers."""
     cells = ", ".join(lit(x) for x in v)
     return f"    (&[{cells}], {float(q)!r}, {float(np.nanpercentile(v, q))!r}),"
 
 
 def main(kind: str) -> None:
+    """Write the cases of one kind of table to standard output."""
     rng = np.random.default_rng(7)
     if kind == "plain":
         for k in (5, 8):
@@ -46,7 +49,7 @@ def main(kind: str) -> None:
                 continue
             g = index - b
             lo, hi = v[b], v[b + 1]
-            alt = high_branch = hi - (hi - lo) * (1 - g) if g >= 0.5 else lo + (hi - lo) * g
+            alt = hi - (hi - lo) * (1 - g) if g >= 0.5 else lo + (hi - lo) * g
             if alt != np.nanpercentile(v, q):
                 print(row(v, q))
                 found += 1
