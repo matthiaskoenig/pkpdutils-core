@@ -161,16 +161,29 @@ mod tests {
         // decimal digits with mpmath, not any optimizer's output. Python's default LM tolerances
         // stop at 8.054337149, 2.9e-7 short of it, which is a looseness this test must not pin
         let (ref_tss, ref_plateau) = (8.054339489045725, 10.210161963657178);
+        eprintln!(
+            "ACH {:e} {:e}",
+            tss / ref_tss - 1.0,
+            plateau / ref_plateau - 1.0
+        );
         assert!((tss / ref_tss - 1.0).abs() < 1e-6, "{tss}");
         assert!((plateau / ref_plateau - 1.0).abs() < 1e-6, "{plateau}");
     }
 
     #[test]
     fn a_slow_and_a_fast_approach_are_found_by_the_start_whose_window_holds_them() {
+        // measured relative errors: 9e-12, 3e-12, 2e-13, 4e-12 and, where the cost surface nearly
+        // flattens against the plateau (250), 2.7e-9, so that case allows 1e-8 and the rest 1e-9
         // noise free, k * t_last = 0.01: only the window of the 0.5 start (0.005 and up) holds
         // it, the windows of the 2 and 8 starts begin at 0.02 and 0.08 and end on their edge
         let t = grid();
-        for (k_t_last, rel) in [(0.01, 1e-6), (0.006, 1e-6), (0.015, 1e-6), (150.0, 1e-6)] {
+        for (k_t_last, rel) in [
+            (0.006, 1e-9),
+            (0.01, 1e-9),
+            (0.015, 1e-9),
+            (150.0, 1e-9),
+            (250.0, 1e-8),
+        ] {
             let k = k_t_last / 12.0;
             let (tss, plateau) = monoexponential(&t, &rises(10.0, k, &t), 0.9);
             assert!(
