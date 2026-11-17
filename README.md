@@ -188,6 +188,12 @@ uv run --with-editable path/to/pkpdutils python scripts/crosswalk_gate.py --chec
 
 `scripts/pint_gate.py` writes `crates/units/tests/data/pint_gate.json`, pint's answer for every unit spelling of the package and every derived parameter unit, and `scripts/crosswalk_gate.py` writes `crates/oracles/tests/data/crosswalk.json`, the map from the variables of `pkpdutils` to the column names of the three NCA tools; the sections above describe both. `scripts/vendor_oracles.py --check` is the third, and it needs no checkout unless `--source` is given.
 
+Two reference generators are committed for the tables a test pins rather than computes, and neither needs a `pkpdutils` checkout. `scripts/reference_percentile.py` prints the rows of `crates/core/src/percentile.rs` from `numpy.nanpercentile` (`plain`, `hole`, `single`, `naive` and `grouping`: the last three are the rows a seeded search found where one of the plausible interpolations, or the plausible grouping of the virtual index, differs from numpy in the last bit, which is what makes the bit-exactness of `nan_percentile_rows` a measurement rather than a claim). The Student t references of `crates/core/src/stats.rs` come from the twin generator in the host repository, `scripts/reference_t_isf.py` of `pkpdutils`, which inverts the survival function with 60-digit mpmath and so reaches `p = 1e-300`, where scipy is no longer an oracle.
+
+```bash
+python3 scripts/reference_percentile.py single
+```
+
 ## Release
 
 A tag `vx.y.z` publishes the distribution to PyPI and creates the release of this repository from `release-notes/x.y.z.md`. [docs/release.md](docs/release.md) has the steps.
