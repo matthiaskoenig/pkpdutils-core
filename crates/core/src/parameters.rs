@@ -324,6 +324,11 @@ pub(crate) struct Parameter {
 /// of which a row carries one, so a batch of one route reports them in exactly the python order
 /// and a batch which mixes routes reports both names, as `merge_rows` of `nca.py` does.
 ///
+/// The last block is the steady state parameters of `compute_steady_state`
+/// ([`Parameter::steady_state`]): a batch reports them only when it has a multiple dose row, and
+/// its other rows are `NaN` in them (`n_doses` apart, which every row reports). Their order is
+/// the one python writes them in, after the dose dependent parameters.
+///
 /// `flags` is not here: it has its own section in `pkpdutils_abi::AnalysisResult` and is not a
 /// parameter column.
 pub(crate) const PARAMETERS: &[Parameter] = &[
