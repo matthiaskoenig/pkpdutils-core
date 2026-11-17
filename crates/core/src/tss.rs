@@ -157,10 +157,28 @@ mod tests {
             .map(|t| 10.0 * (1.0 - (-0.3 * t).exp()) * (1.0 + 0.05 * (7.0 * t).sin()))
             .collect();
         let (tss, plateau) = monoexponential(&t, &v, 0.9);
-        // `_monoexponential_row` of pkpdutils.nca.tss on the same series
-        let (ref_tss, ref_plateau) = (8.054337149471058, 10.210161095190243);
+        // the true minimum of the profiled cost, scipy `least_squares(method="lm")` on the same
+        // profiled residuals with xtol = ftol = gtol = 1e-15 (python's own default tolerances stop
+        // at 8.054337149, 2.9e-7 short, which is a looseness and not the answer)
+        let (ref_tss, ref_plateau) = (8.054339492229222, 10.210161964838916);
         assert!((tss / ref_tss - 1.0).abs() < 1e-6, "{tss}");
         assert!((plateau / ref_plateau - 1.0).abs() < 1e-6, "{plateau}");
+    }
+
+    #[test]
+    fn a_slow_and_a_fast_approach_are_found_by_the_start_whose_window_holds_them() {
+        // noise free, k * t_last = 0.01: only the window of the 0.5 start (0.005 and up) holds
+        // it, the windows of the 2 and 8 starts begin at 0.02 and 0.08 and end on their edge
+        let t = grid();
+        for (k_t_last, rel) in [(0.01, 1e-6), (0.006, 1e-6), (0.015, 1e-6), (150.0, 1e-6)] {
+            let k = k_t_last / 12.0;
+            let (tss, plateau) = monoexponential(&t, &rises(10.0, k, &t), 0.9);
+            assert!(
+                (tss / (10f64.ln() / k) - 1.0).abs() < rel,
+                "{k_t_last}: {tss}"
+            );
+            assert!((plateau / 10.0 - 1.0).abs() < rel, "{k_t_last}: {plateau}");
+        }
     }
 
     #[test]
