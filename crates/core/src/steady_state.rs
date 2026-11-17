@@ -359,6 +359,37 @@ mod tests {
     }
 
     #[test]
+    fn the_shortfall_is_a_difference_of_the_end_and_the_sum_of_start_and_tlast() {
+        // a cancelling subtraction at a large absolute time: `end - (start + tlast)` is
+        // 2.525497620808892e-06 and `(end - start) - tlast` 2.5254968374355258e-06, 3e-7 apart in
+        // relative terms. Python's association gives the fraction below (numbers from python)
+        let start = 10000.058535104792;
+        let t = [
+            start,
+            10001.058535104792,
+            10002.058535104792,
+            10004.058535104792,
+            10006.058532579294,
+        ];
+        let c = [2.0, 10.0, 8.0, 5.0, 3.0];
+        let options = NcaOptions::default();
+        let route = Some(Route::Oral);
+        let (f, i) = run(
+            &t,
+            &c,
+            open(start, 10006.058535104792),
+            5.999997474503163,
+            3.0,
+            0.2,
+            route,
+            &options,
+        );
+        assert_eq!(f, 2.1306722294214696e-07);
+        assert_eq!(i.ctrough, 2.99999848470181);
+        assert_eq!(i.auc, 35.55915755132657);
+    }
+
+    #[test]
     fn the_shortfall_is_measured_against_the_intervals_own_length() {
         let route = Some(Route::Oral);
         // NcaOptions::tau of 1 would allow only 0.1 of shortfall; the interval is 12 long, so the
