@@ -295,6 +295,70 @@ mod tests {
     }
 
     #[test]
+    fn a_shortfall_of_nothing_is_not_a_shortfall() {
+        // condition 4. The last sample sits on the end of an interval which was not analysed
+        // (NaN area): the observed part is the whole interval and has a finite area, so only
+        // `shortfall > 0` keeps it out, under the default tolerance and under zero (python: NaN
+        // for both). A port which reads a tolerance of zero as "exact" lets it through
+        let t = [0.0, 1.0, 2.0, 4.0, 6.0, 8.0, 12.0];
+        let c = [2.0, 10.0, 8.0, 5.0, 3.0, 2.0, 1.1];
+        for tolerance in [0.1, 0.0] {
+            let options = NcaOptions {
+                tau_tolerance: tolerance,
+                ..NcaOptions::default()
+            };
+            let (f, i) = run(
+                &t,
+                &c,
+                open(0.0, 12.0),
+                12.0,
+                1.1,
+                0.2,
+                Some(Route::Oral),
+                &options,
+            );
+            assert!(f.is_nan());
+            untouched(&i, 0.0, 12.0);
+        }
+    }
+
+    #[test]
+    fn a_shortfall_equal_to_the_tolerance_times_tau_is_completed() {
+        // condition 5, `<=` and not `<`: 12 - 6 is exactly 0.5 * 12 (python: completed; a hair
+        // more is not)
+        let options = NcaOptions {
+            tau_tolerance: 0.5,
+            ..NcaOptions::default()
+        };
+        let (t, c) = ([0.0, 1.0, 2.0, 4.0, 6.0], [2.0, 10.0, 8.0, 5.0, 3.0]);
+        let (f, i) = run(
+            &t,
+            &c,
+            open(0.0, 12.0),
+            6.0,
+            3.0,
+            0.2,
+            Some(Route::Oral),
+            &options,
+        );
+        assert_eq!(f, 0.22766731086251266);
+        assert_eq!(i.auc, 46.0412466840576);
+        assert_eq!(i.cmin, 0.9035826357366061);
+        let t = [0.0, 1.0, 2.0, 4.0, 5.999];
+        let (f, _) = run(
+            &t,
+            &c,
+            open(0.0, 12.0),
+            5.999,
+            3.0,
+            0.2,
+            Some(Route::Oral),
+            &options,
+        );
+        assert!(f.is_nan());
+    }
+
+    #[test]
     fn the_shortfall_is_measured_against_the_intervals_own_length() {
         let route = Some(Route::Oral);
         // NcaOptions::tau of 1 would allow only 0.1 of shortfall; the interval is 12 long, so the
