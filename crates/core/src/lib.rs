@@ -22,7 +22,7 @@ mod pack;
 mod parameters;
 mod shard;
 // no caller yet: the Student-t quantile and the bootstrap of the next tasks consume it
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 mod stats;
 mod steady_state;
 mod terminal;
