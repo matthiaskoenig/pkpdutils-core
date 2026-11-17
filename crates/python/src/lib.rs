@@ -33,8 +33,9 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 // `::` is not decoration: `#[pymodule]` expands to a module of the same name as the crate, which
 // an unqualified path would resolve to instead
 use ::pkpdutils_core as kernel;
+use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::create_exception;
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -178,6 +179,73 @@ fn is_supported(
     Ok(unsupported_reason(&batch, &options))
 }
 
+/// Apply `f` to a float or to every element of a 1-d float array, giving back the same shape.
+///
+/// A python float returns a python float and an array returns a new array, so the three
+/// quantile functions serve a scalar call and a vectorised one with the same signature.
+///
+/// # Errors
+///
+/// A `TypeError` when the argument is neither a float nor a 1-d array of floats.
+fn map_scalar_or_array<'py>(
+    py: Python<'py>,
+    x: &Bound<'py, PyAny>,
+    f: impl Fn(f64) -> f64 + Send,
+) -> PyResult<Bound<'py, PyAny>> {
+    if let Ok(value) = x.extract::<f64>() {
+        let out = guarded(|| f(value))?;
+        return Ok(out.into_pyobject(py)?.into_any());
+    }
+    let array = x
+        .extract::<PyReadonlyArray1<'_, f64>>()
+        .map_err(|_| PyTypeError::new_err("expected a float or a 1-d numpy array of floats"))?;
+    // a strided view (a column of a matrix, a reversed array) is read as it is, not copied first
+    let view = array.as_array();
+    let out = guarded(|| view.iter().map(|&v| f(v)).collect::<Vec<f64>>())?;
+    Ok(PyArray1::from_vec(py, out).into_any())
+}
+
+/// The standard normal quantile of the upper tail: `x` with `P(Z > x) = p`.
+///
+/// Accurate to a few ulp over `[1e-300, 1 - 1e-16]`; `0` gives `+inf`, `1` gives `-inf` and a
+/// probability outside `[0, 1]` gives `NaN`.
+///
+/// # Errors
+///
+/// A `TypeError` when `p` is neither a float nor a 1-d float array.
+#[pyfunction]
+fn normal_isf<'py>(py: Python<'py>, p: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    map_scalar_or_array(py, p, kernel::stats::normal_isf)
+}
+
+/// The Student t quantile of the upper tail with `df` degrees of freedom (real, at least 1).
+///
+/// # Errors
+///
+/// A `TypeError` when `p` is neither a float nor a 1-d float array.
+#[pyfunction]
+fn student_t_isf<'py>(
+    py: Python<'py>,
+    p: &Bound<'py, PyAny>,
+    df: f64,
+) -> PyResult<Bound<'py, PyAny>> {
+    map_scalar_or_array(py, p, move |p| kernel::stats::student_t_isf(p, df))
+}
+
+/// The survival function `P(T > t)` of the Student t distribution with `df` degrees of freedom.
+///
+/// # Errors
+///
+/// A `TypeError` when `t` is neither a float nor a 1-d float array.
+#[pyfunction]
+fn student_t_sf<'py>(
+    py: Python<'py>,
+    t: &Bound<'py, PyAny>,
+    df: f64,
+) -> PyResult<Bound<'py, PyAny>> {
+    map_scalar_or_array(py, t, move |t| kernel::stats::student_t_sf(t, df))
+}
+
 /// Run `f` with the unwind boundary of the extension around it.
 ///
 /// A panic which crosses into pyo3 aborts the process, so the user of a python package would
@@ -227,6 +295,9 @@ fn pkpdutils_core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     module.add_function(wrap_pyfunction!(analyze_batch, module)?)?;
     module.add_function(wrap_pyfunction!(is_supported, module)?)?;
+    module.add_function(wrap_pyfunction!(normal_isf, module)?)?;
+    module.add_function(wrap_pyfunction!(student_t_isf, module)?)?;
+    module.add_function(wrap_pyfunction!(student_t_sf, module)?)?;
     Ok(())
 }
 
@@ -237,7 +308,7 @@ mod tests {
     use std::thread;
     use std::time::Instant;
 
-    use numpy::{PyArray2, PyReadonlyArray1};
+    use numpy::PyArray2;
     use pyo3::exceptions::{PyKeyError, PyRuntimeError};
     use pyo3::types::PyType;
 

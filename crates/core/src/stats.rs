@@ -62,7 +62,7 @@ fn erfc_nonnegative(x: f64) -> f64 {
 }
 
 /// The standard normal distribution function `P(X <= x)`.
-pub(crate) fn normal_cdf(x: f64) -> f64 {
+pub fn normal_cdf(x: f64) -> f64 {
     if x.is_nan() {
         return f64::NAN;
     }
@@ -71,13 +71,13 @@ pub(crate) fn normal_cdf(x: f64) -> f64 {
 }
 
 /// The standard normal survival function `P(X > x)`, exactly `normal_cdf(-x)`.
-pub(crate) fn normal_sf(x: f64) -> f64 {
+pub fn normal_sf(x: f64) -> f64 {
     normal_cdf(-x)
 }
 
 /// The standard normal quantile, the inverse of [`normal_cdf`]: `-inf` at 0, `inf` at 1 and
 /// `NaN` outside `[0, 1]`.
-pub(crate) fn normal_ppf(p: f64) -> f64 {
+pub fn normal_ppf(p: f64) -> f64 {
     if p.is_nan() || !(0.0..=1.0).contains(&p) {
         return f64::NAN;
     }
@@ -114,7 +114,7 @@ pub(crate) fn normal_ppf(p: f64) -> f64 {
 }
 
 /// The standard normal inverse survival function, exactly `-normal_ppf(p)`.
-pub(crate) fn normal_isf(p: f64) -> f64 {
+pub fn normal_isf(p: f64) -> f64 {
     -normal_ppf(p)
 }
 
@@ -276,7 +276,7 @@ fn student_t_two_sided(s: f64, df: f64) -> (f64, f64) {
 }
 
 /// The Student t distribution function `P(T <= t)` for `df >= 1` degrees of freedom.
-pub(crate) fn student_t_cdf(t: f64, df: f64) -> f64 {
+pub fn student_t_cdf(t: f64, df: f64) -> f64 {
     if t.is_nan() || df.is_nan() || df < 1.0 {
         return f64::NAN;
     }
@@ -292,7 +292,7 @@ pub(crate) fn student_t_cdf(t: f64, df: f64) -> f64 {
 }
 
 /// The Student t survival function `P(T > t)`, exactly `student_t_cdf(-t, df)`.
-pub(crate) fn student_t_sf(t: f64, df: f64) -> f64 {
+pub fn student_t_sf(t: f64, df: f64) -> f64 {
     student_t_cdf(-t, df)
 }
 
@@ -373,7 +373,7 @@ fn student_t_upper_quantile(p: f64, df: f64) -> f64 {
 
 /// The Student t inverse survival function: the `t` with `P(T > t) = p`. Infinite at 0 and 1,
 /// `NaN` outside `[0, 1]` and below one degree of freedom.
-pub(crate) fn student_t_isf(p: f64, df: f64) -> f64 {
+pub fn student_t_isf(p: f64, df: f64) -> f64 {
     if p.is_nan() || df.is_nan() || !(0.0..=1.0).contains(&p) || df < 1.0 {
         return f64::NAN;
     }
@@ -397,7 +397,7 @@ pub(crate) fn student_t_isf(p: f64, df: f64) -> f64 {
 }
 
 /// The Student t quantile, the inverse of [`student_t_cdf`], exactly `-student_t_isf(p, df)`.
-pub(crate) fn student_t_ppf(p: f64, df: f64) -> f64 {
+pub fn student_t_ppf(p: f64, df: f64) -> f64 {
     -student_t_isf(p, df)
 }
 
@@ -924,6 +924,47 @@ mod tests {
                 previous = t;
                 p *= 0.3;
             }
+        }
+    }
+
+    /// The fused multiply-add term of `exp_neg_half_square` is the rounding error of `x * x`,
+    /// which is zero at an integer and so invisible at `sf(10)` and `sf(37)`. At a fraction
+    /// `x * x` carries a rounding error of up to `0.5 ulp(x^2) = 1.1e-13` at `|x| = 36.79`, which
+    /// the exponential turns into a relative error of the same size. The references are mpmath
+    /// at 60 digits for the exact `f64` value of `x`, not for the decimal literal:
+    ///   python3 -c "from mpmath import *; mp.dps=60; [print(repr(float(x)), nstr(ncdf(mpf(float(x))), 20)) for x in (-36.79, -30.12)]"
+    #[test]
+    fn the_normal_distribution_function_keeps_the_rounding_error_of_the_square_in_the_far_tail() {
+        for (x, expected) in [
+            (-36.79_f64, 1.334_071_388_377_230_9e-296),
+            (-30.12_f64, 1.325_787_093_027_517_8e-199),
+        ] {
+            let got = normal_cdf(x);
+            assert!(
+                relative(got, expected) <= 1e-15,
+                "cdf({x}) = {got:e}, reference {expected:e}, relative {:e}",
+                relative(got, expected)
+            );
+        }
+    }
+
+    /// scipy answers `-inf` for these, which is why the committed table has no entry; the
+    /// references are mpmath at 60 digits, by bisection on `log t` of the regularised
+    /// incomplete beta function:
+    ///   sf(t) = betainc(df/2, 1/2, 0, df/(df+t^2), regularized=True) / 2
+    #[test]
+    fn the_student_t_inverse_survival_function_at_the_smallest_probability_matches_mpmath() {
+        for (df, expected) in [
+            (3.0, 1.033_110_836_044_652_9e100),
+            (10.0, 2.564_525_718_948_197_8e30),
+            (2.5, 8.765_437_882_279_992e119),
+        ] {
+            let got = student_t_isf(1e-300, df);
+            assert!(
+                relative(got, expected) <= 1e-12,
+                "isf(1e-300, {df}) = {got:e}, reference {expected:e}, relative {:e}",
+                relative(got, expected)
+            );
         }
     }
 }
