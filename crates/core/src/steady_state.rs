@@ -1280,4 +1280,71 @@ mod driver_tests {
         // a completed row whose interval was covered by the data reports 0, not NaN, as the
         // extrapolated share (`auc_tau_extrap_fraction` of the first test)
     }
+
+    #[test]
+    fn a_row_without_a_dose_and_with_a_tau_has_no_interval_and_no_flag() {
+        // python: the protocol is two NaN slots, so n_doses is 0, no interval exists, tau is
+        // reported NaN although the option is 12 (the predicted accumulation still reads the
+        // option), and the row is not flagged incomplete: there is no interval to be incomplete.
+        // A port which flagged every NaN area of a finite tau would set INCOMPLETE_INTERVAL
+        let n = f64::NAN;
+        let options = NcaOptions {
+            tau: Some(12.0),
+            ..NcaOptions::default()
+        };
+        let (p, i) = steady(&T[..6], &C[..6], &[n, n], &[n, n], Route::Oral, &options);
+        assert_eq!(p.n_doses, 0.0);
+        assert!(p.tau.is_nan() && p.auc_tau.is_nan() && p.cl_ss.is_nan());
+        assert_eq!(p.accumulation_ratio, 1.100723012304723);
+        assert_eq!((p.cmax, p.tmax), (7.16, 2.0));
+        assert_eq!(p.flags, NcaFlag::NONE);
+        assert!(i.iter().all(|i| i.start.is_nan() && i.c_start.is_nan()));
+    }
+
+    #[test]
+    fn a_single_dose_with_an_explicit_tau_has_no_first_interval_to_accumulate_against() {
+        // python: one dose and tau 12 give an interval and its area, but the observed
+        // accumulation ratios (last over first) are NaN, not 1: the first interval is the last
+        let options = NcaOptions {
+            tau: Some(12.0),
+            ..NcaOptions::default()
+        };
+        let (p, _) = steady(&T[..6], &C[..6], &[10.0], &[0.0], Route::Oral, &options);
+        assert_eq!(p.auc_tau, 43.305541919868325);
+        assert_eq!(p.cavg, 3.608795159989027);
+        assert_eq!(p.n_doses, 1.0);
+        assert!(p.accumulation_ratio_obs.is_nan());
+        assert!(p.accumulation_ratio_cmax_obs.is_nan());
+        assert!(p.accumulation_ratio_cmin_obs.is_nan());
+        assert!(p.accumulation_ratio_ctrough_obs.is_nan());
+    }
+
+    #[test]
+    fn the_clearance_needs_a_route() {
+        // python sets cl_ss only for a batch with doses and a route; at the field level a row
+        // without a route leaves it NaN
+        let input = RowInput {
+            times: &T,
+            values: &C,
+            dose: reference_dose(&[10.0, 10.0, 10.0], &[0.0, 12.0, 24.0], None, true),
+            route: None,
+            has_dose: true,
+            lloq: None,
+            window: None,
+            manual: None,
+            single_dose: false,
+            dose_times: &[0.0, 12.0, 24.0],
+            dose_amounts: &[10.0, 10.0, 10.0],
+        };
+        let mut intervals = Vec::new();
+        let p = compute_steady_state(
+            &input,
+            &NcaOptions::default(),
+            &mut Scratch::new(16),
+            None,
+            &mut intervals,
+        );
+        assert!(p.cl_ss.is_nan());
+        assert_eq!(p.auc_tau, 48.49926973218703);
+    }
 }
