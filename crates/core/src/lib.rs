@@ -29,6 +29,7 @@ pub use crate::stats::{normal_isf, student_t_isf, student_t_sf};
 pub use crate::summarize::summarize;
 mod steady_state;
 mod terminal;
+mod tss;
 
 use pkpdutils_abi::{
     ANALYSIS_CONTRACT, AnalysisRequest, AnalysisResult, BATCH_CONTRACT, Batch, Coordinate, Kind,
