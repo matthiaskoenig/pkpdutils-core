@@ -8,13 +8,21 @@
 //! Neither `(1 - gamma) * low + gamma * high` nor the one-branch form gives the same last bits.
 //! An infinite value is an ordinary value, so a span of `inf - inf` is `NaN`, as in numpy.
 
-/// The percentile `q` (in `[0, 100]`) of every row of the row-major `(n_rows, n_cols)` slice
-/// `values`, ignoring `NaN`; a row without a finite or infinite value is `NaN`.
+/// The percentile `q` (nominally in `[0, 100]`) of every row of the row-major `(n_rows, n_cols)`
+/// slice `values`, ignoring `NaN`; a row with no value but `NaN` is `NaN`.
 ///
-/// A slice whose length is no multiple of `n_cols`, or `n_cols == 0`, has no complete row and
-/// gives an empty result for `n_cols == 0` and the complete rows otherwise.
+/// A `q` outside `[0, 100]` is not validated, as in `result.py` (`numpy.nanpercentile` raises):
+/// above 100 it takes the last value and below 0 the first, through the interpolation, so an
+/// infinite end value gives `NaN`; a `NaN` `q` gives `NaN`.
+///
+/// Caveat on bit-exactness: the sort is `f64::total_cmp`, which orders `-0.0` before `+0.0`,
+/// where numpy treats the two as equal, so a row mixing both zeros can differ from numpy in the
+/// sign of a zero result.
+///
+/// `n_cols == 0` gives an empty result, and a trailing partial row of a slice whose length is no
+/// multiple of `n_cols` is ignored.
 // the summary statistics and the bootstrap of the later tasks of the plan are its callers
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub(crate) fn nan_percentile_rows(values: &[f64], n_cols: usize, q: f64) -> Vec<f64> {
     if n_cols == 0 {
         return Vec::new();
@@ -345,6 +353,66 @@ mod tests {
         ),
     ];
 
+    // rows where the grouping `(k - 1) * q / 100` of the virtual index changes the output, by
+    //   python scripts/reference_percentile.py grouping
+    const GROUPING_DIFFERS: &[Case] = &[
+        (
+            &[
+                0.14938584748286632,
+                0.15854211078095357,
+                0.26074442987006247,
+                0.2753980592362162,
+                0.6327905722921364,
+                0.7904988073402927,
+                0.9711718707780436,
+                2.004316679535085,
+            ],
+            95.0,
+            1.6427159964701197,
+        ),
+        (
+            &[
+                0.32822131963728884,
+                0.6517951571477772,
+                0.7380967330595681,
+                0.7786486198619015,
+                0.8209572611365016,
+                0.886237376388637,
+                1.4227463702623067,
+                4.5883909197084725,
+            ],
+            95.0,
+            3.480415327402313,
+        ),
+        (
+            &[
+                0.1848511971355381,
+                0.27502500853489237,
+                0.7118631780381193,
+                0.9946149907538813,
+                1.4143641255810961,
+                1.7920896732563834,
+                1.9510760156138836,
+                2.8637339734728435,
+            ],
+            35.0,
+            0.8391014937602121,
+        ),
+        (
+            &[
+                0.2519373876280494,
+                0.44626339585278274,
+                0.5710771009529856,
+                0.6871059072083395,
+                0.7408762172084947,
+                1.0079908570134883,
+                5.228150323046153,
+            ],
+            99.0,
+            4.974940755084191,
+        ),
+    ];
+
     // rows with three holes among seven, by
     //   python scripts/reference_percentile.py hole
     const HOLES: &[Case] = &[
@@ -459,6 +527,21 @@ mod tests {
             let g = index - b as f64;
             (1.0 - g) * row[b] + g * row[b + 1] != *e
         }));
+    }
+
+    #[test]
+    fn the_virtual_index_divides_q_before_it_multiplies() {
+        check(GROUPING_DIFFERS);
+    }
+
+    #[test]
+    fn a_q_outside_the_range_is_clamped_and_a_nan_q_is_nan() {
+        let row = [1.0, 2.0, 4.0];
+        // as in `result.py`, which does not validate q; numpy raises
+        assert_eq!(nan_percentile_rows(&row, 3, 150.0), [4.0]);
+        assert_eq!(nan_percentile_rows(&row, 3, -10.0), [1.0]);
+        assert!(nan_percentile_rows(&row, 3, f64::NAN)[0].is_nan());
+        assert!(nan_percentile_rows(&[1.0, f64::INFINITY], 2, 150.0)[0].is_nan());
     }
 
     #[test]
