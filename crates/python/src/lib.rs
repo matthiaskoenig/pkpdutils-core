@@ -53,6 +53,9 @@ pub(crate) const SUMMARY_REQUEST: &str = "a `summarize` request";
 /// [`SUMMARY_REQUEST`] does.
 pub(crate) const TSS_REQUEST: &str = "a `time_to_steady_state` request";
 
+/// How an error of [`nca_sparse`] names the dict it was given, as [`SUMMARY_REQUEST`] does.
+pub(crate) const SPARSE_REQUEST: &str = "a `nca_sparse` request";
+
 create_exception!(
     pkpdutils_core,
     UnsupportedError,
@@ -265,6 +268,59 @@ fn time_to_steady_state<'py>(
     Ok(out)
 }
 
+/// The sparse analysis of the host, `nca_sparse` of `pkpdutils.nca.sparse`.
+///
+/// `request` is a dict of the fields of the kernel's `SparseRequest`: `times` (a float array of
+/// `n_cols`) and `values` (a float array of `n_rows * n_cols`, read in C order), `n_rows`,
+/// `n_cols`, `design` (`"serial"` or `"batch"`), `unit`, `time_unit` and `dose_unit` (a string
+/// or `None`). The answer is the dict of an analysis result (see [`analyze_batch`]) with two
+/// more entries, the integers `n_batches` and `singletons`: the number of batches of the
+/// variance and how many of them hold fewer than two animals. A host warns when `singletons`
+/// is above zero, since the variance and the degrees of freedom of the area are then `NaN`.
+///
+/// # Errors
+///
+/// A `KeyError` for a missing field and a `TypeError` for a field of the wrong type. A request
+/// whose arrays disagree with its shape, whose times do not increase, whose `design` is unknown
+/// or whose serial design has an animal with several samples is a plain `ValueError`, never an
+/// `UnsupportedError`, so that the fallback of a host cannot hide a bug in the request.
+#[pyfunction]
+fn nca_sparse<'py>(py: Python<'py>, request: &Bound<'py, PyDict>) -> PyResult<Bound<'py, PyDict>> {
+    let floats = |key: &str| -> PyResult<Vec<f64>> {
+        let array: PyReadonlyArrayDyn<'_, f64> = required(request, key, SPARSE_REQUEST)?
+            .extract()
+            .map_err(|err| at_key(py, key, err))?;
+        Ok(array.as_array().iter().copied().collect())
+    };
+    let design: String = field(py, request, "design", SPARSE_REQUEST)?;
+    let design = match design.as_str() {
+        "serial" => kernel::pkpdutils_abi::SparseDesign::Serial,
+        "batch" => kernel::pkpdutils_abi::SparseDesign::Batch,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "design {other:?} is neither \"serial\" nor \"batch\""
+            )));
+        }
+    };
+    let request = kernel::pkpdutils_abi::SparseRequest {
+        times: floats("times")?,
+        values: floats("values")?,
+        n_rows: field(py, request, "n_rows", SPARSE_REQUEST)?,
+        n_cols: field(py, request, "n_cols", SPARSE_REQUEST)?,
+        design,
+        unit: field(py, request, "unit", SPARSE_REQUEST)?,
+        time_unit: field(py, request, "time_unit", SPARSE_REQUEST)?,
+        dose_unit: field(py, request, "dose_unit", SPARSE_REQUEST)?,
+    };
+    let answer = py
+        .detach(|| guarded(|| kernel::nca_sparse(&request)))?
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let out = result_into_python(py, answer.result)?;
+    out.set_item("n_batches", answer.n_batches)?;
+    out.set_item("singletons", answer.singletons)?;
+    Ok(out)
+}
+
 /// The exception of an analysis this build does not carry.
 ///
 /// The sentence is the kernel's own error, so that the text of a refusal the predicate gives
@@ -433,6 +489,7 @@ fn pkpdutils_core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(is_supported, module)?)?;
     module.add_function(wrap_pyfunction!(summarize, module)?)?;
     module.add_function(wrap_pyfunction!(time_to_steady_state, module)?)?;
+    module.add_function(wrap_pyfunction!(nca_sparse, module)?)?;
     module.add_function(wrap_pyfunction!(normal_isf, module)?)?;
     module.add_function(wrap_pyfunction!(student_t_isf, module)?)?;
     module.add_function(wrap_pyfunction!(student_t_sf, module)?)?;
@@ -1149,6 +1206,78 @@ mod tests {
             absent.del_item("alpha").unwrap();
             let err = time_to_steady_state(py, &absent).unwrap_err();
             assert!(err.is_instance_of::<PyKeyError>(py), "{err}");
+        });
+    }
+
+    /// A request of three animals in a batch design at two times.
+    fn sparse_request<'py>(py: Python<'py>, design: &str) -> Bound<'py, PyDict> {
+        let request = PyDict::new(py);
+        let v = [1.0, 0.5, 1.2, 0.4, 0.9, 0.6];
+        request
+            .set_item("times", PyArray1::from_slice(py, &[1.0, 2.0]))
+            .unwrap();
+        request
+            .set_item("values", PyArray1::from_slice(py, &v))
+            .unwrap();
+        request.set_item("n_rows", 3).unwrap();
+        request.set_item("n_cols", 2).unwrap();
+        request.set_item("design", design).unwrap();
+        request.set_item("unit", "mg/l").unwrap();
+        request.set_item("time_unit", "h").unwrap();
+        request.set_item("dose_unit", py.None()).unwrap();
+        request
+    }
+
+    #[test]
+    fn a_sparse_request_answers_the_result_and_the_counts() {
+        Python::attach(|py| {
+            let answer = nca_sparse(py, &sparse_request(py, "batch")).unwrap();
+            assert!(answer.contains("parameters").unwrap());
+            let n_batches: usize = answer
+                .get_item("n_batches")
+                .unwrap()
+                .unwrap()
+                .extract()
+                .unwrap();
+            let singletons: usize = answer
+                .get_item("singletons")
+                .unwrap()
+                .unwrap()
+                .extract()
+                .unwrap();
+            assert!(n_batches >= 1);
+            assert_eq!(singletons, 0);
+        });
+    }
+
+    #[test]
+    fn a_sparse_request_without_values_is_a_value_error() {
+        Python::attach(|py| {
+            let request = sparse_request(py, "batch");
+            request.del_item("values").unwrap();
+            let err = nca_sparse(py, &request).unwrap_err();
+            assert!(err.is_instance_of::<PyKeyError>(py), "{err}");
+            assert!(err.value(py).to_string().contains("nca_sparse"));
+        });
+    }
+
+    #[test]
+    fn a_sparse_request_whose_design_is_unknown_is_a_value_error() {
+        Python::attach(|py| {
+            let err = nca_sparse(py, &sparse_request(py, "bogus")).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+        });
+    }
+
+    #[test]
+    fn a_sparse_request_of_the_wrong_length_is_a_value_error() {
+        Python::attach(|py| {
+            let request = sparse_request(py, "batch");
+            request.set_item("n_cols", 5).unwrap();
+            let err = nca_sparse(py, &request).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
         });
     }
 
