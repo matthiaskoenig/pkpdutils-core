@@ -30,6 +30,25 @@ use pkpdutils_abi::{NcaFlag, TerminalMethod, TerminalPhase};
 /// The half-lives a terminal window should cover at least, `SPAN_MINIMUM` of `nca.py`.
 pub(crate) const SPAN_MINIMUM: f64 = 2.0;
 
+/// Multiple of `n * eps * syy` below which a residual sum of squares is zero.
+///
+/// The residual of a window is `syy_c - slope * sxy_c`, two quantities which
+/// are equal for a perfect fit, so what is left there is the rounding of the
+/// sums themselves and its sign is arbitrary. Clamping it at zero reported
+/// either 0 or the square root of that noise, around 1e-9, and which one
+/// depended on the platform: this kernel and the python core disagreed on a
+/// noise free curve, which the engine gate of `pkpdutils` caught.
+///
+/// The floor is taken against the uncentred `syy` and not against `syy_c`,
+/// because every window of a row shares one origin, the row's first sample,
+/// so a short window late in the curve has `syy` and `sy * sy / n` both of
+/// the order of the whole drop of the curve while their difference is small.
+/// The multiple is 16 from measurement over 120 000 windows: the ratio
+/// `|ss_res| / (n * eps * syy)` reaches 1.20 for a noise free curve and stays
+/// above 1.9e+05 for a curve of 1 % noise from four samples up. It must stay
+/// identical to `pkpdutils.nca.terminal.RESIDUAL_FLOOR`.
+pub(crate) const RESIDUAL_FLOOR: f64 = 16.0 * f64::EPSILON;
+
 /// The regression statistics of one window.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WindowStats {
@@ -151,15 +170,20 @@ fn window_of(sums: Sums, x_origin: f64, y_origin: f64) -> WindowStats {
     let syy_c = syy - sy * sy / n;
     if n >= 3.0 && sxx_c > 0.0 && syy_c > 0.0 {
         let slope = sxy_c / sxx_c;
-        let ss_res = syy_c - slope * sxy_c;
-        // `numpy.clip` lets a NaN through, which `f64::clamp` does as well
-        let r2 = (1.0 - ss_res / syy_c).clamp(0.0, 1.0);
-        // `numpy.maximum` lets a NaN win, where `f64::max` returns the other operand
-        let residual = if ss_res > 0.0 || ss_res.is_nan() {
-            ss_res
-        } else {
+        let raw = syy_c - slope * sxy_c;
+        // the residual subtracts two quantities which are equal for a perfect
+        // fit, so below the rounding of its own operands it is not a small
+        // number but no number. A NaN fails this comparison and is kept,
+        // which is what `numpy.where` does on the python side as well, and a
+        // negative value is below the floor, which subsumes the `numpy.maximum`
+        // this replaces.
+        let residual = if raw < RESIDUAL_FLOOR * n * syy {
             0.0
+        } else {
+            raw
         };
+        // `numpy.clip` lets a NaN through, which `f64::clamp` does as well
+        let r2 = (1.0 - residual / syy_c).clamp(0.0, 1.0);
         WindowStats {
             n,
             slope,
@@ -652,6 +676,66 @@ pub(crate) fn span_flag(fit: &TerminalFit) -> NcaFlag {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn an_exact_fit_has_no_residual_in_any_window() {
+        // the residual `syy_c - slope * sxy_c` is zero for a perfect fit, so
+        // what survived the subtraction was the rounding of the sums and its
+        // sign decided between 0.0 and the square root of that noise, around
+        // 1e-9. Half of a batch therefore carried a standard error made of
+        // nothing, and which half differed between this kernel and the python
+        // core: the engine gate of `pkpdutils` failed on linux while passing
+        // on the developer's machine for the same commit. Every window of the
+        // row is checked, because the floor is written against the uncentred
+        // `syy` precisely for the short ones late in the curve, whose sums
+        // carry the whole drop while their difference is small.
+        let times = [0.25_f64, 0.5, 1.0, 2.0, 4.0, 6.0, 8.0, 12.0];
+        let regressable = [true; 8];
+        let mut out = [WindowStats::NONE; 8];
+        let mut checked = 0_usize;
+        for step in 0..512 {
+            let k = 0.05 + 0.45 * (step as f64) / 511.0;
+            let y: Vec<f64> = times.iter().map(|t| (10.0 * (-k * t).exp()).ln()).collect();
+            window_statistics(&times, &y, &regressable, &mut out);
+            for (start, stats) in out.iter().enumerate() {
+                if stats.n >= 3.0 {
+                    assert_eq!(
+                        stats.se_slope, 0.0,
+                        "k {k} start {start}: se_slope {}",
+                        stats.se_slope
+                    );
+                    assert_eq!(stats.r2, 1.0, "k {k} start {start}: r2 {}", stats.r2);
+                    let lambda_z = -stats.slope;
+                    assert!(
+                        (lambda_z - k).abs() < 1e-12,
+                        "k {k} start {start}: {lambda_z}"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        // columns 0 to 5 hold 8 down to 3 points, the last two are below three
+        assert_eq!(checked, 512 * 6, "every window of every curve was examined");
+    }
+
+    #[test]
+    fn a_noisy_fit_keeps_its_residual() {
+        // the floor must only reach an exact fit: four samples a few percent
+        // off sit far above it, so the standard error has to survive untouched
+        let times = [1.0_f64, 2.0, 4.0, 8.0];
+        let offsets = [1.03_f64, 0.97, 1.04, 0.96];
+        let y: Vec<f64> = times
+            .iter()
+            .zip(offsets)
+            .map(|(t, off)| (10.0 * (-0.2 * t).exp() * off).ln())
+            .collect();
+        let regressable = [true; 4];
+        let mut out = [WindowStats::NONE; 4];
+        window_statistics(&times, &y, &regressable, &mut out);
+        assert_eq!(out[0].n, 4.0);
+        assert!(out[0].se_slope > 1e-6, "se_slope {}", out[0].se_slope);
+        assert!(out[0].r2 < 1.0, "r2 {}", out[0].r2);
+    }
     use super::*;
 
     use pkpdutils_abi::TerminalMethod;
@@ -733,7 +817,10 @@ mod tests {
         close(fit.intercept, 2.302_585_092_994_045);
         close(fit.r2, 1.0);
         close(fit.r2_adj, 1.0);
-        assert!(fit.se_slope < 1e-8, "no residual: {}", fit.se_slope);
+        // an exact fit has no residual at all, not a small one: `RESIDUAL_FLOOR`
+        // takes the rounding of the sums to zero, so this is exactly 0.0 on
+        // every platform and agrees with the python core bit for bit
+        assert_eq!(fit.se_slope, 0.0, "no residual: {}", fit.se_slope);
 
         // terminal.md section 1 step 1 and hazard 5: the sums are taken around the
         // first valid point of the row, so the same curve measured from t = 1e8 gives

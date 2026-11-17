@@ -238,7 +238,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "pkpdutils-abi"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bitflags",
  "serde",
@@ -248,7 +248,7 @@ dependencies = [
 
 [[package]]
 name = "pkpdutils-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "pkpdutils-abi",
  "pkpdutils-units",
@@ -258,7 +258,7 @@ dependencies = [
 
 [[package]]
 name = "pkpdutils-oracles"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "pkpdutils-abi",
  "pkpdutils-core",
@@ -270,7 +270,7 @@ dependencies = [
 
 [[package]]
 name = "pkpdutils-python"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "mimalloc",
  "numpy",
@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "pkpdutils-units"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "serde",
  "serde_json",
