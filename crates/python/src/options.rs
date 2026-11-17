@@ -113,93 +113,21 @@ const OPTION_KEYS: [&str; 24] = [
 /// Why `pkpdutils_core` would refuse this batch, `None` when it would analyse it.
 ///
 /// The host asks this before it converts anything, so that the work it cannot send here goes
-/// down the python path instead of reaching the user as an exception from the kernel. The text
-/// is the kernel's own, the `what` of its `KernelError::Unsupported`, and the conditions are
-/// `refuse_what_is_not_carried` of `crates/core/src/lib.rs` in its order, since a batch may
-/// trip over several of them and only the first is reported. Two lists which look alike and
-/// are not is what `the_predicate_agrees_with_the_kernel` exists to catch: a predicate wider
-/// than the kernel turns into an exception at the user's call site, and a narrower one sends
-/// work this build carries down the slow path for good.
+/// down the python path instead of reaching the user as an exception from the kernel. It is
+/// [`pkpdutils_core::unsupported_reason`] and nothing else, the single statement of the
+/// refusals which `analyze_batch` itself refuses on, so the two cannot disagree: a predicate
+/// wider than the kernel would turn into an exception at the user's call site, and a narrower
+/// one would send work this build carries down the slow path for good.
 ///
-/// Those seven are every refusal which can be read off a batch and its options. The kernel has
-/// an eighth which cannot - a unit string its curated registry cannot read, answered by deriving
-/// the units of the result - and it is deliberately not mirrored here: a copy of that registry
-/// is a list which drifts in silence, where the refusal itself is exact. `None` is therefore
-/// "nothing here refuses it" and not a promise that the analysis will run, and `analyze_batch`
-/// stays the authority. It reports that one with the same `UnsupportedError` as every refusal of
-/// this list, so a host which routes on the type is right either way.
+/// The kernel has one refusal which cannot be read off a batch - a unit string its curated
+/// registry cannot read, answered by deriving the units of the result - and it is deliberately
+/// not mirrored here: a copy of that registry is a list which drifts in silence, where the
+/// refusal itself is exact. `None` is therefore "nothing here refuses it" and not a promise
+/// that the analysis will run, and `analyze_batch` stays the authority. It reports that one
+/// with the same `UnsupportedError` as every refusal of this list, so a host which routes on the
+/// type is right either way.
 pub(crate) fn unsupported_reason(batch: &Batch, options: &NcaOptions) -> Option<String> {
-    let reason = |what: &str| Some(what.to_string());
-    if options.kind == Kind::Effect {
-        return reason("the analysis of an effect curve (Kind::Effect)");
-    }
-    if options.tau.is_some() {
-        return reason("a multiple dose analysis (NcaOptions::tau)");
-    }
-    if (0..batch.n_samples()).any(|row| n_doses_of_row(batch, row) >= 2) {
-        return reason("a protocol of more than one dose (the multiple dose analysis)");
-    }
-    if options.acceptance.any_threshold() {
-        return reason("the acceptance criteria (NcaOptions::acceptance)");
-    }
-    if !options.partial_aucs.is_empty() {
-        return reason("the named partial areas (NcaOptions::partial_aucs)");
-    }
-    if resolved_uncertainty(batch, options) != UncertaintyMethod::None {
-        return reason("the propagation of the uncertainty of a group curve");
-    }
-    if !options.units.is_empty() {
-        return reason("the unit conversion of a result (NcaOptions::units)");
-    }
-    None
-}
-
-/// The doses of a row: the columns whose amount and whose time are both a number.
-///
-/// This is `n_doses_of_row` of the kernel and not [`Batch::n_doses_of_row`] of the abi, which
-/// counts the leading amounts which are not `NaN` and so reads a protocol with a hole in it
-/// differently. The predicate answers for the kernel, so it counts what the kernel counts.
-fn n_doses_of_row(batch: &Batch, row: usize) -> usize {
-    let amounts = row_slice(&batch.dose_amount, row, batch.max_doses);
-    let times = row_slice(&batch.dose_time, row, batch.max_doses);
-    amounts
-        .iter()
-        .zip(times)
-        .filter(|(amount, time)| amount.is_finite() && time.is_finite())
-        .count()
-}
-
-/// The `width` numbers of a row, empty where the row is no row of the array.
-///
-/// Nothing is indexed with a number which came from the host: the predicate answers for a batch
-/// the kernel has not validated yet, so a shape which does not add up is a count of zero doses
-/// and never a panic.
-fn row_slice(values: &[f64], row: usize, width: usize) -> &[f64] {
-    let Some(start) = row.checked_mul(width) else {
-        return &[];
-    };
-    let Some(end) = start.checked_add(width) else {
-        return &[];
-    };
-    values.get(start..end).unwrap_or(&[])
-}
-
-/// The uncertainty the analysis would really propagate, `resolved_uncertainty` of the kernel.
-///
-/// `None` is the automatic choice: the parametric bootstrap for a batch which carries a spread
-/// per point, nothing for a batch of individual curves (`NCAOptions.resolve_uncertainty` of
-/// `src/pkpdutils/nca/options.py`). The refusal is therefore of what the options resolve to and
-/// not of what they say, in either direction: a batch with `sd` is refused although the options
-/// name no method, and one is analysed although it carries `sd` when they name
-/// `UncertaintyMethod::None`.
-fn resolved_uncertainty(batch: &Batch, options: &NcaOptions) -> UncertaintyMethod {
-    options.uncertainty.unwrap_or({
-        if batch.sd.is_some() || batch.se.is_some() {
-            UncertaintyMethod::Bootstrap
-        } else {
-            UncertaintyMethod::None
-        }
-    })
+    pkpdutils_core::unsupported_reason(batch, options)
 }
 
 /// How an error names the options, as `crate::convert` names the contract of the batch.
@@ -1023,12 +951,6 @@ mod tests {
         });
         assert!(effect.contains("Kind::Effect"), "{effect}");
 
-        let tau = reason(NcaOptions {
-            tau: Some(12.0),
-            ..NcaOptions::default()
-        });
-        assert!(tau.contains("NcaOptions::tau"), "{tau}");
-
         let acceptance = reason(NcaOptions {
             acceptance: Acceptance {
                 span_min: Some(3.0),
@@ -1060,12 +982,24 @@ mod tests {
         let spread = batch_with_spread();
         let counted = batch_with("n", vec![4.0; 5]);
         let hole = batch_with_a_dose_without_a_time();
+        let multiple = batch(2);
         // the divergence the last case is built on, stated rather than implied: the abi reads
         // two doses in that row and the kernel one, and the predicate answers for the kernel
         assert_eq!(hole.n_doses_of_row(0), 2);
 
-        let cases: [(&str, &Batch, NcaOptions); 4] = [
+        let cases: [(&str, &Batch, NcaOptions); 6] = [
             ("a single dose curve", &single, NcaOptions::default()),
+            // the two refusals the multiple dose analysis made obsolete: the protocol of
+            // several doses and the explicit dosing interval are analysed, not named
+            ("a protocol of two doses", &multiple, NcaOptions::default()),
+            (
+                "a dosing interval",
+                &single,
+                NcaOptions {
+                    tau: Some(12.0),
+                    ..NcaOptions::default()
+                },
+            ),
             // the refusal is of what the options resolve to and not of what the batch carries:
             // a group curve whose propagation is turned off by hand is analysed, although the
             // automatic choice for the very same batch is the bootstrap
@@ -1099,12 +1033,11 @@ mod tests {
     #[test]
     fn the_predicate_agrees_with_the_kernel() {
         let single = batch(1);
-        let multiple = batch(2);
         let spread = batch_with_spread();
         let se_only = batch_with("se", vec![0.0, 0.5, 0.4, 0.2, 0.05]);
         let units = BTreeMap::from([("auc_last".to_string(), "mg*hr/l".to_string())]);
 
-        let cases: [(&str, &Batch, NcaOptions); 9] = [
+        let cases: [(&str, &Batch, NcaOptions); 7] = [
             (
                 "an effect curve",
                 &single,
@@ -1113,15 +1046,6 @@ mod tests {
                     ..NcaOptions::default()
                 },
             ),
-            (
-                "a dosing interval",
-                &single,
-                NcaOptions {
-                    tau: Some(12.0),
-                    ..NcaOptions::default()
-                },
-            ),
-            ("a protocol of two doses", &multiple, NcaOptions::default()),
             (
                 "the acceptance criteria",
                 &single,
@@ -1192,23 +1116,16 @@ mod tests {
 
     #[test]
     fn the_predicate_fires_in_the_order_the_kernel_tests() {
-        let multiple_spread = Python::attach(|py| {
-            let dict = batch_dict(py, 2);
-            dict.set_item("sd", row(py, vec![0.0, 1.0, 0.8, 0.4, 0.1]))
-                .unwrap();
-            batch_from_python(py, &dict).unwrap()
-        });
         let single_spread = batch_with_spread();
         let single = batch(1);
 
-        // every refusal at once: the options trip five of the seven conditions and the batch
-        // the other two. Each one is taken away in turn, so the next check of the kernel is
+        // every refusal at once: the options trip four of the five conditions and the batch
+        // the other. Each one is taken away in turn, so the next check of the kernel is
         // the one which has to fire and every adjacent pair of the two orders is pinned, not
         // only the first. The text has to match the kernel's, which is what makes the order a
         // thing this binding can get wrong quietly
         let mut options = NcaOptions {
             kind: Kind::Effect,
-            tau: Some(12.0),
             acceptance: Acceptance {
                 span_min: Some(3.0),
                 ..Acceptance::default()
@@ -1223,18 +1140,10 @@ mod tests {
             what
         };
 
-        let effect = agreed(&multiple_spread, &options);
+        let effect = agreed(&single_spread, &options);
         assert!(effect.contains("Kind::Effect"), "{effect}");
         options.kind = Kind::Concentration;
 
-        let tau = agreed(&multiple_spread, &options);
-        assert!(tau.contains("NcaOptions::tau"), "{tau}");
-        options.tau = None;
-
-        let doses = agreed(&multiple_spread, &options);
-        assert!(doses.contains("more than one dose"), "{doses}");
-        // the protocol is what trips the third check, so the batch and not the options is what
-        // the next step drops
         let acceptance = agreed(&single_spread, &options);
         assert!(
             acceptance.contains("NcaOptions::acceptance"),
@@ -1251,7 +1160,7 @@ mod tests {
             uncertainty.contains("uncertainty of a group curve"),
             "{uncertainty}"
         );
-        // and the spread is what trips the sixth
+        // and the spread is what trips the fourth
         let units = agreed(&single, &options);
         assert!(units.contains("NcaOptions::units"), "{units}");
         options.units.clear();

@@ -313,18 +313,18 @@ def test_the_wheel_carries_the_row_shards() -> None:
 
 
 def test_an_unsupported_batch_raises() -> None:
-    """A multiple dose analysis is refused by a type a host can route on.
+    """An analysis this build does not carry is refused by a type a host can route on.
 
     `UnsupportedError` subclasses `ValueError`, so a caller which catches `ValueError` keeps
     catching it, and the message names the option which this build does not carry.
     """
     options = linear_options()
-    options["tau"] = 12.0
+    options["units"] = {"auc_last": "mg*hr/l"}
 
     assert issubclass(pkpdutils_core.UnsupportedError, ValueError)
     with pytest.raises(pkpdutils_core.UnsupportedError) as raised:
         pkpdutils_core.analyze_batch(oral_batch(), options)
-    assert "tau" in str(raised.value)
+    assert "units" in str(raised.value)
 
     # and the refusals which are not that one keep their own type: a key no field of the
     # options spells is a disagreement about the contract, never work to route elsewhere
@@ -341,10 +341,10 @@ def test_is_supported_reports_the_reason() -> None:
     assert pkpdutils_core.is_supported(oral_batch(), linear_options()) is None
 
     options = linear_options()
-    options["tau"] = 12.0
+    options["units"] = {"auc_last": "mg*hr/l"}
     reason = pkpdutils_core.is_supported(oral_batch(), options)
     assert isinstance(reason, str)
-    assert "tau" in reason
+    assert "units" in reason
 
 
 def test_the_version_matches_the_crate() -> None:

@@ -2238,34 +2238,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_multiple_dose_batch_is_refused_by_name() {
-        // `is_multiple_dose` of nca.py: a row whose protocol holds two doses, or any row at
-        // all when `tau` is given, is analysed over its dosing intervals instead.
-        let two_doses = Batch {
-            max_doses: 2,
-            dose_amount: vec![100.0, 100.0],
-            dose_time: vec![0.0, 12.0],
-            dose_duration: vec![f64::NAN, f64::NAN],
-            ..oral_curve()
-        };
-        let error = analyze_batch(&two_doses, &linear()).unwrap_err();
-        assert!(
-            matches!(&error, KernelError::Unsupported { what } if what.contains("more than one dose")),
-            "{error}"
-        );
-
-        let steady_state = NcaOptions {
-            tau: Some(12.0),
-            ..linear()
-        };
-        let error = analyze_batch(&oral_curve(), &steady_state).unwrap_err();
-        assert!(
-            matches!(&error, KernelError::Unsupported { what } if what.contains("tau")),
-            "{error}"
-        );
-    }
-
-    #[test]
     fn a_ragged_batch_is_refused_as_a_batch_error() {
         // The row loop reads a slice per sample, so a batch whose arrays do not fit its shape
         // is refused before any row runs rather than cut to what fits.

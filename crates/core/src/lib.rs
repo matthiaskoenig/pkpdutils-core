@@ -65,7 +65,7 @@ pub enum KernelError {
     /// An analysis this build does not carry, named by what was asked for.
     ///
     /// Every one of these but one is decided before a row runs and is therefore also what
-    /// `is_supported` of the python binding answers (`refuse_what_is_not_carried`). The one
+    /// `is_supported` of the python binding answers (`unsupported_reason`). The one
     /// which is not is a unit of the batch which the curated registry of `pkpdutils-units`
     /// cannot read: answering it means deriving the unit of every parameter, which is the
     /// analysis, so it is reported where that happens (`crate::assemble::unit_of`) and the
@@ -164,7 +164,7 @@ pub fn analyze_batch_in_shards(
 /// The analysis of a batch whose contract, shape, options and refusals are already checked.
 ///
 /// This is everything [`analyze_batch_in_shards`] does after its checks, so that a test can run
-/// the multiple dose path on a batch while the refusal of that path stands.
+/// a batch on a chosen shard plan.
 fn analyze_checked(
     batch: &Batch,
     options: &NcaOptions,
@@ -279,46 +279,60 @@ impl Rows<'_> {
     }
 }
 
-/// Refuse what this build does not carry, naming it.
+/// Why this build refuses a batch under these options, `None` when nothing here refuses it.
 ///
-/// Every one of these is a different parameter set or a step beyond the single dose analysis, so
-/// a wrong number is the alternative to a named error.
+/// This is the one statement of the refusals which can be read off a batch and its options,
+/// without analysing anything: the effect curve (`Kind::Effect`), the acceptance criteria, the
+/// named partial areas, the propagation of the uncertainty of a group curve and the unit
+/// conversion of a result. It is what [`analyze_batch`] refuses on and what `is_supported` of
+/// the python binding answers, so a host which asks first and the analysis cannot disagree
+/// (`the_predicate_and_the_analysis_agree_on_every_refusal`). The text is the `what` of
+/// [`KernelError::Unsupported`], and the conditions are tried in the order below, so a batch
+/// which trips several is named by the first.
 ///
-/// These are the refusals which are decided from the batch and the options alone, which is why
-/// the predicate of the python binding (`unsupported_reason`) is these seven and is held to them
-/// by a test. The eighth refusal of this build, a unit string the registry cannot read, is not
-/// here: it is answered by deriving the units of the parameters, which is what the analysis does
-/// (`assemble::unit_of`).
-fn refuse_what_is_not_carried(batch: &Batch, options: &NcaOptions) -> Result<(), KernelError> {
-    let unsupported = |what: &str| {
-        Err(KernelError::Unsupported {
-            what: what.to_string(),
-        })
-    };
+/// A protocol of more than one dose and an explicit `NcaOptions::tau` are no refusal: they are
+/// the multiple dose analysis (`is_multiple_dose` and `compute_steady_state` of `nca.py`).
+///
+/// The predicate reads nothing of the shape of the batch, so it is safe on one which
+/// [`Batch::validate`] has not seen. It also cannot see the one refusal which needs the
+/// registry of `pkpdutils-units`, a unit string it cannot read: answering that means deriving
+/// the unit of every parameter, which is the analysis, so it is reported where that happens
+/// (`crate::assemble::unit_of`). `None` is therefore "nothing here refuses it" and not a promise
+/// that the analysis runs.
+#[must_use]
+pub fn unsupported_reason(batch: &Batch, options: &NcaOptions) -> Option<String> {
+    let reason = |what: &str| Some(what.to_string());
     if options.kind == Kind::Effect {
-        return unsupported("the analysis of an effect curve (Kind::Effect)");
-    }
-    if options.tau.is_some() {
-        return unsupported("a multiple dose analysis (NcaOptions::tau)");
-    }
-    if (0..batch.n_samples()).any(|row| n_doses_of_row(batch, row) >= 2) {
-        return unsupported("a protocol of more than one dose (the multiple dose analysis)");
+        return reason("the analysis of an effect curve (Kind::Effect)");
     }
     if options.acceptance.any_threshold() {
-        return unsupported("the acceptance criteria (NcaOptions::acceptance)");
+        return reason("the acceptance criteria (NcaOptions::acceptance)");
     }
     if !options.partial_aucs.is_empty() {
-        return unsupported("the named partial areas (NcaOptions::partial_aucs)");
+        return reason("the named partial areas (NcaOptions::partial_aucs)");
     }
     // a batch which carries a spread resolves to the bootstrap on its own, so the refusal is of
     // what the options resolve to and not of what they say (`resolve_uncertainty` of `options.py`)
     if resolved_uncertainty(batch, options) != UncertaintyMethod::None {
-        return unsupported("the propagation of the uncertainty of a group curve");
+        return reason("the propagation of the uncertainty of a group curve");
     }
     if !options.units.is_empty() {
-        return unsupported("the unit conversion of a result (NcaOptions::units)");
+        return reason("the unit conversion of a result (NcaOptions::units)");
     }
-    Ok(())
+    None
+}
+
+/// Refuse what this build does not carry, naming it: [`unsupported_reason`] as an error.
+///
+/// The refusals decided from the batch and the options are all in that one function. The
+/// refusal of a unit string the registry cannot read is not added here, contrary to what one
+/// might expect: it is raised while the result is assembled (`crate::assemble::unit_of`), the
+/// one place which derives the units.
+fn refuse_what_is_not_carried(batch: &Batch, options: &NcaOptions) -> Result<(), KernelError> {
+    match unsupported_reason(batch, options) {
+        Some(what) => Err(KernelError::Unsupported { what }),
+        None => Ok(()),
+    }
 }
 
 /// The doses of a row: the columns whose amount and whose time are both a number.
@@ -628,13 +642,10 @@ mod tests {
         assert!(!single_dose_of_row(&two_doses, &with_tau, 0));
     }
 
-    /// The analysis of a batch through the multiple dose path, which `analyze_batch` still
-    /// refuses.
+    /// The analysis of a batch through the public entry point a host calls.
     #[track_caller]
-    fn run_unrefused(batch: &Batch, options: &NcaOptions) -> AnalysisResult {
-        check_contract(&batch.contract, BATCH_CONTRACT).unwrap();
-        batch.validate().unwrap();
-        analyze_checked(batch, options, 1).expect("the batch is analysable")
+    fn analyze_ok(batch: &Batch, options: &NcaOptions) -> AnalysisResult {
+        analyze_batch(batch, options).expect("the batch is analysable")
     }
 
     fn flags_of(result: &AnalysisResult, row: usize) -> NcaFlag {
@@ -666,7 +677,7 @@ mod tests {
                 intervals: emit,
                 ..NcaOptions::default()
             };
-            let result = run_unrefused(&batch, &options);
+            let result = analyze_ok(&batch, &options);
             assert_eq!(flags_of(&result, 0), want, "intervals: {emit}");
             // the steady state parameters follow from the intervals either way
             let at = |name| crate::parameters::tests::at(&result, name, 0);
@@ -695,7 +706,7 @@ mod tests {
                 intervals: emit,
                 ..NcaOptions::default()
             };
-            let result = run_unrefused(&batch, &options);
+            let result = analyze_ok(&batch, &options);
             assert_eq!(flags_of(&result, 0), want, "intervals: {emit}");
             assert!(crate::parameters::tests::at(&result, "auc_tau", 0).is_nan());
             assert_eq!(
@@ -748,6 +759,420 @@ mod tests {
         }
     }
 
+    /// `mixed_batch` with the protocol of the third row cut to a hole: two dose times, 0 and 12,
+    /// of which only the first has an amount (20). The kernel reads one dose there, as
+    /// `is_multiple_dose` of `nca.py` does, and the protocol it reports is of two.
+    fn mixed_batch_with_a_hole() -> Batch {
+        let n = f64::NAN;
+        let batch = mixed_batch();
+        Batch {
+            dose_amount: vec![10.0, n, n, 10.0, 20.0, 30.0, 20.0, n, n, 5.0, 5.0, 5.0],
+            dose_time: vec![0.0, n, n, 0.0, 12.0, 24.0, 0.0, 12.0, n, 0.0, 12.0, 24.0],
+            ..batch
+        }
+    }
+
+    /// One parameter column of a result.
+    #[track_caller]
+    fn column_of(result: &AnalysisResult, name: &str) -> Vec<f64> {
+        result
+            .parameters
+            .iter()
+            .find(|p| p.name == name)
+            .unwrap_or_else(|| panic!("no column {name}"))
+            .values
+            .clone()
+    }
+
+    #[test]
+    fn a_protocol_of_several_doses_is_no_longer_refused() {
+        // The end to end coverage Task 2 deferred: a batch in, a result out, through the entry
+        // point a host calls. Every number is python's `nca` (the python path, `_force_python`)
+        // on the same four rows: single, three doses, a hole (dose times 0 and 12, amounts 20
+        // and NaN) and three doses. The hole row is the one shape which tells the two counting
+        // rules apart: the pair rule of `is_multiple_dose` (amount and time) makes it a single
+        // dose row, the time rule of `dose_counts` (time only) reports its protocol as 2 doses.
+        // A port which analysed it on the multiple dose path would give `auc_tau` and no `cl_f`
+        let n = f64::NAN;
+        let batch = mixed_batch_with_a_hole();
+        let result = analyze_batch(
+            &batch,
+            &NcaOptions {
+                intervals: true,
+                ..NcaOptions::default()
+            },
+        )
+        .expect("a protocol of several doses is analysed");
+        let column = |name: &str| column_of(&result, name);
+
+        assert_same("n_doses", &column("n_doses"), &[1.0, 3.0, 2.0, 3.0]);
+        assert_same("tau", &column("tau"), &[n, 12.0, n, 12.0]);
+        assert_same("cmax", &column("cmax"), &[7.16, 7.925, 14.59, 3.962]);
+        assert_same("tmax", &column("tmax"), &[2.0; 4]);
+        // the single dose rows sum 16 segments, which numpy adds in its own order (`close`)
+        assert_near(
+            "auc_last",
+            &column("auc_last"),
+            &[
+                48.49655132182141,
+                48.49926973218703,
+                130.028021765316,
+                24.248095168680027,
+            ],
+        );
+        assert_near(
+            "auc_inf_obs",
+            &column("auc_inf_obs"),
+            &[
+                48.54171396268703,
+                54.26638800635439,
+                130.7299413571588,
+                27.131973224308183,
+            ],
+        );
+        assert_near(
+            "cl_f",
+            &column("cl_f"),
+            &[0.2060083829690642, n, 0.15298714121931178, n],
+        );
+        assert_near(
+            "vz_f",
+            &column("vz_f"),
+            &[1.0337647350376231, n, 1.022711159255767, n],
+        );
+        assert_same("cmax_dn", &column("cmax_dn"), &[0.716, n, 0.7295, n]);
+        assert_near(
+            "lambda_z",
+            &column("lambda_z"),
+            &[
+                0.19927975484825056,
+                0.19940634912087601,
+                0.14958978381603016,
+                0.19938429743165942,
+            ],
+        );
+        assert_same(
+            "auc_tau",
+            &column("auc_tau"),
+            &[n, 48.49926973218703, n, 24.248095168680027],
+        );
+        assert_same("ctrough", &column("ctrough"), &[n, 1.15, n, 0.575]);
+        assert_same(
+            "cavg",
+            &column("cavg"),
+            &[n, 4.041605811015586, n, 2.0206745973900024],
+        );
+        assert_same(
+            "accumulation_ratio",
+            &column("accumulation_ratio"),
+            &[n, 1.1005537656433146, n, 1.100583054453734],
+        );
+        assert_same(
+            "cl_ss_f",
+            &column("cl_ss_f"),
+            &[n, 0.6185660148216664, n, 0.20620176410633004],
+        );
+        let interval = |name: &str| -> Vec<f64> {
+            result
+                .point_variables
+                .iter()
+                .find(|v| v.name == name)
+                .unwrap_or_else(|| panic!("no variable {name}"))
+                .values
+                .clone()
+        };
+        assert_same(
+            "interval_start",
+            &interval("interval_start"),
+            &[n, n, n, 0.0, 12.0, 24.0, n, n, n, 0.0, 12.0, 24.0],
+        );
+        assert_same(
+            "interval_dose",
+            &interval("interval_dose"),
+            &[n, n, n, 10.0, 20.0, 30.0, n, n, n, 5.0, 5.0, 5.0],
+        );
+        assert_same(
+            "interval_auc",
+            &interval("interval_auc"),
+            &[
+                n,
+                n,
+                n,
+                43.305541919868325,
+                48.06909355615606,
+                48.49926973218703,
+                n,
+                n,
+                n,
+                21.654100503512577,
+                24.032190218178513,
+                24.248095168680027,
+            ],
+        );
+        for row in 0..4 {
+            assert_eq!(flags_of(&result, row), NcaFlag::NONE, "row {row}");
+        }
+    }
+
+    #[test]
+    fn an_explicit_tau_is_no_longer_refused() {
+        // Python's `nca` with `tau=12` on the last interval of the fourth curve alone (the
+        // times 24 to 36, one dose of 5 at 24): the curve is an interval of a regimen, so it is
+        // analysed over its interval and not as a single dose curve (no `cl_f`, no `cmax_dn`),
+        // although its protocol is one dose. A port which only lifted the refusal and kept the
+        // row on the single dose path would give `cl_f` and no `auc_tau`
+        use crate::parameters::tests::{dosed, one};
+        let mixed = mixed_batch();
+        let times = &mixed.times[10..16];
+        let values = &mixed.values[3 * 16 + 10..3 * 16 + 16];
+        let batch = dosed(one(times, values), Route::Oral, 5.0, 24.0);
+        let options = NcaOptions {
+            tau: Some(12.0),
+            intervals: true,
+            ..NcaOptions::default()
+        };
+        let result = analyze_batch(&batch, &options).expect("an explicit tau is analysed");
+        let at = |name| crate::parameters::tests::at(&result, name, 0);
+
+        assert_eq!(at("n_doses"), 1.0);
+        assert_eq!(at("tau"), 12.0);
+        assert_eq!(at("cmax"), 3.962);
+        assert_eq!(at("auc_tau"), 24.248095168680027);
+        assert_eq!(at("ctrough"), 0.575);
+        assert_eq!(at("cavg"), 2.0206745973900024);
+        assert_eq!(at("accumulation_ratio"), 1.100583054453734);
+        assert_eq!(at("cl_ss_f"), 0.20620176410633004);
+        assert_eq!(at("auc_tau_extrap_fraction"), 0.0);
+        assert!(at("cl_f").is_nan() && at("cmax_dn").is_nan());
+        crate::parameters::tests::close(at("lambda_z"), 0.19938429743165942);
+        assert_eq!(flags_of(&result, 0), NcaFlag::NONE);
+    }
+
+    #[test]
+    fn an_effect_curve_is_still_refused() {
+        // out of scope for this module: an effect curve is a different parameter set, and
+        // lifting the two refusals of the multiple dose analysis must not make it reachable,
+        // on a multiple dose batch or with a tau
+        let effect = NcaOptions {
+            kind: Kind::Effect,
+            ..NcaOptions::default()
+        };
+        let with_tau = NcaOptions {
+            tau: Some(12.0),
+            ..effect.clone()
+        };
+        for (batch, options) in [
+            (mixed_batch(), &effect),
+            (mixed_batch(), &with_tau),
+            (crate::parameters::tests::oral_curve(), &effect),
+        ] {
+            let error = analyze_batch(&batch, options).unwrap_err();
+            assert!(
+                matches!(&error, KernelError::Unsupported { what } if what.contains("effect")),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_predicate_and_the_analysis_agree_on_every_refusal() {
+        // Whatever `unsupported_reason` names, `analyze_batch` refuses with the same text, and
+        // whatever it passes, `analyze_batch` analyses: one statement of the refusals, so a host
+        // which asks first and the analysis cannot drift apart. The grid is every refusal alone,
+        // every pair with the effect curve (which has to win, being first), and the protocols
+        // which used to be refused, over a single dose batch, a multiple dose batch, the hole
+        // and a group curve
+        use std::collections::BTreeMap;
+
+        use pkpdutils_abi::Acceptance;
+
+        let single = crate::parameters::tests::oral_curve();
+        let multiple = mixed_batch();
+        let hole = mixed_batch_with_a_hole();
+        let spread = Batch {
+            sd: Some(vec![0.1; single.values.len()]),
+            ..single.clone()
+        };
+        let spread_multiple = Batch {
+            sd: Some(vec![0.1; multiple.values.len()]),
+            ..multiple.clone()
+        };
+
+        let base = NcaOptions::default();
+        let variants: Vec<(&str, NcaOptions)> = vec![
+            ("default", base.clone()),
+            (
+                "effect",
+                NcaOptions {
+                    kind: Kind::Effect,
+                    ..base.clone()
+                },
+            ),
+            (
+                "tau",
+                NcaOptions {
+                    tau: Some(12.0),
+                    ..base.clone()
+                },
+            ),
+            (
+                "acceptance",
+                NcaOptions {
+                    acceptance: Acceptance {
+                        span_min: Some(3.0),
+                        ..Acceptance::default()
+                    },
+                    ..base.clone()
+                },
+            ),
+            (
+                "partial",
+                NcaOptions {
+                    partial_aucs: BTreeMap::from([("early".to_string(), (0.0, 4.0))]),
+                    ..base.clone()
+                },
+            ),
+            (
+                "units",
+                NcaOptions {
+                    units: BTreeMap::from([("auc_last".to_string(), "mg*hr/l".to_string())]),
+                    ..base.clone()
+                },
+            ),
+            (
+                "bootstrap",
+                NcaOptions {
+                    uncertainty: Some(UncertaintyMethod::Bootstrap),
+                    ..base.clone()
+                },
+            ),
+            (
+                "delta",
+                NcaOptions {
+                    uncertainty: Some(UncertaintyMethod::Delta),
+                    ..base.clone()
+                },
+            ),
+            (
+                "uncertainty off",
+                NcaOptions {
+                    uncertainty: Some(UncertaintyMethod::None),
+                    ..base.clone()
+                },
+            ),
+            (
+                "effect and units",
+                NcaOptions {
+                    kind: Kind::Effect,
+                    units: BTreeMap::from([("auc_last".to_string(), "mg*hr/l".to_string())]),
+                    ..base.clone()
+                },
+            ),
+            (
+                "units and partial",
+                NcaOptions {
+                    partial_aucs: BTreeMap::from([("early".to_string(), (0.0, 4.0))]),
+                    units: BTreeMap::from([("auc_last".to_string(), "mg*hr/l".to_string())]),
+                    ..base.clone()
+                },
+            ),
+            (
+                "tau and intervals off",
+                NcaOptions {
+                    tau: Some(12.0),
+                    intervals: false,
+                    ..base.clone()
+                },
+            ),
+        ];
+        let batches = [
+            ("single", &single),
+            ("multiple", &multiple),
+            ("hole", &hole),
+            ("spread", &spread),
+            ("spread multiple", &spread_multiple),
+        ];
+
+        let mut refused = 0;
+        let mut accepted = 0;
+        for (batch_name, batch) in batches {
+            for (options_name, options) in &variants {
+                let case = format!("{batch_name} / {options_name}");
+                let reason = unsupported_reason(batch, options);
+                let outcome = analyze_batch(batch, options);
+                match (reason, outcome) {
+                    (None, Ok(_)) => accepted += 1,
+                    (Some(what), Err(KernelError::Unsupported { what: refused_what })) => {
+                        assert_eq!(what, refused_what, "{case}");
+                        refused += 1;
+                    }
+                    (reason, outcome) => panic!(
+                        "{case}: the predicate says {reason:?} and the analysis {:?}",
+                        outcome.map(|_| "ran")
+                    ),
+                }
+            }
+        }
+        // neither half is vacuous
+        assert_eq!(accepted + refused, batches.len() * variants.len());
+        assert!(accepted >= 10 && refused >= 10, "{accepted} / {refused}");
+
+        // and each refusal is named by what it is, on a batch which trips nothing else: the
+        // agreement above would hold just as well for a refusal both sides had dropped, so the
+        // text is pinned here, including which of two refusals wins
+        let expected: [(&str, Option<&str>); 12] = [
+            ("default", None),
+            ("effect", Some("effect curve")),
+            ("tau", None),
+            ("acceptance", Some("acceptance criteria")),
+            ("partial", Some("partial areas")),
+            ("units", Some("unit conversion")),
+            ("bootstrap", Some("uncertainty of a group curve")),
+            ("delta", Some("uncertainty of a group curve")),
+            ("uncertainty off", None),
+            ("effect and units", Some("effect curve")),
+            ("units and partial", Some("partial areas")),
+            ("tau and intervals off", None),
+        ];
+        for ((name, options), (expected_name, wanted)) in variants.iter().zip(expected) {
+            assert_eq!(*name, expected_name);
+            let reason = unsupported_reason(&single, options);
+            match wanted {
+                None => assert_eq!(reason, None, "{name}"),
+                Some(text) => {
+                    let reason = reason.unwrap_or_else(|| panic!("{name}: not refused"));
+                    assert!(reason.contains(text), "{name}: {reason}");
+                }
+            }
+        }
+        // a group curve is refused by what the options resolve to, in both directions
+        let automatic = unsupported_reason(&spread, &base).expect("the automatic choice");
+        assert!(
+            automatic.contains("uncertainty of a group curve"),
+            "{automatic}"
+        );
+        assert_eq!(unsupported_reason(&spread, &variants[8].1), None);
+
+        // the protocols which used to be refused are accepted, in every combination of options
+        // which refuses nothing else
+        for batch in [&multiple, &hole] {
+            assert_eq!(unsupported_reason(batch, &base), None);
+        }
+        assert_eq!(unsupported_reason(&single, &variants[2].1), None);
+
+        // the predicate reads no shape: a batch which does not validate is answered, not
+        // indexed, and it is the analysis which names the shape
+        let ragged = Batch {
+            values: vec![1.0, 2.0],
+            ..single.clone()
+        };
+        assert_eq!(unsupported_reason(&ragged, &base), None);
+        assert!(matches!(
+            analyze_batch(&ragged, &base),
+            Err(KernelError::Batch(_))
+        ));
+    }
+
     /// `a == b` with `NaN` equal to `NaN`, element by element.
     #[track_caller]
     fn assert_same(name: &str, actual: &[f64], expected: &[f64]) {
@@ -782,7 +1207,7 @@ mod tests {
         // quantities, and the rows come back in the order they went in - every column is
         // different per row, so a merge which concatenated the two paths would show
         let n = f64::NAN;
-        let result = run_unrefused(
+        let result = analyze_ok(
             &mixed_batch(),
             &NcaOptions {
                 intervals: true,
@@ -973,11 +1398,7 @@ mod tests {
             intervals: true,
             ..NcaOptions::default()
         };
-        let run_in = |shards: usize| {
-            check_contract(&batch.contract, BATCH_CONTRACT).unwrap();
-            batch.validate().unwrap();
-            analyze_checked(&batch, &options, shards).unwrap()
-        };
+        let run_in = |shards: usize| analyze_batch_in_shards(&batch, &options, shards).unwrap();
         let bits = |result: &AnalysisResult| -> Vec<u64> {
             let columns = result.parameters.iter().flat_map(|p| p.values.iter());
             let intervals = result.point_variables.iter().flat_map(|v| v.values.iter());
@@ -1028,7 +1449,7 @@ mod tests {
             "n_doses",
             "tau",
         ];
-        let result = run_unrefused(&mixed, &NcaOptions::default());
+        let result = analyze_ok(&mixed, &NcaOptions::default());
         for name in steady_names {
             assert!(names(&result).contains(&name), "{name}");
         }
@@ -1059,7 +1480,7 @@ mod tests {
             }],
             ..mixed.clone()
         };
-        let singles = run_unrefused(&pick([0, 2]), &NcaOptions::default());
+        let singles = analyze_ok(&pick([0, 2]), &NcaOptions::default());
         for name in steady_names {
             assert!(!names(&singles).contains(&name), "{name}");
         }
