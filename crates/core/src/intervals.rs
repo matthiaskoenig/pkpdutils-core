@@ -149,7 +149,8 @@ pub(crate) fn count_points(
             }
         }
         // the samples of the interval are a block of the packed row, so the last one inside is
-        // `before + inside - 1` of it; a position past the row is the `NaN` padding
+        // `before + inside - 1` of it. A position past the row reads as `NaN` here (python clips the
+        // index instead); the two differ only for an unsorted row, which is out of scope and untested
         let last_inside = inside
             .checked_sub(1)
             .and_then(|i| valid().nth(before + i))
@@ -213,6 +214,11 @@ mod tests {
         let c = [5.0, 4.0, 9.0, 2.0, 1.0];
         count_points(&t, &c, true, 2, &mut out);
         assert_eq!((out[0].n_points, out[1].n_points), (2.0, 3.0));
+        // a bolus whose sample at the next dose is below the last one inside is no post-dose
+        // sample, so the interval counts it
+        let c = [5.0, 4.0, 1.5, 2.0, 1.0];
+        count_points(&t, &c, true, 2, &mut out);
+        assert_eq!((out[0].n_points, out[1].n_points), (3.0, 3.0));
     }
 
     #[test]
@@ -231,7 +237,8 @@ mod tests {
             10.0,
             &[0.0, 2.0, 4.0],
         );
-        // sample 0 has its protocol shifted by 1, sample 1 keeps it
+        // the protocol of each row is built here, not taken from the batch (`regimen` writes the same
+        // dose times to every sample): sample 1 is shifted by 1, sample 0 keeps it
         let rows: Vec<_> = (0..2)
             .map(|i| {
                 let doses = [f64::from(i), 2.0 + f64::from(i), 4.0 + f64::from(i)];
