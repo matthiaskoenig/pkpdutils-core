@@ -79,6 +79,8 @@ const NAMES: [&str; CASES] = [
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Oracle {
+    /// The version of `pkpdutils` the numbers came from.
+    pkpdutils_version: String,
     /// The commit of `pkpdutils` the numbers came from.
     pkpdutils_commit: String,
     /// The cases.
@@ -260,6 +262,7 @@ fn compare(what: &str, actual: f64, expected: f64, exact: bool) {
 fn the_oracle_carries_its_cases_and_names_its_source() {
     let oracle = oracle();
     assert_eq!(oracle.pkpdutils_commit.len(), 40);
+    assert!(!oracle.pkpdutils_version.is_empty());
     let names: Vec<&str> = oracle.cases.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(names, NAMES);
     for case in &oracle.cases {

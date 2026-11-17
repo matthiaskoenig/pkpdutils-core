@@ -2,7 +2,13 @@
 
 Run from a `pkpdutils` checkout, so that the python core is the reference:
 
-    uv run python /path/to/pkpdutils-core/scripts/multiple_dose_oracle.py OUT.json
+    uv run python /path/to/pkpdutils-core/scripts/multiple_dose_oracle.py
+    uv run python /path/to/pkpdutils-core/scripts/multiple_dose_oracle.py --check
+
+With `--check` nothing is written: the cases are recomputed, compared with the committed
+file and the exit code is non-zero when it is stale, as `crosswalk_gate.py --check` does for
+its fixture. The commit of the checkout is recorded and not compared, a file does not go
+stale by moving repository; the version of `pkpdutils` and every case are compared.
 
 Every case is built through `Timecourses.from_arrays`, the front end of the package, so a
 protocol the front end rejects cannot be in the oracle. A batch of a multiple dose row is not
@@ -11,12 +17,16 @@ numbers are the python kernel's; the script asserts that. The curves are determi
 superpositions of one compartment models, rounded to four decimals and written as the inputs.
 """
 
+import argparse
 import json
 import math
+import subprocess
 import sys
+from pathlib import Path
 
 import numpy as np
 
+import pkpdutils
 from pkpdutils import NCAOptions, Route, Timecourses, nca
 from pkpdutils.nca import engine
 
@@ -94,7 +104,15 @@ def case(name, why, times, values, doses, route, options):
     }
 
 
-def main(out):
+#: the committed oracle, next to the gate which reads it
+FIXTURE_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "crates/oracles/tests/data/multiple_dose.json"
+)
+
+
+def build_cases():
+    """Every case of the oracle, computed by the python core."""
     cases = []
     # regular oral, four doses every 12 h, sampled over the last interval and the earlier ones
     t = np.array([0, 1, 2, 4, 8, 12, 13, 14, 16, 20, 24, 25, 26, 28, 32, 36, 37, 38, 40, 44, 48.0])
@@ -138,11 +156,63 @@ def main(out):
     st = [(0.0, 10.0)]
     cases.append(case("single_dose_with_tau", "one dose and an explicit tau", tt,
                       [oral(tt, st, ke=0.2)], [st], Route.ORAL, {"tau": 12.0}))
-    with open(out, "w") as f:
-        json.dump({"pkpdutils_commit": sys.argv[2] if len(sys.argv) > 2 else None,
-                   "cases": cases}, f, indent=1, allow_nan=False)
+    return cases
+
+
+def checkout_commit():
+    """The commit of the checkout `pkpdutils` was imported from."""
+    root = Path(pkpdutils.__file__).resolve().parents[2]
+    return subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+
+def check(path, fresh):
+    """Compare a fresh run with the committed file and return the exit code."""
+    try:
+        committed = json.loads(path.read_text())
+    except (OSError, ValueError) as error:
+        print(f"{path} cannot be read ({error!r}), generate it without --check",
+              file=sys.stderr)
+        return 1
+    differs = []
+    if committed.get("pkpdutils_version") != fresh["pkpdutils_version"]:
+        differs.append(f"pkpdutils_version: file {committed.get('pkpdutils_version')!r}, "
+                       f"fresh {fresh['pkpdutils_version']!r}")
+    old = {c["name"]: c for c in committed.get("cases", [])}
+    new = {c["name"]: c for c in fresh["cases"]}
+    differs += [f"{n}: not in the file" for n in new if n not in old]
+    differs += [f"{n}: not computed any more" for n in old if n not in new]
+    differs += [f"{n}: differs from a fresh run" for n in new if n in old and old[n] != new[n]]
+    if differs:
+        print(f"{path} is stale, regenerate it:", file=sys.stderr)
+        print("\n".join(differs), file=sys.stderr)
+        return 1
+    print(f"{path} is up to date ({len(new)} cases, pkpdutils {fresh['pkpdutils_version']})")
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("-o", "--output", type=Path, default=FIXTURE_PATH,
+                        help="file to write, or to compare with --check (default: the committed one)")
+    parser.add_argument("--check", action="store_true",
+                        help="compare the file with a fresh run instead of writing it")
+    args = parser.parse_args()
+    fresh = {
+        "pkpdutils_version": pkpdutils.__version__,
+        "pkpdutils_commit": checkout_commit(),
+        "cases": json.loads(json.dumps(build_cases(), allow_nan=False)),
+    }
+    if args.check:
+        return check(args.output, fresh)
+    with args.output.open("w") as f:
+        json.dump(fresh, f, indent=1, allow_nan=False)
         f.write("\n")
+    print(f"wrote {len(fresh['cases'])} cases to {args.output}")
+    return 0
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    sys.exit(main())
