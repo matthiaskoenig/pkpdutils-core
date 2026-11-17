@@ -158,7 +158,18 @@ pub fn analyze_batch_in_shards(
     batch.validate().map_err(KernelError::Batch)?;
     options.validate().map_err(KernelError::Options)?;
     refuse_what_is_not_carried(batch, options)?;
+    analyze_checked(batch, options, shards)
+}
 
+/// The analysis of a batch whose contract, shape, options and refusals are already checked.
+///
+/// This is everything [`analyze_batch_in_shards`] does after its checks, so that a test can run
+/// the multiple dose path on a batch while the refusal of that path stands.
+fn analyze_checked(
+    batch: &Batch,
+    options: &NcaOptions,
+    shards: usize,
+) -> Result<AnalysisResult, KernelError> {
     let n_samples = batch.n_samples();
     let rows_of_batch = Rows {
         batch,
@@ -599,7 +610,7 @@ fn dimension_labels(batch: &Batch, dim: &str, size: usize) -> Vec<WindowLabel> {
 
 #[cfg(test)]
 mod tests {
-    use pkpdutils_abi::{Route, SampleCoordinate, TerminalPhase};
+    use pkpdutils_abi::{NcaFlag, Route, SampleCoordinate, TerminalPhase};
 
     use super::*;
 
@@ -618,6 +629,370 @@ mod tests {
         assert!(!single_dose_of_row(&one_dose, &with_tau, 0));
         assert!(!single_dose_of_row(&two_doses, &linear(), 0));
         assert!(!single_dose_of_row(&two_doses, &with_tau, 0));
+    }
+
+    /// The analysis of a batch through the multiple dose path, which `analyze_batch` still
+    /// refuses.
+    #[track_caller]
+    fn run_unrefused(batch: &Batch, options: &NcaOptions) -> AnalysisResult {
+        check_contract(&batch.contract, BATCH_CONTRACT).unwrap();
+        batch.validate().unwrap();
+        analyze_checked(batch, options, 1).expect("the batch is analysable")
+    }
+
+    fn flags_of(result: &AnalysisResult, row: usize) -> NcaFlag {
+        NcaFlag::from_bits_truncate(result.flags[row])
+    }
+
+    fn interval_names(result: &AnalysisResult) -> Vec<&str> {
+        result
+            .point_variables
+            .iter()
+            .map(|v| v.name.as_str())
+            .filter(|name| name.starts_with("interval_"))
+            .collect()
+    }
+
+    #[test]
+    fn a_bolus_post_dose_interval_raises_its_flag_whether_or_not_the_intervals_are_emitted() {
+        // Carried from Task 6. python raises EXTRAPOLATED_TROUGH from the intervals it computes
+        // unconditionally and gates only the emission (`if options.intervals`). For this row
+        // python gives flags 1540 = EXTRAPOLATION_HIGH | EXTRAPOLATED_TROUGH | SPAN_LOW with and without the output.
+        // A port which computes the intervals only when they are emitted drops the flag
+        use crate::parameters::tests::{one, regimen};
+        let t = [0.0, 1.0, 2.0, 4.0, 8.0, 12.0, 13.0, 16.0, 24.0];
+        let c = [10.0, 8.0, 6.4, 4.1, 1.7, 9.0, 7.0, 5.0, 2.0];
+        let batch = regimen(one(&t, &c), Route::IvBolus, 10.0, &[0.0, 12.0]);
+        let want = NcaFlag::EXTRAPOLATION_HIGH | NcaFlag::SPAN_LOW | NcaFlag::EXTRAPOLATED_TROUGH;
+        for emit in [false, true] {
+            let options = NcaOptions {
+                intervals: emit,
+                ..NcaOptions::default()
+            };
+            let result = run_unrefused(&batch, &options);
+            assert_eq!(flags_of(&result, 0), want, "intervals: {emit}");
+            // the steady state parameters follow from the intervals either way
+            let at = |name| crate::parameters::tests::at(&result, name, 0);
+            assert_eq!(at("auc_tau"), 51.98279878916171);
+            assert_eq!(at("ctrough"), 2.0);
+            // the emission is what the option decides
+            assert_eq!(
+                interval_names(&result).is_empty(),
+                !emit,
+                "intervals: {emit}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_incomplete_last_interval_raises_its_flag_whether_or_not_the_intervals_are_emitted() {
+        // python flags 274 = INCOMPLETE_INTERVAL | NO_ABSORPTION | TOO_FEW_POINTS for this row
+        // with and without the output, and the area of the last interval is NaN
+        use crate::parameters::tests::{one, regimen};
+        let t = [0.0, 1.0, 2.0, 4.0, 8.0, 12.0, 13.0, 16.0];
+        let c = [10.0, 8.0, 6.4, 4.1, 1.7, 9.0, 7.0, 5.0];
+        let batch = regimen(one(&t, &c), Route::Oral, 10.0, &[0.0, 12.0]);
+        let want = NcaFlag::INCOMPLETE_INTERVAL | NcaFlag::NO_ABSORPTION | NcaFlag::TOO_FEW_POINTS;
+        for emit in [false, true] {
+            let options = NcaOptions {
+                intervals: emit,
+                ..NcaOptions::default()
+            };
+            let result = run_unrefused(&batch, &options);
+            assert_eq!(flags_of(&result, 0), want, "intervals: {emit}");
+            assert!(crate::parameters::tests::at(&result, "auc_tau", 0).is_nan());
+            assert_eq!(
+                interval_names(&result).is_empty(),
+                !emit,
+                "intervals: {emit}"
+            );
+        }
+    }
+
+    /// The batch of the mixed protocols: a single dose row, a three dose row, a single dose row
+    /// and a three dose row, over the same 16 times. The curves are python's.
+    fn mixed_batch() -> Batch {
+        use crate::parameters::tests::many;
+        let times = [
+            0.0, 1.0, 2.0, 4.0, 8.0, 12.0, 13.0, 14.0, 16.0, 20.0, 24.0, 25.0, 26.0, 28.0, 32.0,
+            36.0,
+        ];
+        let rows: [[f64; 16]; 4] = [
+            [
+                0.0, 6.872, 7.16, 5.156, 2.33, 1.047, 0.857, 0.702, 0.47, 0.211, 0.095, 0.078,
+                0.064, 0.043, 0.019, 0.009,
+            ],
+            [
+                0.0, 6.872, 7.16, 5.156, 2.33, 1.047, 7.729, 7.862, 5.626, 2.541, 1.142, 7.807,
+                7.925, 5.669, 2.56, 1.15,
+            ],
+            [
+                0.0, 12.224, 14.59, 12.425, 6.972, 3.828, 3.295, 2.836, 2.101, 1.153, 0.633, 0.545,
+                0.469, 0.347, 0.191, 0.105,
+            ],
+            [
+                0.0, 3.436, 3.58, 2.578, 1.165, 0.524, 3.864, 3.931, 2.813, 1.27, 0.571, 3.904,
+                3.962, 2.834, 1.28, 0.575,
+            ],
+        ];
+        let n = f64::NAN;
+        let batch = many(
+            &[&times, &times, &times, &times],
+            &[&rows[0], &rows[1], &rows[2], &rows[3]],
+        );
+        Batch {
+            max_doses: 3,
+            dose_amount: vec![10.0, n, n, 10.0, 20.0, 30.0, 20.0, n, n, 5.0, 5.0, 5.0],
+            dose_time: vec![0.0, n, n, 0.0, 12.0, 24.0, 0.0, n, n, 0.0, 12.0, 24.0],
+            dose_duration: vec![n; 12],
+            dose_unit: Some("mg".to_string()),
+            route: Some(Route::Oral),
+            ..batch
+        }
+    }
+
+    /// `a == b` with `NaN` equal to `NaN`, element by element.
+    #[track_caller]
+    fn assert_same(name: &str, actual: &[f64], expected: &[f64]) {
+        let equal = actual.len() == expected.len()
+            && actual
+                .iter()
+                .zip(expected)
+                .all(|(a, b)| a == b || (a.is_nan() && b.is_nan()));
+        assert!(equal, "{name}: {actual:?} is not {expected:?}");
+    }
+
+    /// `assert_same` to the tolerance of the point parameters of `compute_row`, which differ from
+    /// numpy's in the last place for a regression whose sums are shifted (see `close`).
+    #[track_caller]
+    fn assert_near(name: &str, actual: &[f64], expected: &[f64]) {
+        assert_eq!(actual.len(), expected.len(), "{name}");
+        for (a, e) in actual.iter().zip(expected) {
+            if e.is_nan() {
+                assert!(a.is_nan(), "{name}: {actual:?} is not {expected:?}");
+            } else {
+                crate::parameters::tests::close(*a, *e);
+            }
+        }
+    }
+
+    #[test]
+    fn a_batch_of_mixed_protocols_keeps_each_row_in_its_own_path_and_in_input_order() {
+        // Review Focus. The rows are single, multiple, single, multiple, and every number is
+        // python's `run_analysis_rows`: a single dose row is NaN in every steady state variable
+        // and every interval variable (`n_doses` is the exception, the protocol of the row,
+        // python gives 1 for a single dose row), a multiple dose row is NaN in the single dose
+        // quantities, and the rows come back in the order they went in - every column is
+        // different per row, so a merge which concatenated the two paths would show
+        let n = f64::NAN;
+        let result = run_unrefused(
+            &mixed_batch(),
+            &NcaOptions {
+                intervals: true,
+                ..NcaOptions::default()
+            },
+        );
+        let column = |name: &str| -> Vec<f64> {
+            result
+                .parameters
+                .iter()
+                .find(|p| p.name == name)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "no column {name}: {:?}",
+                        crate::parameters::tests::names(&result)
+                    )
+                })
+                .values
+                .clone()
+        };
+        let interval = |name: &str| -> Vec<f64> {
+            result
+                .point_variables
+                .iter()
+                .find(|v| v.name == name)
+                .unwrap_or_else(|| panic!("no variable {name}"))
+                .values
+                .clone()
+        };
+        // the point parameters of each row's own path
+        assert_same("cmax", &column("cmax"), &[7.16, 7.925, 14.59, 3.962]);
+        assert_near(
+            "auc_inf_obs",
+            &column("auc_inf_obs"),
+            &[
+                48.54171396268703,
+                54.26638800635439,
+                130.7299413571588,
+                27.131973224308183,
+            ],
+        );
+        // the single dose quantities: python's for the single rows, NaN for the multiple ones
+        assert_near(
+            "cl_f",
+            &column("cl_f"),
+            &[0.2060083829690642, n, 0.15298714121931178, n],
+        );
+        assert_near(
+            "cl_f_pred",
+            &column("cl_f_pred"),
+            &[0.20601380649550355, n, 0.15298588273287622, n],
+        );
+        assert_near(
+            "auc_inf_dn",
+            &column("auc_inf_dn"),
+            &[4.854171396268702, n, 6.5364970678579395, n],
+        );
+        assert_same("cmax_dn", &column("cmax_dn"), &[0.716, n, 0.7295, n]);
+        // the steady state quantities: NaN for the single rows
+        assert_same(
+            "auc_tau",
+            &column("auc_tau"),
+            &[n, 48.49926973218703, n, 24.248095168680027],
+        );
+        assert_same(
+            "auc_tau_extrap_fraction",
+            &column("auc_tau_extrap_fraction"),
+            &[n, 0.0, n, 0.0],
+        );
+        assert_same("ctrough", &column("ctrough"), &[n, 1.15, n, 0.575]);
+        assert_same(
+            "cavg",
+            &column("cavg"),
+            &[n, 4.041605811015586, n, 2.0206745973900024],
+        );
+        assert_same("cmax_ss", &column("cmax_ss"), &[n, 7.925, n, 3.962]);
+        assert_same("tau", &column("tau"), &[n, 12.0, n, 12.0]);
+        assert_same(
+            "accumulation_ratio",
+            &column("accumulation_ratio"),
+            &[n, 1.1005537656433146, n, 1.100583054453734],
+        );
+        assert_same(
+            "accumulation_ratio_obs",
+            &column("accumulation_ratio_obs"),
+            &[n, 1.1199321745454445, n, 1.1197923074545013],
+        );
+        assert_same(
+            "cl_ss_f",
+            &column("cl_ss_f"),
+            &[n, 0.6185660148216664, n, 0.20620176410633004],
+        );
+        // the protocol of a row is reported whichever path it took
+        assert_same("n_doses", &column("n_doses"), &[1.0, 3.0, 1.0, 3.0]);
+        // an extravascular batch has no `cl_ss`, and no steady state name is missing
+        assert!(!crate::parameters::tests::names(&result).contains(&"cl_ss"));
+        // the interval variables: sample major over three intervals, NaN for the single rows
+        assert_same(
+            "interval_start",
+            &interval("interval_start"),
+            &[n, n, n, 0.0, 12.0, 24.0, n, n, n, 0.0, 12.0, 24.0],
+        );
+        assert_same(
+            "interval_end",
+            &interval("interval_end"),
+            &[n, n, n, 12.0, 24.0, 36.0, n, n, n, 12.0, 24.0, 36.0],
+        );
+        assert_same(
+            "interval_dose",
+            &interval("interval_dose"),
+            &[n, n, n, 10.0, 20.0, 30.0, n, n, n, 5.0, 5.0, 5.0],
+        );
+        assert_same(
+            "interval_n_points",
+            &interval("interval_n_points"),
+            &[n, n, n, 6.0, 6.0, 6.0, n, n, n, 6.0, 6.0, 6.0],
+        );
+        assert_same(
+            "interval_auc",
+            &interval("interval_auc"),
+            &[
+                n,
+                n,
+                n,
+                43.305541919868325,
+                48.06909355615606,
+                48.49926973218703,
+                n,
+                n,
+                n,
+                21.654100503512577,
+                24.032190218178513,
+                24.248095168680027,
+            ],
+        );
+        assert_same(
+            "interval_cmin",
+            &interval("interval_cmin"),
+            &[n, n, n, 0.0, 1.047, 1.142, n, n, n, 0.0, 0.524, 0.571],
+        );
+        for row in 0..4 {
+            assert_eq!(flags_of(&result, row), NcaFlag::NONE, "row {row}");
+        }
+    }
+
+    #[test]
+    fn a_batch_of_single_dose_rows_reports_no_steady_state_column() {
+        // the steady state columns belong to a batch with a multiple dose row: the same batch
+        // of the two single dose rows alone reports exactly the single dose parameters
+        use crate::parameters::tests::names;
+        let mixed = mixed_batch();
+        let steady_names = [
+            "auc_tau",
+            "auc_tau_extrap_fraction",
+            "cmin_ss",
+            "cmax_ss",
+            "ctrough",
+            "cavg",
+            "fluctuation",
+            "swing",
+            "fluctuation_tau",
+            "swing_tau",
+            "ptr",
+            "accumulation_ratio",
+            "accumulation_ratio_obs",
+            "accumulation_ratio_cmax_obs",
+            "accumulation_ratio_cmin_obs",
+            "accumulation_ratio_ctrough_obs",
+            "cl_ss_f",
+            "n_doses",
+            "tau",
+        ];
+        let result = run_unrefused(&mixed, &NcaOptions::default());
+        for name in steady_names {
+            assert!(names(&result).contains(&name), "{name}");
+        }
+        // rows 0 and 2 only: a batch which is all single dose
+        let pick = |rows: [usize; 2]| Batch {
+            sample_shape: vec![2],
+            times: rows
+                .iter()
+                .flat_map(|&r| mixed.times[r * 16..(r + 1) * 16].to_vec())
+                .collect(),
+            values: rows
+                .iter()
+                .flat_map(|&r| mixed.values[r * 16..(r + 1) * 16].to_vec())
+                .collect(),
+            dose_amount: rows
+                .iter()
+                .flat_map(|&r| mixed.dose_amount[r * 3..(r + 1) * 3].to_vec())
+                .collect(),
+            dose_time: rows
+                .iter()
+                .flat_map(|&r| mixed.dose_time[r * 3..(r + 1) * 3].to_vec())
+                .collect(),
+            dose_duration: vec![f64::NAN; 6],
+            coords: vec![SampleCoordinate {
+                name: "subject".to_string(),
+                dims: vec!["subject".to_string()],
+                values: pkpdutils_abi::Coordinate::Str(vec!["A".to_string(), "B".to_string()]),
+            }],
+            ..mixed.clone()
+        };
+        let singles = run_unrefused(&pick([0, 2]), &NcaOptions::default());
+        for name in steady_names {
+            assert!(!names(&singles).contains(&name), "{name}");
+        }
     }
 
     #[test]
