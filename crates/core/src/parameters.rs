@@ -24,7 +24,9 @@ use pkpdutils_abi::{NcaFlag, NcaOptions, Route, TerminalMethod};
 use crate::auc::{Areas, trapezoid, trapezoid_until};
 use crate::blq::{apply_blq, packed_mask, resolve_lloq};
 use crate::dose::{ReferenceDose, bolus_c0, dose_value, insert_dose_value};
-use crate::intervals::{Interval, count_points, interval_bounds, last_interval_length};
+use crate::intervals::{
+    Interval, analyze_intervals, count_points, interval_bounds, last_interval_length,
+};
 use crate::pack::pack_valid;
 use crate::terminal::{self, Candidate, TerminalFit};
 
@@ -569,6 +571,14 @@ pub(crate) struct Scratch {
     t_area: Vec<f64>,
     /// The values of the row the areas run on.
     c_area: Vec<f64>,
+    /// The valid times of the row as the host sent them, packed: the frame of the intervals.
+    host_t: Vec<f64>,
+    /// The valid values of the row as the host sent them, packed.
+    host_c: Vec<f64>,
+    /// The times of the curve of one interval.
+    curve_t: Vec<f64>,
+    /// The values of the curve of one interval.
+    curve_c: Vec<f64>,
 }
 
 impl Scratch {
@@ -585,6 +595,10 @@ impl Scratch {
             permitted: vec![false; n_time],
             t_area: vec![f64::NAN; width],
             c_area: vec![f64::NAN; width],
+            host_t: vec![f64::NAN; n_time],
+            host_c: vec![f64::NAN; n_time],
+            curve_t: Vec::with_capacity(n_time.saturating_add(2)),
+            curve_c: Vec::with_capacity(n_time.saturating_add(2)),
         }
     }
 }
@@ -634,7 +648,8 @@ pub(crate) struct RowInput<'a> {
 /// reports; the caller decides whether it wants them, as python's `candidate_variables` does.
 ///
 /// `intervals`, where it is given, is filled with the dosing intervals of the row
-/// (`intervals::interval_bounds` and `intervals::count_points`), over the protocol
+/// (`intervals::interval_bounds`, `intervals::count_points` and `intervals::analyze_intervals`;
+/// the last raises `NcaFlag::EXTRAPOLATED_TROUGH`), over the protocol
 /// `RowInput::dose_times` and `NcaOptions::tau`, in the time frame of the host.
 ///
 /// Mirrors `compute_parameters` of `src/pkpdutils/nca/nca.py` for one row; `single_dose` is
@@ -657,6 +672,10 @@ pub(crate) fn compute_row(
         permitted,
         t_area,
         c_area,
+        host_t,
+        host_c,
+        curve_t,
+        curve_c,
     } = scratch;
     let columns = input.times.len().min(input.values.len()).min(time.len());
 
@@ -724,6 +743,28 @@ pub(crate) fn compute_row(
             n_doses,
             intervals,
         );
+        // the curves of the intervals run on the raw valid points in the host frame, which is
+        // not the packed row above: that one is shifted onto the dose and treated for the limit
+        // of quantification
+        let n_host = pack_valid(
+            &input.times[..columns],
+            &input.values[..columns],
+            host_t,
+            host_c,
+        );
+        if analyze_intervals(
+            host_t,
+            host_c,
+            n_host,
+            n_doses,
+            input.route,
+            options,
+            intervals,
+            curve_t,
+            curve_c,
+        ) {
+            out.flags |= NcaFlag::EXTRAPOLATED_TROUGH;
+        }
     }
 
     // 7. the row which is too short to be a curve

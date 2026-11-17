@@ -285,13 +285,6 @@ pub(crate) fn count_points(
 /// rule may return it up to one rounding off.
 ///
 /// Mirrors `interpolate_at` of `src/pkpdutils/nca/auc.py`, with the same expressions.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "reached by the multiple dose analysis, which a later task wires in"
-    )
-)]
 pub(crate) fn interpolate_at(
     t: &[f64],
     c: &[f64],
@@ -337,13 +330,6 @@ pub(crate) fn interpolate_at(
 /// `start`.
 ///
 /// Mirrors `_back_extrapolate` of `src/pkpdutils/nca/intervals.py`.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "reached by the multiple dose analysis, which a later task wires in"
-    )
-)]
 fn back_extrapolate(t: &[f64], c: &[f64], n_valid: usize, start: f64, method: C0Method) -> f64 {
     let first = t[..n_valid].iter().filter(|&&x| x <= start).count();
     let n_after = n_valid - first;
@@ -362,41 +348,113 @@ fn back_extrapolate(t: &[f64], c: &[f64], n_valid: usize, start: f64, method: C0
     }
 }
 
+/// The number of positive samples the regression of [`extrapolate_end`] uses at most
+/// (`TROUGH_POINTS` of `src/pkpdutils/nca/intervals.py`).
+pub(crate) const TROUGH_POINTS: usize = 3;
+
+/// Value at the end of an interval from the log-linear regression of its last samples.
+///
+/// The least squares line through `(t_i, ln C_i)` of the last `max_points` positive samples with
+/// `inside[i]` is evaluated at `t_end`: the estimate of a trough which was not observed
+/// (Gabrielsson & Weiner 2016, ch. 2.8). The line is fitted about the centroid, `t` and `ln C`
+/// both centred, `exp(y_bar + slope (t_end - t_bar))` with `slope = sum(dt dy) / sum(dt dt)`,
+/// because the normal equations on absolute times subtract two nearly equal sums and lose their
+/// digits once the times are large relative to their spread. The sums run in the order of the
+/// samples, as the cumulative sums of python's `_ordered_sum` do.
+///
+/// `NaN` with fewer than two positive samples inside, or when `sum(dt dt)` is not positive (all
+/// selected samples at one time). `t`, `c` and `inside` are read up to the shortest of the three.
+///
+/// Mirrors `_extrapolate_end` of `src/pkpdutils/nca/intervals.py`.
+pub(crate) fn extrapolate_end(
+    t: &[f64],
+    c: &[f64],
+    inside: &[bool],
+    t_end: f64,
+    max_points: usize,
+) -> f64 {
+    let n = t.len().min(c.len()).min(inside.len());
+    let positive = |j: usize| inside[j] && c[j] > 0.0;
+    let total = (0..n).filter(|&j| positive(j)).count();
+    // the last `max_points` positive samples: those with at most `max_points - 1` after them
+    let mut seen = 0usize;
+    let selected = |j: usize, seen: &mut usize| {
+        if !positive(j) {
+            return false;
+        }
+        *seen += 1;
+        total - *seen < max_points
+    };
+    let chosen: Vec<usize> = (0..n).filter(|&j| selected(j, &mut seen)).collect();
+    let count = chosen.len() as f64;
+    let t_bar = chosen.iter().fold(0.0, |s, &j| s + t[j]) / count;
+    let y_bar = chosen.iter().fold(0.0, |s, &j| s + c[j].ln()) / count;
+    let denominator = chosen.iter().fold(0.0, |s, &j| {
+        let dt = t[j] - t_bar;
+        s + dt * dt
+    });
+    // centring y as well keeps the slope exact when t_bar carries a rounding error
+    let numerator = chosen
+        .iter()
+        .fold(0.0, |s, &j| s + (t[j] - t_bar) * (c[j].ln() - y_bar));
+    if chosen.len() >= 2 && denominator > 0.0 {
+        (y_bar + numerator / denominator * (t_end - t_bar)).exp()
+    } else {
+        f64::NAN
+    }
+}
+
+/// What [`interval_curve`] reports besides the curve it wrote.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct IntervalCurve {
+    /// The number of points of the curve.
+    pub n: usize,
+    /// The value at the start of the interval as interpolated (and, for a bolus, back
+    /// extrapolated): not the first point of the curve, which on a tie is the observed sample.
+    pub c_start: f64,
+    /// Whether the interval has an observation of its own: a sample inside it, or one at its
+    /// end when no dose follows. Python's `covering >= 1`, taken from the raw row.
+    pub covered: bool,
+    /// Whether the trough was replaced by the regression of [`extrapolate_end`], a finite one
+    /// (`NCAFlag.EXTRAPOLATED_TROUGH`).
+    pub extrapolated: bool,
+}
+
 /// The curve of one interval: the samples inside it plus both bounds, into `out_t` and `out_c`
-/// (cleared first), the number of points returned.
+/// (cleared first).
 ///
 /// The samples are those with `start <= t < end` of the packed row (`t`, `c`, `n_valid`), the
 /// contiguous block behind the ones before the start. The value at the start is interpolated
 /// by `options.auc_method`, and for [`Route::IvBolus`] only, where that is `NaN` (the start lies
-/// before the first sample) it is [`back_extrapolate`]d; the value at the end is interpolated.
-/// A bound whose time or value is not finite is not inserted, so an interval beyond the data or
-/// an [`Interval::EMPTY`] gives a shorter curve. A sample recorded exactly at the start (compared
-/// with `==`, no tolerance) and the bound carry the same time, and their two values are swapped so
-/// the observed one stays in front, which makes a zero-width step of the trapezoid rule.
+/// before the first sample) it is [`back_extrapolate`]d. The value at the end is interpolated,
+/// except for the trough of a bolus: when `ends_at_dose` (a dose follows the interval), a sample
+/// lies within `1e-9 * max(1, |end|)` of the end and the largest such sample exceeds the last
+/// sample inside, that sample is the post-dose value of the next bolus and the end value is the
+/// regression of [`extrapolate_end`] instead. It is assigned **even where the regression is
+/// `NaN`**, so a failed regression does not fall back to the interpolated value: the end is then
+/// not finite, the end bound is not inserted and the interval is not complete. Only the flag
+/// `extrapolated` needs a finite trough. A bound whose time or value is not finite is not
+/// inserted, so an interval beyond the data or an [`Interval::EMPTY`] gives a shorter curve. A
+/// sample recorded exactly at the start (compared with `==`, no tolerance) and the bound carry
+/// the same time, and their two values are swapped so the observed one stays in front, which
+/// makes a zero-width step of the trapezoid rule.
 ///
-/// The trough of a bolus interval whose sample at the next dose is a post-dose value is not
-/// replaced here: that is the regression of `_extrapolate_end`, which needs the next dose.
+/// The row is in the frame of the interval bounds (the host frame, absolute times).
 ///
-/// Mirrors the block, the start and end values and `_with_bounds` of `_interval_column` of
-/// `src/pkpdutils/nca/intervals.py`.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "reached by the multiple dose analysis, which a later task wires in"
-    )
-)]
+/// Mirrors the block, the start and end values, the post-dose rule and `_with_bounds` of
+/// `_interval_column` of `src/pkpdutils/nca/intervals.py`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn interval_curve(
     t: &[f64],
     c: &[f64],
     n_valid: usize,
     interval: &Interval,
+    ends_at_dose: bool,
     route: Option<Route>,
     options: &NcaOptions,
     out_t: &mut Vec<f64>,
     out_c: &mut Vec<f64>,
-) -> usize {
+) -> IntervalCurve {
     out_t.clear();
     out_c.clear();
     let n_valid = n_valid.min(t.len()).min(c.len());
@@ -408,7 +466,31 @@ pub(crate) fn interval_curve(
     if route == Some(Route::IvBolus) && c_start.is_nan() {
         c_start = back_extrapolate(t, c, n_valid, start, options.c0_method);
     }
-    let c_end = interpolate_at(t, c, n_valid, end, options.auc_method);
+    let mut c_end = interpolate_at(t, c, n_valid, end, options.auc_method);
+
+    // a sample at the end of the interval, and the largest of them
+    let tolerance = END_TOLERANCE * end.abs().max(1.0);
+    let at_end = |x: f64| (x - end).abs() <= tolerance;
+    let sample_at_end = t
+        .iter()
+        .zip(c)
+        .filter(|&(&x, _)| at_end(x))
+        .map(|(_, &v)| v)
+        .reduce(f64::max);
+    let last_inside = inside.checked_sub(1).map_or(f64::NAN, |i| c[before + i]);
+    let post_dose = route == Some(Route::IvBolus)
+        && ends_at_dose
+        && sample_at_end.is_some_and(|v| v > last_inside);
+    let mut extrapolated = false;
+    if post_dose {
+        let mask: Vec<bool> = t.iter().map(|&x| x >= start && x < end).collect();
+        let trough = extrapolate_end(t, c, &mask, end, TROUGH_POINTS);
+        // assigned whatever the regression gave, a NaN included
+        c_end = trough;
+        extrapolated = trough.is_finite();
+    }
+    let covered = inside + usize::from(sample_at_end.is_some() && !ends_at_dose) >= 1;
+
     let has_start = start.is_finite() && c_start.is_finite();
     let tie = has_start && inside >= 1 && t[before] == start;
     if has_start {
@@ -428,7 +510,63 @@ pub(crate) fn interval_curve(
         out_t.push(end);
         out_c.push(c_end);
     }
-    out_t.len()
+    IntervalCurve {
+        n: out_t.len(),
+        c_start,
+        covered,
+        extrapolated,
+    }
+}
+
+/// The parameters of every interval of a row, written into `intervals` (the bounds and the
+/// counts of [`interval_bounds`] and [`count_points`] already in place).
+///
+/// `t` and `c` are the packed valid points of the row in the frame of the interval bounds, the
+/// raw times and values (no limit of quantification treatment, no shift by the dose time), and
+/// `n_valid` how many there are. Every interval builds its curve ([`interval_curve`]; `ends_at_dose`
+/// is true for every interval but the last of the protocol of `n_doses` doses) and takes its
+/// parameters from it ([`interval_parameters`]). `curve_t` and `curve_c` are scratch buffers.
+/// Returns whether the trough of any interval was regressed (`NCAFlag.EXTRAPOLATED_TROUGH`).
+///
+/// Mirrors the loop over the intervals of `compute_intervals` in
+/// `src/pkpdutils/nca/intervals.py`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn analyze_intervals(
+    t: &[f64],
+    c: &[f64],
+    n_valid: usize,
+    n_doses: usize,
+    route: Option<Route>,
+    options: &NcaOptions,
+    intervals: &mut [Interval],
+    curve_t: &mut Vec<f64>,
+    curve_c: &mut Vec<f64>,
+) -> bool {
+    let mut extrapolated = false;
+    for (k, interval) in intervals.iter_mut().enumerate() {
+        let curve = interval_curve(
+            t,
+            c,
+            n_valid,
+            interval,
+            k + 1 != n_doses,
+            route,
+            options,
+            curve_t,
+            curve_c,
+        );
+        interval_parameters(
+            curve_t,
+            curve_c,
+            curve.n,
+            curve.c_start,
+            curve.covered,
+            interval,
+            options,
+        );
+        extrapolated |= curve.extrapolated;
+    }
+    extrapolated
 }
 
 /// Write the dose amount of every interval which exists (`interval_dose`).
@@ -470,13 +608,6 @@ pub(crate) fn fill_doses(intervals: &mut [Interval], amounts: &[f64]) {
 ///
 /// Mirrors the concentration branch of `_interval_column` of `src/pkpdutils/nca/intervals.py`
 /// (Gabrielsson & Weiner 2016, ch. 2.8 for the fluctuation and the swing).
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "reached by the multiple dose analysis, which a later task wires in"
-    )
-)]
 pub(crate) fn interval_parameters(
     t: &[f64],
     c: &[f64],
@@ -793,11 +924,13 @@ mod tests {
             c,
             t.len(),
             &interval,
+            false,
             route,
             options,
             &mut out_t,
             &mut out_c,
-        );
+        )
+        .n;
         (out_t, out_c, n)
     }
 
@@ -897,11 +1030,13 @@ mod tests {
             &c,
             4,
             &empty,
+            false,
             Some(Route::IvBolus),
             &log,
             &mut a,
             &mut b,
-        );
+        )
+        .n;
         assert_eq!((n, a.len(), b.len()), (0, 0, 0));
         // only the first n_valid points are read
         let interval = Interval {
@@ -914,11 +1049,13 @@ mod tests {
             &c,
             2,
             &interval,
+            false,
             Some(Route::IvBolus),
             &log,
             &mut a,
             &mut b,
-        );
+        )
+        .n;
         assert_eq!(
             (n, a.clone()),
             (3, vec![0.0, 1.0, 2.0]),
@@ -977,11 +1114,13 @@ mod tests {
             c,
             t.len(),
             &interval,
+            false,
             Some(route),
             &options,
             &mut ot,
             &mut oc,
-        );
+        )
+        .n;
         let c_start = interpolate_at(t, c, t.len(), start, options.auc_method);
         interval_parameters(&ot, &oc, n, c_start, true, &mut interval, &options);
         interval
@@ -1276,5 +1415,380 @@ mod tests {
         let others: Vec<_> = with_dose.iter().filter(|n| *n != "interval_dose").collect();
         assert_eq!(others, without.iter().collect::<Vec<_>>());
         assert!(without.contains(&"interval_swing".to_string()));
+    }
+
+    // ---- the trough regression of a bolus interval, through compute_row ----
+
+    /// The intervals and the flags of one row, analysed by `compute_row` over the protocol `doses`
+    /// (absolute times, the frame of the host), as the python reference of the same name does.
+    fn row_of(
+        times: &[f64],
+        values: &[f64],
+        doses: &[f64],
+        route: Route,
+        method: AucMethod,
+        lloq: Option<f64>,
+    ) -> (Vec<Interval>, NcaFlag) {
+        use crate::parameters::tests::linear;
+        use crate::parameters::{RowInput, Scratch, compute_row};
+
+        let input = RowInput {
+            times,
+            values,
+            dose: crate::dose::ReferenceDose {
+                amount: 10.0,
+                time: *doses.last().unwrap(),
+                duration: Some(if route == Route::IvInfusion {
+                    1.0
+                } else {
+                    f64::NAN
+                }),
+            },
+            route: Some(route),
+            has_dose: true,
+            lloq,
+            window: None,
+            manual: None,
+            single_dose: false,
+            dose_times: doses,
+        };
+        let tau = doses[1] - doses[0];
+        let options = NcaOptions {
+            auc_method: method,
+            tau: Some(tau),
+            ..linear()
+        };
+        let mut intervals = Vec::new();
+        let row = compute_row(
+            &input,
+            &options,
+            &mut Scratch::new(times.len()),
+            None,
+            Some(&mut intervals),
+        );
+        (intervals, row.flags)
+    }
+
+    use pkpdutils_abi::NcaFlag;
+
+    const T: [f64; 9] = [0.0, 1.0, 2.0, 4.0, 8.0, 12.0, 13.0, 16.0, 24.0];
+    // the trough of the first interval of `T` with a post-dose 9.0 at 12, from python
+    const TROUGH: f64 = 0.7022990702519408;
+
+    fn bolus(values: &[f64]) -> (Vec<Interval>, NcaFlag) {
+        row_of(
+            &T,
+            values,
+            &[0.0, 12.0],
+            Route::IvBolus,
+            AucMethod::Linear,
+            None,
+        )
+    }
+
+    #[test]
+    fn a_post_dose_sample_at_a_bolus_interval_end_is_replaced_by_the_regression() {
+        // all four conditions hold: IvBolus, the interval ends at a dose, a sample sits at that end
+        // and exceeds the last sample inside (9.0 > 1.7). The trough is the regression of the last
+        // THREE of the five samples inside (a fit of all five gives another value), and every value
+        // below is from `compute_intervals` of the python source
+        let (i, flags) = bolus(&[10.0, 8.0, 6.4, 4.1, 1.7, 9.0, 7.0, 5.0, 2.0]);
+        assert_eq!(i[0].ctrough, TROUGH);
+        assert_eq!(
+            i[0].cmin, TROUGH,
+            "the trough is the end of the curve, so also its minimum"
+        );
+        assert_eq!(i[0].auc, 43.10459814050388);
+        assert_eq!(i[0].cavg, 3.59204984504199);
+        assert_eq!(i[0].c_start, 10.0);
+        assert!(flags.contains(NcaFlag::EXTRAPOLATED_TROUGH));
+        // the last interval has no dose after it: its trough is the sample at the end, observed
+        assert_eq!(i[1].ctrough, 2.0);
+        assert_eq!(i[1].auc, 54.0);
+        assert_eq!(
+            i[1].c_start, 9.0,
+            "the post-dose sample starts the next interval"
+        );
+        // and the python log rule agrees on the trough, the area follows the rule
+        let (log, flags) = row_of(
+            &T,
+            &[10.0, 8.0, 6.4, 4.1, 1.7, 9.0, 7.0, 5.0, 2.0],
+            &[0.0, 12.0],
+            Route::IvBolus,
+            AucMethod::Log,
+            None,
+        );
+        assert_eq!(log[0].ctrough, TROUGH);
+        assert_eq!(log[0].auc, 41.881977449437684);
+        assert!(flags.contains(NcaFlag::EXTRAPOLATED_TROUGH));
+    }
+
+    #[test]
+    fn the_substituted_trough_is_not_counted_as_a_point_of_the_interval() {
+        let values = [10.0, 8.0, 6.4, 4.1, 1.7, 9.0, 7.0, 5.0, 2.0];
+        let (i, _) = bolus(&values);
+        assert_eq!((i[0].n_points, i[1].n_points), (5.0, 4.0));
+        // the same samples as an oral dose count the one at the end
+        let (oral, _) = row_of(
+            &T,
+            &values,
+            &[0.0, 12.0],
+            Route::Oral,
+            AucMethod::Linear,
+            None,
+        );
+        assert_eq!((oral[0].n_points, oral[1].n_points), (6.0, 4.0));
+    }
+
+    #[test]
+    fn an_observed_trough_at_the_dose_time_is_used_as_it_is() {
+        // 1.2 < 1.7: the sample at 12 is the pre-dose trough. No regression, no flag
+        let (i, flags) = bolus(&[10.0, 8.0, 6.4, 4.1, 1.7, 1.2, 7.0, 5.0, 2.0]);
+        assert_eq!(i[0].ctrough, 1.2);
+        assert_eq!(i[0].auc, 44.099999999999994);
+        assert_eq!(i[0].n_points, 6.0);
+        assert!(!flags.contains(NcaFlag::EXTRAPOLATED_TROUGH));
+        // equal to the last sample inside is no post-dose sample either: the comparison is strict
+        let (i, flags) = bolus(&[10.0, 8.0, 6.4, 4.1, 1.7, 1.7, 7.0, 5.0, 2.0]);
+        assert_eq!((i[0].ctrough, i[0].n_points), (1.7, 6.0));
+        assert!(!flags.contains(NcaFlag::EXTRAPOLATED_TROUGH));
+    }
+
+    #[test]
+    fn only_a_bolus_substitutes_its_trough() {
+        // the data of the first test: 9.0 at the next dose is above the last sample inside
+        let values = [10.0, 8.0, 6.4, 4.1, 1.7, 9.0, 7.0, 5.0, 2.0];
+        for route in [Route::Oral, Route::IvInfusion] {
+            let (i, flags) = row_of(&T, &values, &[0.0, 12.0], route, AucMethod::Linear, None);
+            assert_eq!(i[0].ctrough, 9.0, "{route:?}");
+            assert_eq!(i[0].auc, 59.699999999999996, "{route:?}");
+            assert!(!flags.contains(NcaFlag::EXTRAPOLATED_TROUGH), "{route:?}");
+        }
+    }
+
+    #[test]
+    fn the_last_interval_of_a_bolus_has_no_dose_after_it_and_keeps_its_sample() {
+        // the sample at 24 (20.0) is above the last one inside (5.0), but no dose follows
+        let (i, flags) = bolus(&[10.0, 8.0, 6.4, 4.1, 1.7, 9.0, 7.0, 5.0, 20.0]);
+        assert_eq!((i[1].ctrough, i[1].auc), (20.0, 126.0));
+        assert_eq!(i[1].n_points, 4.0);
+        // only the first interval was regressed
+        assert!(flags.contains(NcaFlag::EXTRAPOLATED_TROUGH));
+        assert_eq!(i[0].ctrough, TROUGH);
+    }
+
+    #[test]
+    fn a_failed_regression_overwrites_the_interpolated_end_with_nan() {
+        // post-dose, but the regression has nothing to fit: the end value is NaN, NOT the
+        // interpolated 9.0. The end bound is then not inserted, the interval is incomplete and
+        // the flag (which needs a finite trough) stays down. python: auc, cmin, ctrough nan,
+        // c_start 10, n_points 3
+        let times = [0.0, 1.0, 2.0, 12.0, 13.0, 24.0];
+        let (i, flags) = row_of(
+            &times,
+            &[10.0, 0.0, 0.0, 9.0, 7.0, 2.0],
+            &[0.0, 12.0],
+            Route::IvBolus,
+            AucMethod::Linear,
+            None,
+        );
+        assert!(i[0].ctrough.is_nan() && i[0].auc.is_nan() && i[0].cmin.is_nan());
+        assert!(i[0].cmax.is_nan() && i[0].cavg.is_nan());
+        assert_eq!((i[0].c_start, i[0].n_points), (10.0, 3.0));
+        assert!(
+            !flags.contains(NcaFlag::EXTRAPOLATED_TROUGH),
+            "a NaN trough raises no flag"
+        );
+        // the next interval does not care
+        assert_eq!((i[1].ctrough, i[1].auc), (2.0, 57.5));
+
+        // a single sample inside is too few as well (python: nan, c_start 5, n_points 1)
+        let (i, flags) = row_of(
+            &[0.0, 12.0, 13.0, 24.0],
+            &[5.0, 9.0, 7.0, 2.0],
+            &[0.0, 12.0],
+            Route::IvBolus,
+            AucMethod::Linear,
+            None,
+        );
+        assert!(i[0].ctrough.is_nan() && i[0].auc.is_nan());
+        assert_eq!((i[0].c_start, i[0].n_points), (5.0, 1.0));
+        assert!(!flags.contains(NcaFlag::EXTRAPOLATED_TROUGH));
+    }
+
+    #[test]
+    fn a_sample_at_the_end_is_matched_within_a_relative_tolerance() {
+        let values = [10.0, 8.0, 6.4, 4.1, 1.7, 9.0, 7.0, 5.0, 2.0];
+        let at = |end: f64| {
+            let mut times = T;
+            times[5] = end;
+            row_of(
+                &times,
+                &values,
+                &[0.0, 12.0],
+                Route::IvBolus,
+                AucMethod::Linear,
+                None,
+            )
+        };
+        // 1e-10 away is within 1e-9 * 12; the sample counts as the one at the end
+        let (i, flags) = at(12.0 + 1e-10);
+        assert_eq!((i[0].ctrough, i[0].n_points), (TROUGH, 5.0));
+        assert!(flags.contains(NcaFlag::EXTRAPOLATED_TROUGH));
+        // 1e-3 away is not: the end is interpolated and nothing is regressed
+        let (i, flags) = at(12.0 + 1e-3);
+        assert_eq!(i[0].ctrough, 8.998175456135966);
+        assert!(!flags.contains(NcaFlag::EXTRAPOLATED_TROUGH));
+    }
+
+    #[test]
+    fn the_regression_agrees_with_the_centred_python_fit_on_late_sample_times() {
+        // t ~ 1e5 with a 0.2 spread: the centred reference (python, Task 1) is 5.248632296621781,
+        // the textbook normal equations on the absolute times lose about three digits here
+        let t0 = 1e5;
+        let times = [t0, t0 + 0.1, t0 + 0.2, t0 + 0.3, t0 + 0.4, t0 + 0.6];
+        let values = [10.0, 8.1, 6.5, 9.0, 7.0, 5.0];
+        let (i, flags) = row_of(
+            &times,
+            &values,
+            &[t0, t0 + 0.3],
+            Route::IvBolus,
+            AucMethod::Linear,
+            None,
+        );
+        assert!(flags.contains(NcaFlag::EXTRAPOLATED_TROUGH));
+        let reference = 5.248632296621781;
+        assert!(
+            (i[0].ctrough / reference - 1.0).abs() < 1e-12,
+            "{}",
+            i[0].ctrough
+        );
+        assert_eq!(i[0].ctrough, reference);
+        assert_eq!(i[0].auc, 2.222431614854223);
+        // the textbook form on the same samples is visibly off, so this row separates the two
+        let (x, y): (Vec<f64>, Vec<f64>) = (
+            times[..3].to_vec(),
+            values[..3].iter().map(|v| v.ln()).collect(),
+        );
+        let n = 3.0;
+        let (sx, sy) = (x.iter().sum::<f64>(), y.iter().sum::<f64>());
+        let sxx: f64 = x.iter().map(|v| v * v).sum();
+        let sxy: f64 = x.iter().zip(&y).map(|(a, b)| a * b).sum();
+        let slope = (n * sxy - sx * sy) / (n * sxx - sx * sx);
+        let textbook = ((sy - slope * sx) / n + slope * (t0 + 0.3)).exp();
+        assert!((textbook / reference - 1.0).abs() > 1e-6, "{textbook}");
+    }
+
+    #[test]
+    fn the_regression_is_exact_for_a_mono_exponential_and_selects_its_samples() {
+        let t = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
+        let c: Vec<f64> = t.iter().map(|x| 8.0 * (-0.4_f64 * x).exp()).collect();
+        let all = [true; 6];
+        let truth = 8.0 * (-0.4_f64 * 6.0).exp();
+        let got = extrapolate_end(&t, &c, &all, 6.0, 3);
+        assert!((got / truth - 1.0).abs() < 1e-12, "{got} vs {truth}");
+        // the last `max_points` positive samples: perturb the first two, nothing moves
+        let mut noisy = c.clone();
+        noisy[0] = 100.0;
+        noisy[1] = 0.001;
+        assert_eq!(extrapolate_end(&t, &noisy, &all, 6.0, 3), got);
+        // with more points allowed the perturbed ones count and the value changes
+        assert_ne!(extrapolate_end(&t, &noisy, &all, 6.0, 5), got);
+        // a sample outside the interval is not used, a zero is skipped and the next positive
+        // one before it takes its place
+        let mut mask = all;
+        mask[5] = false;
+        let mut zero = c.clone();
+        zero[3] = 0.0;
+        let got = extrapolate_end(&t, &zero, &mask, 6.0, 3);
+        let expected = extrapolate_end(&[1.0, 2.0, 4.0], &[c[1], c[2], c[4]], &[true; 3], 6.0, 3);
+        assert_eq!(got, expected);
+        // fewer than two positive samples, and no spread of the times
+        assert!(
+            extrapolate_end(&t, &c, &[false, false, false, false, false, true], 6.0, 3).is_nan()
+        );
+        assert!(extrapolate_end(&t, &[0.0, 0.0, 0.0, 0.0, 0.0, 1.0], &all, 6.0, 3).is_nan());
+        assert!(extrapolate_end(&[2.0, 2.0], &[3.0, 2.0], &[true; 2], 6.0, 3).is_nan());
+        assert!(extrapolate_end(&[], &[], &[], 6.0, 3).is_nan());
+    }
+
+    #[test]
+    fn the_limit_of_quantification_changes_neither_the_trough_nor_the_flag() {
+        let values = [10.0, 8.0, 6.4, 4.1, 1.7, 9.0, 7.0, 5.0, 2.0];
+        let plain = bolus(&values);
+        let limited = row_of(
+            &T,
+            &values,
+            &[0.0, 12.0],
+            Route::IvBolus,
+            AucMethod::Linear,
+            Some(3.0),
+        );
+        assert_eq!(
+            limited.1.contains(NcaFlag::EXTRAPOLATED_TROUGH),
+            plain.1.contains(NcaFlag::EXTRAPOLATED_TROUGH)
+        );
+        assert_eq!(limited.0[0].ctrough, plain.0[0].ctrough);
+        assert_eq!(limited.0[0].auc, plain.0[0].auc);
+        assert_eq!(limited.0[0].n_points, plain.0[0].n_points);
+    }
+
+    // ---- covered and the start value, derived by the caller ----
+
+    #[test]
+    fn an_interval_without_a_sample_of_its_own_is_not_complete_unless_it_is_the_last() {
+        let times = [0.0, 1.0, 5.0, 24.0];
+        let values = [10.0, 8.0, 5.0, 1.0];
+        // doses 0, 12, 24: the interval [12, 24) has no sample inside and the one at 24 belongs to
+        // the next. Its bounds are interpolated and finite, so only `covered` makes it incomplete
+        // (python: auc nan, c_start 3.526..., n_points 1)
+        let (i, _) = row_of(
+            &times,
+            &values,
+            &[0.0, 12.0, 24.0],
+            Route::Oral,
+            AucMethod::Linear,
+            None,
+        );
+        assert!(i[1].auc.is_nan() && i[1].ctrough.is_nan() && i[1].cmax.is_nan());
+        assert_eq!((i[1].c_start, i[1].n_points), (3.526315789473684, 1.0));
+        // the same samples, doses 0 and 12: the interval is the last, the sample at its end is
+        // its own, and it is complete
+        let (i, _) = row_of(
+            &times,
+            &values,
+            &[0.0, 12.0],
+            Route::Oral,
+            AucMethod::Linear,
+            None,
+        );
+        assert_eq!(i[1].auc, 27.157894736842103);
+        assert_eq!(i[1].ctrough, 1.0);
+        assert_eq!(i[1].n_points, 1.0);
+        // and the first interval is covered by its own samples in both
+        assert_eq!(i[0].auc, 64.84210526315789);
+    }
+
+    #[test]
+    fn the_start_value_of_an_interval_is_the_interpolated_one_even_on_a_tie() {
+        // a sample sits exactly at the start of [2, 4). The log rule interpolates exp(ln 3), which
+        // is 3 + 1 ulp: the reported c_start is that value and the observed 3.0 is only the first
+        // point of the curve (python: 3.0000000000000004, and 4.999999999999999 at the first start)
+        let times = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let values = [5.0, 4.0, 3.0, 2.5, 1.2, 0.6, 0.3];
+        let (i, _) = row_of(
+            &times,
+            &values,
+            &[0.0, 2.0, 4.0],
+            Route::Oral,
+            AucMethod::Log,
+            None,
+        );
+        assert_eq!(i[1].c_start, 3.000_000_000_000_000_4);
+        assert_ne!(i[1].c_start, 3.0);
+        assert_eq!(i[0].c_start, 4.999_999_999_999_999);
+        // the same value leads the curve's extremes, as the curve holds [3, 3 + ulp, 2.5, 1.2]
+        assert_eq!(i[1].cmax, 3.000_000_000_000_000_4);
+        assert_eq!(i[1].auc, 4.513599022698392);
     }
 }
