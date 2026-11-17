@@ -24,6 +24,7 @@ use pkpdutils_abi::{NcaFlag, NcaOptions, Route, TerminalMethod};
 use crate::auc::{Areas, trapezoid, trapezoid_until};
 use crate::blq::{apply_blq, packed_mask, resolve_lloq};
 use crate::dose::{ReferenceDose, bolus_c0, dose_value, insert_dose_value};
+use crate::intervals::{Interval, count_points, interval_bounds, last_interval_length};
 use crate::pack::pack_valid;
 use crate::terminal::{self, Candidate, TerminalFit};
 
@@ -613,6 +614,9 @@ pub(crate) struct RowInput<'a> {
     /// the dose time: an infusion or an oral dose then gets a zero inserted there, a row of a
     /// protocol of several doses does not. A bolus gets its back extrapolated `c0` either way.
     pub single_dose: bool,
+    /// The dose times of the protocol of the row, in the time frame of `times`, `NaN` padded
+    /// (`dose_time` of `compute_intervals`); only the per-interval variables read them.
+    pub dose_times: &'a [f64],
 }
 
 /// The parameters of one curve.
@@ -629,6 +633,10 @@ pub(crate) struct RowInput<'a> {
 /// have chosen from (`terminal::candidate_table`), which only an analysis of a single row
 /// reports; the caller decides whether it wants them, as python's `candidate_variables` does.
 ///
+/// `intervals`, where it is given, is filled with the dosing intervals of the row
+/// (`intervals::interval_bounds` and `intervals::count_points`), over the protocol
+/// `RowInput::dose_times` and `NcaOptions::tau`, in the time frame of the host.
+///
 /// Mirrors `compute_parameters` of `src/pkpdutils/nca/nca.py` for one row; `single_dose` is
 /// the `RowInput` field of that name.
 pub(crate) fn compute_row(
@@ -636,6 +644,7 @@ pub(crate) fn compute_row(
     options: &NcaOptions,
     scratch: &mut Scratch,
     candidates: Option<&mut Vec<Candidate>>,
+    intervals: Option<&mut Vec<Interval>>,
 ) -> RowParameters {
     let mut out = RowParameters::EMPTY;
     let Scratch {
@@ -692,6 +701,29 @@ pub(crate) fn compute_row(
         let kept = !rules.terminal_regression && blq.get(j).copied().unwrap_or(false);
         let during = infusion_end.is_some_and(|end| tp.get(j).is_some_and(|&t| t <= end));
         *slot = !kept && !during;
+    }
+
+    // 6b. the dosing intervals, on the times as the host sent them
+    if let Some(intervals) = intervals {
+        let own = [0.0];
+        // a batch without a protocol but with `tau` is one interval from time 0
+        let dose_times = if input.dose_times.is_empty() && options.tau.is_some() {
+            &own[..]
+        } else {
+            input.dose_times
+        };
+        let n_doses = dose_times.iter().filter(|t| t.is_finite()).count();
+        let tau = options
+            .tau
+            .or_else(|| last_interval_length(dose_times, n_doses));
+        interval_bounds(dose_times, n_doses, tau, intervals);
+        count_points(
+            input.times,
+            input.values,
+            input.route == Some(Route::IvBolus),
+            n_doses,
+            intervals,
+        );
     }
 
     // 7. the row which is too short to be a curve
@@ -2195,9 +2227,10 @@ pub(crate) mod tests {
             lloq: None,
             window: None,
             manual: None,
+            dose_times: &[],
         };
         let mut scratch = Scratch::new(times.len());
-        compute_row(&input, &linear(), &mut scratch, None)
+        compute_row(&input, &linear(), &mut scratch, None, None)
     }
 
     #[test]

@@ -17,6 +17,7 @@ mod assemble;
 mod auc;
 mod blq;
 mod dose;
+mod intervals;
 mod pack;
 mod parameters;
 mod shard;
@@ -163,6 +164,8 @@ pub fn analyze_batch_in_shards(
         manual: manual_columns(batch, options)?,
         windows: sample_windows(batch, options)?,
         has_dose: batch.max_doses > 0,
+        with_intervals: options.intervals
+            && (0..n_samples).any(|row| !single_dose_of_row(batch, options, row)),
     };
     // only an analysis of a single row reports the windows the selection could have chosen from
     // (`candidate_variables` of `nca.py`), so only such a row is asked for them, and such a row
@@ -201,6 +204,9 @@ struct Rows<'a> {
     windows: Option<RowWindows>,
     /// Whether the batch carries dose arrays at all.
     has_dose: bool,
+    /// Whether the rows report their dosing intervals: a multiple dose batch whose options ask
+    /// for them (`NcaOptions::intervals`, `is_multiple_dose` of `nca.py`).
+    with_intervals: bool,
 }
 
 impl Rows<'_> {
@@ -229,11 +235,21 @@ impl Rows<'_> {
                 .and_then(|w| w.get(row).copied().flatten()),
             manual: self.manual.as_deref(),
             single_dose: single_dose_of_row(batch, self.options, row),
+            dose_times: row_slice(&batch.dose_time, row, batch.max_doses),
         };
+        let mut intervals = Vec::new();
+        let parameters = compute_row(
+            &input,
+            self.options,
+            scratch,
+            candidates,
+            self.with_intervals.then_some(&mut intervals),
+        );
         RowResult {
             route,
             dose_amount: input.dose.amount,
-            parameters: compute_row(&input, self.options, scratch, candidates),
+            parameters,
+            intervals,
         }
     }
 }

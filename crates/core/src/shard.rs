@@ -471,6 +471,7 @@ mod tests {
                 route: None,
                 dose_amount: f64::NAN,
                 parameters: RowParameters::EMPTY,
+                intervals: Vec::new(),
             }
         });
         assert_eq!(computed.len(), rows, "a row of the plan was not computed");
