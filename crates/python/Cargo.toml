@@ -36,8 +36,8 @@ parallel = ["pkpdutils-core/parallel"]
 # `parallel` feature of the kernel is not enabled here by default: which features a wheel carries
 # is settled where the wheel is built, and a build without it runs every shard plan in the
 # calling thread, which is the same numbers and one thread
-pkpdutils-abi = { path = "../abi", version = "0.4.0" }
-pkpdutils-core = { path = "../core", version = "0.4.0" }
+pkpdutils-abi = { path = "../abi", version = "0.4.1" }
+pkpdutils-core = { path = "../core", version = "0.4.1" }
 pyo3 = { workspace = true }
 numpy = { workspace = true }
 # The allocator of the extension module, set as the `#[global_allocator]` in `src/lib.rs`. It is
