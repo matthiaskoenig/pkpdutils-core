@@ -22,9 +22,11 @@ mod pack;
 mod parameters;
 mod percentile;
 mod shard;
+mod sparse;
 mod stats;
 mod summarize;
 
+pub use crate::sparse::nca_sparse;
 pub use crate::stats::{normal_isf, student_t_isf, student_t_sf};
 pub use crate::summarize::summarize;
 pub use crate::tss::time_to_steady_state;
@@ -93,6 +95,11 @@ pub enum KernelError {
     /// and 1, with the reason `TssRequest::validate` gave.
     #[error("the time to steady state request is malformed: {0}")]
     Tss(String),
+    /// A sparse request whose shape disagrees with its arrays, whose times do not increase or
+    /// whose serial design holds an animal with several samples, with the reason
+    /// `SparseRequest::validate` gave.
+    #[error("the sparse request is malformed: {0}")]
+    Sparse(String),
     /// The kernel built a result which is not well formed, which is a bug in this build and
     /// not an answer to anything the caller sent.
     #[error("the kernel built a result which is not readable: {0}")]
