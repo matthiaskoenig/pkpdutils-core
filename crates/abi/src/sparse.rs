@@ -183,4 +183,21 @@ mod tests {
         v["extra"] = serde_json::json!(1);
         assert!(serde_json::from_value::<SparseRequest>(v).is_err());
     }
+
+    #[test]
+    fn a_row_of_infinities_counts_as_no_sample_in_a_serial_design() {
+        let mut r = request();
+        r.values[1] = f64::INFINITY;
+        r.values[2] = f64::NEG_INFINITY;
+        assert_eq!(r.validate(), Ok(()));
+    }
+
+    #[test]
+    fn a_design_which_is_not_serial_or_batch_is_rejected_by_serde() {
+        for design in ["Serial", "stratified"] {
+            let mut v = serde_json::to_value(request()).unwrap();
+            v["design"] = serde_json::json!(design);
+            assert!(serde_json::from_value::<SparseRequest>(v).is_err());
+        }
+    }
 }
