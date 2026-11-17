@@ -6,6 +6,7 @@
 
 use pkpdutils_abi::{Kind, NcaFlag, NcaOptions, Route};
 
+use crate::dose::dose_count;
 use crate::intervals::{
     Interval, analyze_intervals, count_points, fill_doses, interval_bounds, last_interval_length,
 };
@@ -205,7 +206,7 @@ pub(crate) fn compute_steady_state(
     } else {
         input.dose_times
     };
-    let n_doses = dose_times.iter().filter(|t| t.is_finite()).count();
+    let n_doses = dose_count(dose_times);
     let tau = options
         .tau
         .or_else(|| last_interval_length(dose_times, n_doses));
@@ -244,9 +245,7 @@ pub(crate) fn compute_steady_state(
         &mut scratch.curve_t,
         &mut scratch.curve_c,
     );
-    if input.has_dose {
-        fill_doses(intervals, input.dose_amounts);
-    }
+    fill_doses(intervals, input.dose_amounts);
 
     // a last interval which falls short of its end by at most the tolerance is completed with the
     // terminal regression instead of being given up as incomplete
@@ -282,7 +281,7 @@ pub(crate) fn compute_steady_state(
     } else {
         nan
     };
-    out.n_doses = input.dose_times.iter().filter(|t| t.is_finite()).count() as f64;
+    out.n_doses = dose_count(input.dose_times) as f64;
     out.tau = if has_interval { tau_value } else { f64::NAN };
 
     if options.kind == Kind::Concentration {
@@ -325,10 +324,11 @@ pub(crate) fn compute_steady_state(
             };
             out.cl_ss = dose / area;
         }
-        let incomplete = has_interval && tau_value.is_finite() && !area.is_finite();
-        if incomplete {
-            out.flags |= NcaFlag::INCOMPLETE_INTERVAL;
-        }
+    }
+    // raised outside the kind branch, as python does (`steady_state.py:461`)
+    let incomplete = has_interval && tau_value.is_finite() && !last.auc.is_finite();
+    if incomplete {
+        out.flags |= NcaFlag::INCOMPLETE_INTERVAL;
     }
     if extrapolated {
         out.flags |= NcaFlag::EXTRAPOLATED_TROUGH;
@@ -1075,6 +1075,47 @@ mod driver_tests {
         assert_eq!(
             column(&i, |i| i.auc),
             [43.305541919868325, 53.26320459265443, 48.5747470074613]
+        );
+    }
+
+    #[test]
+    fn tau_is_the_last_gap_and_not_the_largest_the_mean_the_first_or_the_span() {
+        // Review Focus. Doses at 0, 24, 30 and 42 have the gaps 24, 6 and 12, so the last gap
+        // (12) differs from the largest (24), the mean (14), the first (24) and `t_K - t_1` (18):
+        // one case rejects every other rule. python: tau 12, intervals [0,24], [24,30], [30,42],
+        // [42,54], auc_tau 49.51699007617543, no flag
+        let t = [
+            0.0, 1.0, 2.0, 4.0, 8.0, 12.0, 18.0, 24.0, 25.0, 26.0, 28.0, 30.0, 31.0, 32.0, 36.0,
+            42.0, 43.0, 44.0, 46.0, 50.0, 54.0,
+        ];
+        let c = [
+            0.0, 6.872, 7.16, 5.156, 2.33, 1.047, 0.315, 0.095, 6.95, 7.224, 5.199, 3.502, 9.741,
+            9.509, 4.529, 1.365, 7.99, 8.075, 5.769, 2.605, 1.171,
+        ];
+        let (p, i) = steady(
+            &t,
+            &c,
+            &[10.0; 4],
+            &[0.0, 24.0, 30.0, 42.0],
+            Route::Oral,
+            &NcaOptions::default(),
+        );
+        assert_eq!((p.tau, p.n_doses), (12.0, 4.0));
+        assert_eq!(p.flags, NcaFlag::NONE);
+        assert_eq!(p.auc_tau, 49.51699007617543);
+        assert_eq!(p.cavg, 4.126415839681286);
+        assert_eq!((p.ctrough, p.cmax_ss), (1.171, 8.075));
+        assert_eq!(p.accumulation_ratio_obs, 1.0302442172329067);
+        assert_eq!(column(&i, |i| i.start), [0.0, 24.0, 30.0, 42.0]);
+        assert_eq!(column(&i, |i| i.end), [24.0, 30.0, 42.0, 54.0]);
+        assert_eq!(
+            column(&i, |i| i.auc),
+            [
+                48.063351628579106,
+                31.511214806569985,
+                58.93051098813933,
+                49.51699007617543
+            ]
         );
     }
 

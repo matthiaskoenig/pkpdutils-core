@@ -653,7 +653,7 @@ mod tests {
     use super::*;
 
     fn bounds(times: &[f64], tau: Option<f64>) -> Vec<Interval> {
-        let n = times.iter().filter(|t| t.is_finite()).count();
+        let n = crate::dose::dose_count(times);
         let mut out = Vec::new();
         interval_bounds(times, n, tau, &mut out);
         out

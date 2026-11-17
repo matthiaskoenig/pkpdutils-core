@@ -36,7 +36,7 @@ pub use pkpdutils_abi;
 pub use crate::shard::{SHARD_WORK_THRESHOLD, automatic_shards};
 
 use crate::assemble::{RowResult, resolved_uncertainty, result_of};
-use crate::dose::{ReferenceDose, reference_dose};
+use crate::dose::{ReferenceDose, dose_count, reference_dose};
 use crate::parameters::{RowInput, Scratch, compute_row};
 use crate::shard::rows_of;
 use crate::steady_state::compute_steady_state;
@@ -254,10 +254,7 @@ impl Rows<'_> {
             let mut parameters = compute_row(&input, self.options, scratch, candidates);
             // the protocol of a row is reported whichever path the row took (`run_analysis_rows`
             // of `nca.py` fills `n_doses` for every row of a batch which has the column)
-            parameters.n_doses = row_slice(&batch.dose_time, row, batch.max_doses)
-                .iter()
-                .filter(|t| t.is_finite())
-                .count() as f64;
+            parameters.n_doses = dose_count(input.dose_times) as f64;
             return RowResult {
                 route,
                 dose_amount: input.dose.amount,
@@ -928,6 +925,79 @@ mod tests {
         );
         for row in 0..4 {
             assert_eq!(flags_of(&result, row), NcaFlag::NONE, "row {row}");
+        }
+    }
+
+    #[test]
+    fn a_mixed_batch_keeps_its_row_order_whatever_the_shard_plan() {
+        // Review Focus: the rows come back in input order. Twelve rows, every one different
+        // (the four rows of `mixed_batch` in an uneven order, each scaled by its own factor),
+        // run as 1, 2, 3, 5 and 12 shards: the result is the same bits for every plan, and the
+        // single dose rows stay NaN in the steady state columns at their own positions. The
+        // one-shard run is the python-pinned result of the test above for the unscaled rows
+        use crate::parameters::tests::many;
+        let base = mixed_batch();
+        let order = [0usize, 1, 3, 2, 1, 0, 3, 3, 2, 1, 0, 2];
+        let width = base.n_time;
+        let rows: Vec<Vec<f64>> = order
+            .iter()
+            .enumerate()
+            .map(|(i, &r)| {
+                base.values[r * width..(r + 1) * width]
+                    .iter()
+                    .map(|v| v * (1.0 + 0.05 * i as f64))
+                    .collect()
+            })
+            .collect();
+        let times: Vec<&[f64]> = order
+            .iter()
+            .map(|&r| &base.times[r * width..(r + 1) * width])
+            .collect();
+        let values: Vec<&[f64]> = rows.iter().map(Vec::as_slice).collect();
+        let pick = |source: &Vec<f64>| -> Vec<f64> {
+            order
+                .iter()
+                .flat_map(|&r| source[r * 3..(r + 1) * 3].to_vec())
+                .collect()
+        };
+        let batch = Batch {
+            max_doses: 3,
+            dose_amount: pick(&base.dose_amount),
+            dose_time: pick(&base.dose_time),
+            dose_duration: vec![f64::NAN; 36],
+            dose_unit: Some("mg".to_string()),
+            route: Some(Route::Oral),
+            ..many(&times, &values)
+        };
+        let options = NcaOptions {
+            intervals: true,
+            ..NcaOptions::default()
+        };
+        let run_in = |shards: usize| {
+            check_contract(&batch.contract, BATCH_CONTRACT).unwrap();
+            batch.validate().unwrap();
+            analyze_checked(&batch, &options, shards).unwrap()
+        };
+        let bits = |result: &AnalysisResult| -> Vec<u64> {
+            let columns = result.parameters.iter().flat_map(|p| p.values.iter());
+            let intervals = result.point_variables.iter().flat_map(|v| v.values.iter());
+            columns
+                .chain(intervals)
+                .map(|v| v.to_bits())
+                .chain(result.flags.iter().map(|&f| u64::from(f)))
+                .collect()
+        };
+        let one = run_in(1);
+        let multiple: Vec<bool> = order.iter().map(|&r| r == 1 || r == 3).collect();
+        let tau = crate::parameters::tests::names(&one);
+        assert!(tau.contains(&"tau"));
+        for (row, &is_multiple) in multiple.iter().enumerate() {
+            let at = |name| crate::parameters::tests::at(&one, name, row);
+            assert_eq!(at("tau").is_nan(), !is_multiple, "row {row}");
+            assert_eq!(at("n_doses"), if is_multiple { 3.0 } else { 1.0 });
+        }
+        for shards in [2, 3, 5, 12] {
+            assert_eq!(bits(&run_in(shards)), bits(&one), "{shards} shards");
         }
     }
 

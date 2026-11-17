@@ -32,6 +32,18 @@ pub(crate) struct ReferenceDose {
     pub duration: Option<f64>,
 }
 
+/// The number of doses of a protocol row: its finite dose times.
+///
+/// The one place this count lives: the dose count of the multiple dose driver, the `n_doses` it
+/// reports and the `n_doses` a single dose row reports all come from it. It counts times alone,
+/// as `dose_counts` and the `isfinite(times).sum` of `compute_steady_state` in `nca.py` do, which
+/// is not the pair rule of [`reference_dose`] (a validated batch has no hole where the two differ).
+///
+/// Mirrors `dose_counts` of `src/pkpdutils/nca/nca.py`, for one row.
+pub(crate) fn dose_count(dose_times: &[f64]) -> usize {
+    dose_times.iter().filter(|t| t.is_finite()).count()
+}
+
 /// The dose of a protocol the parameters of its row are computed against.
 ///
 /// `last` picks the last dose instead of the first, which is what the steady state analysis
