@@ -134,6 +134,14 @@ PYO3_PYTHON=python3.13 cargo test --workspace
 
 Continuous integration sets up python 3.13 for the same reason (`ci.yml` and `release.yml`).
 
+`PYO3_PYTHON` points the build at an interpreter; it does not tell the embedded one where to import from. Against a virtual environment outside this repository, the `pkpdutils` checkout's for instance, the test binary computes `sys.path` from its own location and finds the system numpy, which fails every test that touches an array with `Failed to access NumPy array API capsule`. Pass the environment's `site-packages` as well, and do not set `PYTHONHOME`, which breaks the interpreter's own start-up:
+
+```bash
+PYO3_PYTHON=../pkpdutils/.venv/bin/python \
+  PYTHONPATH=../pkpdutils/.venv/lib/python3.14/site-packages \
+  cargo test -p pkpdutils-python
+```
+
 ## Checks
 
 What continuous integration runs, so `--locked` here as well: the committed `Cargo.lock` is what is checked and a resolver change is a failure rather than a silent difference. `missing_docs` is a workspace lint (`[workspace.lints.rust]`, inherited by every crate through `[lints] workspace = true`), so the convention that every public item carries a doc comment is a gate: `clippy -D warnings` fails on an undocumented one. Never silence it for a crate, write the doc comment.
