@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn a_flat_series_has_no_rate_and_returns_nan() {
         let t = grid();
-        let (tss, plateau) = monoexponential(&t, &vec![5.0; 12], 0.9);
+        let (tss, plateau) = monoexponential(&t, &[5.0; 12], 0.9);
         assert!(tss.is_nan() && plateau.is_nan());
     }
 
