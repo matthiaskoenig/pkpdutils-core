@@ -19,10 +19,10 @@ use serde::Deserialize;
 /// same way as `MANIFEST_ENTRIES` in `crates/oracles/tests/oracles_present.rs`.
 /// Update them deliberately when `PARAMETER_UNITS` or the unit literals of
 /// `pkpdutils` change, and never to make a failing gate pass.
-const N_RECORDS: usize = 5078;
+const N_RECORDS: usize = 6059;
 const N_PARAMETERS: usize = 135;
 const N_EXPRESSIONS: usize = 16;
-const N_SPELLINGS: usize = 39;
+const N_SPELLINGS: usize = 42;
 
 /// One record of the parameter unit section.
 #[derive(Deserialize)]
