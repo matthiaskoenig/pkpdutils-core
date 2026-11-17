@@ -195,6 +195,66 @@ fn summarize<'py>(py: Python<'py>, request: &Bound<'py, PyDict>) -> PyResult<Bou
     Ok(out)
 }
 
+/// The time to steady state of the troughs of the dosing intervals, `time_to_steady_state` of
+/// the host.
+///
+/// `request` is a dict of the fields of the kernel's `TssRequest`: `time`, `value`, `start`
+/// (float arrays of shape `(n_rows, n_cols)`, read in C order) and `valid` (a bool array of the
+/// same shape), `n_rows`, `n_cols`, `method` (`"monoexponential"` or `"stepwise"`), `fraction`
+/// and `alpha`. The answer is a dict of `tss`, a float array of `n_rows`, and `c_ss`, the
+/// plateau per row for the monoexponential estimate and an empty array for the stepwise one.
+///
+/// # Errors
+///
+/// A `KeyError` for a missing field and a `TypeError` for a field of the wrong type. A request
+/// whose arrays disagree with its shape, whose troughs are not packed to the front of a row or
+/// whose `fraction` or `alpha` is not strictly between 0 and 1 is a plain `ValueError` and never
+/// an `UnsupportedError`: a host answers a refusal by taking its own path, and a request which
+/// is wrong must reach the caller instead of being answered by a second implementation.
+#[pyfunction]
+fn time_to_steady_state<'py>(
+    py: Python<'py>,
+    request: &Bound<'py, PyDict>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let floats = |key: &str| -> PyResult<Vec<f64>> {
+        let array: PyReadonlyArrayDyn<'_, f64> = required(request, key)?
+            .extract()
+            .map_err(|err| at_key(py, key, err))?;
+        Ok(array.as_array().iter().copied().collect())
+    };
+    let valid: PyReadonlyArrayDyn<'_, bool> = required(request, "valid")?
+        .extract()
+        .map_err(|err| at_key(py, "valid", err))?;
+    let method: String = field(py, request, "method")?;
+    let method = match method.as_str() {
+        "monoexponential" => kernel::pkpdutils_abi::TssMethod::Monoexponential,
+        "stepwise" => kernel::pkpdutils_abi::TssMethod::Stepwise,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "method {other:?} is neither \"monoexponential\" nor \"stepwise\""
+            )));
+        }
+    };
+    let request = kernel::pkpdutils_abi::TssRequest {
+        time: floats("time")?,
+        value: floats("value")?,
+        start: floats("start")?,
+        valid: valid.as_array().iter().copied().collect(),
+        n_rows: field(py, request, "n_rows")?,
+        n_cols: field(py, request, "n_cols")?,
+        method,
+        fraction: field(py, request, "fraction")?,
+        alpha: field(py, request, "alpha")?,
+    };
+    let answer = py
+        .detach(|| guarded(|| kernel::time_to_steady_state(&request)))?
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let out = PyDict::new(py);
+    out.set_item("tss", PyArray1::from_vec(py, answer.tss))?;
+    out.set_item("c_ss", PyArray1::from_vec(py, answer.c_ss))?;
+    Ok(out)
+}
+
 /// The exception of an analysis this build does not carry.
 ///
 /// The sentence is the kernel's own error, so that the text of a refusal the predicate gives
@@ -362,6 +422,7 @@ fn pkpdutils_core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(analyze_batch, module)?)?;
     module.add_function(wrap_pyfunction!(is_supported, module)?)?;
     module.add_function(wrap_pyfunction!(summarize, module)?)?;
+    module.add_function(wrap_pyfunction!(time_to_steady_state, module)?)?;
     module.add_function(wrap_pyfunction!(normal_isf, module)?)?;
     module.add_function(wrap_pyfunction!(student_t_isf, module)?)?;
     module.add_function(wrap_pyfunction!(student_t_sf, module)?)?;
@@ -1007,6 +1068,77 @@ mod tests {
             let err = summarize(py, &absent).unwrap_err();
             assert!(err.is_instance_of::<PyKeyError>(py), "{err}");
             assert!(err.value(py).to_string().contains("n_groups"));
+        });
+    }
+
+    /// A request of one row of four troughs on a rising curve.
+    fn tss_request<'py>(py: Python<'py>, method: &str) -> Bound<'py, PyDict> {
+        let request = PyDict::new(py);
+        let t = [10.0, 20.0, 30.0, 40.0];
+        let v = [3.9, 6.3, 7.8, 8.7];
+        let s = [0.0, 10.0, 20.0, 30.0];
+        request
+            .set_item("time", PyArray1::from_slice(py, &t))
+            .unwrap();
+        request
+            .set_item("value", PyArray1::from_slice(py, &v))
+            .unwrap();
+        request
+            .set_item("start", PyArray1::from_slice(py, &s))
+            .unwrap();
+        request
+            .set_item("valid", PyArray1::from_slice(py, &[true; 4]))
+            .unwrap();
+        request.set_item("n_rows", 1).unwrap();
+        request.set_item("n_cols", 4).unwrap();
+        request.set_item("method", method).unwrap();
+        request.set_item("fraction", 0.9).unwrap();
+        request.set_item("alpha", 0.05).unwrap();
+        request
+    }
+
+    #[test]
+    fn time_to_steady_state_returns_the_estimate_per_row() {
+        Python::attach(|py| {
+            let answer = time_to_steady_state(py, &tss_request(py, "monoexponential")).unwrap();
+            let tss = answer.get_item("tss").unwrap().unwrap();
+            let tss = tss.cast::<PyArray1<f64>>().unwrap().readonly();
+            assert_eq!(tss.as_array().len(), 1);
+            assert!(tss.as_array()[0].is_finite());
+            let c_ss = answer.get_item("c_ss").unwrap().unwrap();
+            let c_ss = c_ss.cast::<PyArray1<f64>>().unwrap().readonly();
+            assert!(c_ss.as_array()[0] > 8.0);
+            let answer = time_to_steady_state(py, &tss_request(py, "stepwise")).unwrap();
+            let c_ss = answer.get_item("c_ss").unwrap().unwrap();
+            assert_eq!(c_ss.cast::<PyArray1<f64>>().unwrap().len(), 0);
+        });
+    }
+
+    #[test]
+    fn a_malformed_tss_request_is_a_value_error_and_never_a_refusal() {
+        Python::attach(|py| {
+            let short = tss_request(py, "stepwise");
+            short.set_item("n_cols", 5).unwrap();
+            let err = time_to_steady_state(py, &short).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+            assert!(err.value(py).to_string().contains("time entries"));
+
+            let level = tss_request(py, "monoexponential");
+            level.set_item("fraction", 1.0).unwrap();
+            let err = time_to_steady_state(py, &level).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+
+            let unknown = tss_request(py, "bogus");
+            let err = time_to_steady_state(py, &unknown).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+
+            let absent = tss_request(py, "stepwise");
+            absent.del_item("alpha").unwrap();
+            let err = time_to_steady_state(py, &absent).unwrap_err();
+            assert!(err.is_instance_of::<PyKeyError>(py), "{err}");
         });
     }
 }

@@ -9,8 +9,10 @@
 //! over `log10(k)` by a golden-section search on a bracket around each start, and the lowest cost
 //! of the three wins, so the two agree on the minimum and not on the iterates.
 
+use crate::KernelError;
 use crate::stats::student_t_sf;
 use crate::terminal::{WindowStats, window_statistics};
+use pkpdutils_abi::{TssAnswer, TssMethod, TssRequest};
 
 /// The starting values of `k`, as multiples of `1 / t_last` (`_STARTS` of `tss.py`).
 const STARTS: [f64; 3] = [0.5, 2.0, 8.0];
@@ -87,8 +89,6 @@ fn golden_section(f: impl Fn(f64) -> f64, low: f64, high: f64) -> (f64, f64) {
 /// fewer than three troughs, a trough which is not positive, a time which is not finite or a last
 /// time which is not positive (the guard of `tss.py`), and wherever the search ends on the edge of
 /// its bracket, i.e. the troughs show no plateau of their own (flat, falling or still linear).
-// no caller yet: the time to steady state front end of the next task
-#[cfg_attr(not(test), expect(dead_code))]
 pub(crate) fn monoexponential(time: &[f64], value: &[f64], fraction: f64) -> (f64, f64) {
     let nan = (f64::NAN, f64::NAN);
     let Some(&last) = time.last() else { return nan };
@@ -151,8 +151,6 @@ fn no_trend(window: &WindowStats, alpha: f64) -> bool {
 /// of the troughs) is regressed at once by [`window_statistics`] and the answer of a row is the
 /// `start` of the first window whose slope test does not reject at `alpha`, `NaN` when every
 /// window of at least three troughs still trends. Arrays shorter than the shape give all `NaN`.
-// no caller yet: the time to steady state front end of the next task
-#[cfg_attr(not(test), expect(dead_code))]
 pub(crate) fn stepwise(
     time: &[f64],
     value: &[f64],
@@ -184,6 +182,58 @@ pub(crate) fn stepwise(
                 .map_or(f64::NAN, |s| start[row.start + s])
         })
         .collect()
+}
+
+/// The time to steady state of every sample of a request.
+///
+/// The monoexponential estimate fits the troughs of a row read from the start of its first
+/// interval and reports the start back added, as `time_to_steady_state` of the host does; a row
+/// without a trough is `NaN`. The stepwise estimate is [`stepwise`] and has no plateau.
+///
+/// # Errors
+///
+/// [`KernelError::Tss`] when `TssRequest::validate` refuses the request.
+pub fn time_to_steady_state(request: &TssRequest) -> Result<TssAnswer, KernelError> {
+    request.validate().map_err(KernelError::Tss)?;
+    let (n_rows, n_cols) = (request.n_rows, request.n_cols);
+    if request.method == TssMethod::Stepwise {
+        return Ok(TssAnswer {
+            tss: stepwise(
+                &request.time,
+                &request.value,
+                &request.start,
+                &request.valid,
+                n_rows,
+                n_cols,
+                request.alpha,
+            ),
+            c_ss: Vec::new(),
+        });
+    }
+    let mut tss = Vec::with_capacity(n_rows);
+    let mut c_ss = Vec::with_capacity(n_rows);
+    for r in 0..n_rows {
+        let row = r * n_cols..(r + 1) * n_cols;
+        let count = request.valid[row.clone()].iter().filter(|&&v| v).count();
+        if count == 0 {
+            tss.push(f64::NAN);
+            c_ss.push(f64::NAN);
+            continue;
+        }
+        let first = request.start[row.start];
+        let time: Vec<f64> = request.time[row.start..row.start + count]
+            .iter()
+            .map(|t| t - first)
+            .collect();
+        let (estimate, plateau) = monoexponential(
+            &time,
+            &request.value[row.start..row.start + count],
+            request.fraction,
+        );
+        tss.push(estimate + first);
+        c_ss.push(plateau);
+    }
+    Ok(TssAnswer { tss, c_ss })
 }
 
 #[cfg(test)]
@@ -442,5 +492,75 @@ mod tests {
         // short arrays and a zero shape are all NaN / empty, never a panic
         assert!(stepwise(&t[..5], &v, &s, &ok, 1, 6, 0.05)[0].is_nan());
         assert!(stepwise(&t, &v, &s, &ok, 0, 6, 0.05).is_empty());
+    }
+
+    fn request(method: TssMethod) -> TssRequest {
+        let t = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0];
+        let a = rises(5.0, 0.05, &t);
+        let b = rises(8.0, 0.03, &t);
+        let mut time = Vec::new();
+        let mut value = Vec::new();
+        let mut start = Vec::new();
+        let mut valid = Vec::new();
+        // row 0 has all seven troughs, row 1 four, row 2 none; the first interval of row 0
+        // starts at 100, so its troughs are read from there and the start is added back
+        for (r, (n, offset, v)) in [(7, 100.0, &a), (4, 0.0, &b), (0, 0.0, &b)]
+            .iter()
+            .enumerate()
+        {
+            for c in 0..7 {
+                time.push(t[c] + offset);
+                value.push(v[c]);
+                start.push(if c == 0 { *offset } else { t[c - 1] + offset });
+                valid.push(c < *n);
+            }
+            let _ = r;
+        }
+        TssRequest {
+            time,
+            value,
+            start,
+            valid,
+            n_rows: 3,
+            n_cols: 7,
+            method,
+            fraction: 0.9,
+            alpha: 0.05,
+        }
+    }
+
+    #[test]
+    fn the_monoexponential_request_reads_each_row_from_its_own_start() {
+        let answer = time_to_steady_state(&request(TssMethod::Monoexponential)).unwrap();
+        let (t0, c0) = monoexponential(
+            &[10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0],
+            &rises(5.0, 0.05, &[10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0]),
+            0.9,
+        );
+        assert!((answer.tss[0] - (t0 + 100.0)).abs() < 1e-9);
+        assert!((answer.c_ss[0] - c0).abs() < 1e-9);
+        assert!((answer.c_ss[0] - 5.0).abs() < 1e-6);
+        // four troughs only: the padding is not read
+        assert!(answer.tss[1].is_finite());
+        assert!((answer.c_ss[1] - 8.0).abs() < 1e-3);
+        // a row without a trough carries no estimate
+        assert!(answer.tss[2].is_nan() && answer.c_ss[2].is_nan());
+    }
+
+    #[test]
+    fn the_stepwise_request_has_no_plateau() {
+        let answer = time_to_steady_state(&request(TssMethod::Stepwise)).unwrap();
+        assert_eq!(answer.tss.len(), 3);
+        assert!(answer.c_ss.is_empty());
+    }
+
+    #[test]
+    fn a_malformed_request_is_an_error_and_not_a_nan() {
+        let mut r = request(TssMethod::Monoexponential);
+        r.value.pop();
+        assert!(matches!(
+            time_to_steady_state(&r),
+            Err(KernelError::Tss(message)) if message.contains("value")
+        ));
     }
 }

@@ -6,6 +6,7 @@ pub mod nonfinite;
 pub mod options;
 pub mod result;
 pub mod summary;
+pub mod tss;
 pub mod window;
 
 pub use batch::{Batch, Coordinate, Dosing, SampleCoordinate};
@@ -19,6 +20,7 @@ pub use result::{
     TextColumn,
 };
 pub use summary::{SummaryAnswer, SummaryRequest};
+pub use tss::{TssAnswer, TssMethod, TssRequest};
 pub use window::WindowLabel;
 
 /// The contract of an analysis request and its result.
