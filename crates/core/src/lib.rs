@@ -99,7 +99,7 @@ pub fn analyze(request: &AnalysisRequest) -> Result<AnalysisResult, KernelError>
     analyze_batch(&request.batch, &request.options)
 }
 
-/// The single dose non-compartmental analysis of every row of a batch.
+/// The non-compartmental analysis of every row of a batch, single dose and multiple dose.
 ///
 /// The contract, the batch and the options are checked before a row runs, an analysis this build
 /// does not carry is refused by name, and only then are the rows computed, each one independent
@@ -116,11 +116,11 @@ pub fn analyze(request: &AnalysisRequest) -> Result<AnalysisResult, KernelError>
 ///
 /// [`KernelError::Contract`] for a batch of another contract, [`KernelError::Batch`] and
 /// [`KernelError::Options`] for a malformed input, naming the field, and
-/// [`KernelError::Unsupported`] for an analysis of another plan: an effect curve, a multiple
-/// dose protocol, a partial area, the acceptance criteria, the propagation of an uncertainty and
-/// the unit conversion of the result - and for a unit string of the batch which the curated
-/// registry of this build cannot read (`week`, `U/l`), the one refusal which is decided while the
-/// result is assembled rather than before the rows run.
+/// [`KernelError::Unsupported`] for an analysis of another plan: an effect curve, the
+/// acceptance criteria, the named partial areas, the propagation of an uncertainty and the unit
+/// conversion of the result (the five conditions of [`unsupported_reason`]) - and for a unit
+/// string of the batch which the curated registry of this build cannot read (`week`, `U/l`), the
+/// one refusal which is decided while the result is assembled rather than before the rows run.
 pub fn analyze_batch(batch: &Batch, options: &NcaOptions) -> Result<AnalysisResult, KernelError> {
     let shards = automatic_shards(batch.n_samples(), batch.n_time);
     analyze_batch_in_shards(batch, options, shards)

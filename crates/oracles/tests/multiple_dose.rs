@@ -29,7 +29,7 @@ use serde::Deserialize;
 
 /// The number of cases of the oracle, an independent literal so that a truncated file fails
 /// instead of passing vacuously.
-const CASES: usize = 8;
+const CASES: usize = 9;
 
 /// The relative tolerance of the columns of the single dose core, see the module comment.
 const REL: f64 = 1e-12;
@@ -72,6 +72,7 @@ const NAMES: [&str; CASES] = [
     "oral_completed_last_interval",
     "oral_incomplete_last_interval",
     "mixed_single_and_multiple",
+    "infusion_regular",
     "single_dose_with_tau",
 ];
 
@@ -165,6 +166,8 @@ struct Case {
     dose_amount: Vec<Vec<Option<f64>>>,
     /// The dose times of every row, `null` padded.
     dose_time: Vec<Vec<Option<f64>>>,
+    /// The infusion durations of every row, `null` padded and `null` for another route.
+    dose_duration: Vec<Vec<Option<f64>>>,
     /// The options.
     options: CaseOptions,
     /// The expected columns by name.
@@ -207,7 +210,7 @@ fn batch_of(case: &Case) -> Batch {
         max_doses,
         dose_amount: doses(&case.dose_amount),
         dose_time: doses(&case.dose_time),
-        dose_duration: vec![f64::NAN; n_rows * max_doses],
+        dose_duration: doses(&case.dose_duration),
         time_unit: "hour".to_string(),
         unit: "mg/l".to_string(),
         dose_unit: Some("mg".to_string()),

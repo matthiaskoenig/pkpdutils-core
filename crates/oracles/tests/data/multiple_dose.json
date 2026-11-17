@@ -72,6 +72,14 @@
      36.0
     ]
    ],
+   "dose_duration": [
+    [
+     null,
+     null,
+     null,
+     null
+    ]
+   ],
    "options": {},
    "parameters": {
     "cmax": {
@@ -687,6 +695,14 @@
      36.0
     ]
    ],
+   "dose_duration": [
+    [
+     null,
+     null,
+     null,
+     null
+    ]
+   ],
    "options": {
     "intervals": false
    },
@@ -1152,6 +1168,13 @@
      0.0,
      12.0,
      24.0
+    ]
+   ],
+   "dose_duration": [
+    [
+     null,
+     null,
+     null
     ]
    ],
    "options": {},
@@ -1766,6 +1789,13 @@
      24.0
     ]
    ],
+   "dose_duration": [
+    [
+     null,
+     null,
+     null
+    ]
+   ],
    "options": {},
    "parameters": {
     "cmax": {
@@ -2356,6 +2386,13 @@
      24.0
     ]
    ],
+   "dose_duration": [
+    [
+     null,
+     null,
+     null
+    ]
+   ],
    "options": {},
    "parameters": {
     "cmax": {
@@ -2944,6 +2981,13 @@
      0.0,
      12.0,
      24.0
+    ]
+   ],
+   "dose_duration": [
+    [
+     null,
+     null,
+     null
     ]
    ],
    "options": {},
@@ -3672,6 +3716,28 @@
      0.0,
      12.0,
      24.0
+    ]
+   ],
+   "dose_duration": [
+    [
+     null,
+     null,
+     null
+    ],
+    [
+     null,
+     null,
+     null
+    ],
+    [
+     null,
+     null,
+     null
+    ],
+    [
+     null,
+     null,
+     null
     ]
    ],
    "options": {},
@@ -4522,6 +4588,603 @@
    }
   },
   {
+   "name": "infusion_regular",
+   "why": "three 2 h infusions, a real dose_duration on the multiple dose path",
+   "route": "iv_infusion",
+   "times": [
+    [
+     0.0,
+     1.0,
+     2.0,
+     3.0,
+     6.0,
+     10.0,
+     12.0,
+     13.0,
+     14.0,
+     15.0,
+     18.0,
+     22.0,
+     24.0,
+     25.0,
+     26.0,
+     27.0,
+     30.0,
+     34.0,
+     36.0
+    ]
+   ],
+   "values": [
+    [
+     0.0,
+     9.0635,
+     16.484,
+     13.496,
+     7.4067,
+     3.3281,
+     2.2309,
+     10.8899,
+     17.9794,
+     14.7203,
+     8.0787,
+     3.63,
+     2.4332,
+     11.0556,
+     18.1151,
+     14.8313,
+     8.1396,
+     3.6574,
+     2.4516
+    ]
+   ],
+   "dose_amount": [
+    [
+     100.0,
+     100.0,
+     100.0
+    ]
+   ],
+   "dose_time": [
+    [
+     0.0,
+     12.0,
+     24.0
+    ]
+   ],
+   "dose_duration": [
+    [
+     2.0,
+     2.0,
+     2.0
+    ]
+   ],
+   "options": {},
+   "parameters": {
+    "cmax": {
+     "unit": "milligram / liter",
+     "values": [
+      18.1151
+     ]
+    },
+    "tmax": {
+     "unit": "hour",
+     "values": [
+      2.0
+     ]
+    },
+    "cmin": {
+     "unit": "milligram / liter",
+     "values": [
+      2.4332
+     ]
+    },
+    "tmin": {
+     "unit": "hour",
+     "values": [
+      0.0
+     ]
+    },
+    "clast": {
+     "unit": "milligram / liter",
+     "values": [
+      2.4516
+     ]
+    },
+    "clast_pred": {
+     "unit": "milligram / liter",
+     "values": [
+      2.4516131977790834
+     ]
+    },
+    "tlast": {
+     "unit": "hour",
+     "values": [
+      12.0
+     ]
+    },
+    "auc_last": {
+     "unit": "hour * milligram / liter",
+     "values": [
+      99.64696917814612
+     ]
+    },
+    "auc_all": {
+     "unit": "hour * milligram / liter",
+     "values": [
+      99.64696917814612
+     ]
+    },
+    "auc_inf_obs": {
+     "unit": "hour * milligram / liter",
+     "values": [
+      111.90500807034246
+     ]
+    },
+    "auc_inf_pred": {
+     "unit": "hour * milligram / liter",
+     "values": [
+      111.90507405944726
+     ]
+    },
+    "auc_extrap_fraction": {
+     "unit": "dimensionless",
+     "values": [
+      0.10953968105244269
+     ]
+    },
+    "auc_extrap_fraction_pred": {
+     "unit": "dimensionless",
+     "values": [
+      0.10954020614641005
+     ]
+    },
+    "aumc_last": {
+     "unit": "hour ** 2 * milligram / liter",
+     "values": [
+      454.81143214349316
+     ]
+    },
+    "aumc_all": {
+     "unit": "hour ** 2 * milligram / liter",
+     "values": [
+      454.81143214349316
+     ]
+    },
+    "aumc_inf": {
+     "unit": "hour ** 2 * milligram / liter",
+     "values": [
+      663.1982877724297
+     ]
+    },
+    "aumc_inf_pred": {
+     "unit": "hour ** 2 * milligram / liter",
+     "values": [
+      663.1994095882579
+     ]
+    },
+    "aumc_extrap_fraction": {
+     "unit": "dimensionless",
+     "values": [
+      0.3142150084990004
+     ]
+    },
+    "aumc_extrap_fraction_pred": {
+     "unit": "dimensionless",
+     "values": [
+      0.3142161685188182
+     ]
+    },
+    "mrt": {
+     "unit": "hour",
+     "values": [
+      4.926439747500392
+     ]
+    },
+    "mrt_last": {
+     "unit": "hour",
+     "values": [
+      3.5642274511168903
+     ]
+    },
+    "mrt_pred": {
+     "unit": "hour",
+     "values": [
+      4.926446277457865
+     ]
+    },
+    "thalf_eff": {
+     "unit": "hour",
+     "values": [
+      3.414747821178345
+     ]
+    },
+    "lambda_z": {
+     "unit": "1 / hour",
+     "values": [
+      0.1999993654417858
+     ]
+    },
+    "lambda_z_stderr": {
+     "unit": "1 / hour",
+     "values": [
+      9.507876235485193e-07
+     ]
+    },
+    "lambda_z_intercept": {
+     "unit": "dimensionless",
+     "values": [
+      3.2967386412493385
+     ]
+    },
+    "lambda_z_r2": {
+     "unit": "dimensionless",
+     "values": [
+      0.9999999999547998
+     ]
+    },
+    "lambda_z_r2_adj": {
+     "unit": "dimensionless",
+     "values": [
+      0.9999999999321998
+     ]
+    },
+    "lambda_z_n_points": {
+     "unit": "dimensionless",
+     "values": [
+      4.0
+     ]
+    },
+    "lambda_z_t_first": {
+     "unit": "hour",
+     "values": [
+      3.0
+     ]
+    },
+    "lambda_z_t_last": {
+     "unit": "hour",
+     "values": [
+      12.0
+     ]
+    },
+    "lambda_z_span": {
+     "unit": "dimensionless",
+     "values": [
+      2.596842834334235
+     ]
+    },
+    "thalf": {
+     "unit": "hour",
+     "values": [
+      3.4657468988905418
+     ]
+    },
+    "cl": {
+     "unit": "liter / hour",
+     "values": [
+      null
+     ]
+    },
+    "vz": {
+     "unit": "liter",
+     "values": [
+      null
+     ]
+    },
+    "cl_pred": {
+     "unit": "liter / hour",
+     "values": [
+      null
+     ]
+    },
+    "vz_pred": {
+     "unit": "liter",
+     "values": [
+      null
+     ]
+    },
+    "vss": {
+     "unit": "liter",
+     "values": [
+      null
+     ]
+    },
+    "vss_pred": {
+     "unit": "liter",
+     "values": [
+      null
+     ]
+    },
+    "auc_inf_dn": {
+     "unit": "hour / liter",
+     "values": [
+      null
+     ]
+    },
+    "auc_inf_pred_dn": {
+     "unit": "hour / liter",
+     "values": [
+      null
+     ]
+    },
+    "cmax_dn": {
+     "unit": "1 / liter",
+     "values": [
+      null
+     ]
+    },
+    "auc_tau": {
+     "unit": "hour * milligram / liter",
+     "values": [
+      99.64696917814612
+     ]
+    },
+    "auc_tau_extrap_fraction": {
+     "unit": "dimensionless",
+     "values": [
+      0.0
+     ]
+    },
+    "cmin_ss": {
+     "unit": "milligram / liter",
+     "values": [
+      2.4332
+     ]
+    },
+    "cmax_ss": {
+     "unit": "milligram / liter",
+     "values": [
+      18.1151
+     ]
+    },
+    "ctrough": {
+     "unit": "milligram / liter",
+     "values": [
+      2.4516
+     ]
+    },
+    "cavg": {
+     "unit": "milligram / liter",
+     "values": [
+      8.303914098178844
+     ]
+    },
+    "fluctuation": {
+     "unit": "dimensionless",
+     "values": [
+      1.8884949693108275
+     ]
+    },
+    "swing": {
+     "unit": "dimensionless",
+     "values": [
+      6.444969587374652
+     ]
+    },
+    "fluctuation_tau": {
+     "unit": "dimensionless",
+     "values": [
+      1.886279146774316
+     ]
+    },
+    "swing_tau": {
+     "unit": "dimensionless",
+     "values": [
+      6.389092837330724
+     ]
+    },
+    "ptr": {
+     "unit": "dimensionless",
+     "values": [
+      7.389092837330724
+     ]
+    },
+    "accumulation_ratio": {
+     "unit": "dimensionless",
+     "values": [
+      1.0997696076043642
+     ]
+    },
+    "accumulation_ratio_obs": {
+     "unit": "dimensionless",
+     "values": [
+      1.1250482996377913
+     ]
+    },
+    "accumulation_ratio_cmax_obs": {
+     "unit": "dimensionless",
+     "values": [
+      1.0989504974520747
+     ]
+    },
+    "accumulation_ratio_cmin_obs": {
+     "unit": "dimensionless",
+     "values": [
+      "inf"
+     ]
+    },
+    "accumulation_ratio_ctrough_obs": {
+     "unit": "dimensionless",
+     "values": [
+      1.0989286834909677
+     ]
+    },
+    "cl_ss": {
+     "unit": "liter / hour",
+     "values": [
+      1.0035428154490353
+     ]
+    },
+    "n_doses": {
+     "unit": "dimensionless",
+     "values": [
+      3.0
+     ]
+    },
+    "tau": {
+     "unit": "hour",
+     "values": [
+      12.0
+     ]
+    },
+    "n": {
+     "unit": "dimensionless",
+     "values": [
+      null
+     ]
+    },
+    "accepted": {
+     "unit": "dimensionless",
+     "values": [
+      1.0
+     ]
+    },
+    "excluded": {
+     "unit": "dimensionless",
+     "values": [
+      0.0
+     ]
+    },
+    "flags": {
+     "unit": "dimensionless",
+     "values": [
+      0.0
+     ]
+    }
+   },
+   "point_variables": {
+    "interval_start": {
+     "unit": "hour",
+     "dim": "interval",
+     "size": 3,
+     "values": [
+      0.0,
+      12.0,
+      24.0
+     ]
+    },
+    "interval_end": {
+     "unit": "hour",
+     "dim": "interval",
+     "size": 3,
+     "values": [
+      12.0,
+      24.0,
+      36.0
+     ]
+    },
+    "interval_dose": {
+     "unit": "milligram",
+     "dim": "interval",
+     "size": 3,
+     "values": [
+      100.0,
+      100.0,
+      100.0
+     ]
+    },
+    "interval_n_points": {
+     "unit": "dimensionless",
+     "dim": "interval",
+     "size": 3,
+     "values": [
+      7.0,
+      7.0,
+      7.0
+     ]
+    },
+    "interval_auc": {
+     "unit": "hour * milligram / liter",
+     "dim": "interval",
+     "size": 3,
+     "values": [
+      88.57128108208991,
+      98.72597737265856,
+      99.64696917814612
+     ]
+    },
+    "interval_cmax": {
+     "unit": "milligram / liter",
+     "dim": "interval",
+     "size": 3,
+     "values": [
+      16.484,
+      17.9794,
+      18.1151
+     ]
+    },
+    "interval_tmax": {
+     "unit": "hour",
+     "dim": "interval",
+     "size": 3,
+     "values": [
+      2.0,
+      2.0,
+      2.0
+     ]
+    },
+    "interval_cmin": {
+     "unit": "milligram / liter",
+     "dim": "interval",
+     "size": 3,
+     "values": [
+      0.0,
+      2.2309,
+      2.4332
+     ]
+    },
+    "interval_ctrough": {
+     "unit": "milligram / liter",
+     "dim": "interval",
+     "size": 3,
+     "values": [
+      2.2309,
+      2.4332,
+      2.4516
+     ]
+    },
+    "interval_c_start": {
+     "unit": "milligram / liter",
+     "dim": "interval",
+     "size": 3,
+     "values": [
+      0.0,
+      2.2309,
+      2.4332
+     ]
+    },
+    "interval_cavg": {
+     "unit": "milligram / liter",
+     "dim": "interval",
+     "size": 3,
+     "values": [
+      7.3809400901741595,
+      8.22716478105488,
+      8.303914098178844
+     ]
+    },
+    "interval_fluctuation": {
+     "unit": "dimensionless",
+     "dim": "interval",
+     "size": 3,
+     "values": [
+      2.2333198479614063,
+      1.9142074358672003,
+      1.8884949693108275
+     ]
+    },
+    "interval_swing": {
+     "unit": "dimensionless",
+     "dim": "interval",
+     "size": 3,
+     "values": [
+      "inf",
+      7.059258595185798,
+      6.444969587374652
+     ]
+    }
+   }
+  },
+  {
    "name": "single_dose_with_tau",
    "why": "one dose and an explicit tau",
    "route": "oral",
@@ -4553,6 +5216,11 @@
    "dose_time": [
     [
      0.0
+    ]
+   ],
+   "dose_duration": [
+    [
+     null
     ]
    ],
    "options": {

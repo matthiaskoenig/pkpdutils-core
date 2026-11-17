@@ -57,22 +57,49 @@ def cell(x):
     return float(x)
 
 
+def infusion(t, doses, duration, ke=0.2, v=5.0):
+    """Concentration of a constant rate infusion of `duration` h per dose, by superposition."""
+    out = np.zeros_like(t)
+    for td, amount in doses:
+        rate = amount / duration
+        elapsed = np.clip(t - td, 0.0, None)
+        during = np.minimum(elapsed, duration)
+        out += np.where(
+            t >= td,
+            rate
+            / (ke * v)
+            * (1 - np.exp(-ke * during))
+            * np.exp(-ke * (elapsed - during)),
+            0.0,
+        )
+    return np.round(out, 4)
+
+
 def pad(rows, n, fill=math.nan):
     """Pad every row with `fill` up to `n` entries."""
     return [list(r) + [fill] * (n - len(r)) for r in rows]
 
 
-def case(name, why, times, values, doses, route, options):
+def case(name, why, times, values, doses, route, options, duration=None):
     """One case: the arrays, the options and the python result of them."""
     n_dose = max(len(d) for d in doses)
     amount = np.array(pad([[a for _, a in d] for d in doses], n_dose))
     dtime = np.array(pad([[t for t, _ in d] for d in doses], n_dose))
+    # an infusion duration per dose, `None` for the other routes
+    dur = (
+        None
+        if duration is None
+        else np.array(pad([[duration] * len(d) for d in doses], n_dose))
+    )
+    dose = {"amount": amount, "time": dtime, "unit": "mg"}
+    if dur is not None:
+        dose["duration"] = dur
     tc = Timecourses.from_arrays(
         np.array(times),
         np.array(values),
         time_unit="hour",
         unit="mg/l",
-        dose={"amount": amount, "time": dtime, "unit": "mg"},
+        dose=dose,
         route=route,
         substance="drug",
     )
@@ -107,6 +134,10 @@ def case(name, why, times, values, doses, route, options):
             [None if math.isnan(x) else float(x) for x in r] for r in amount
         ],
         "dose_time": [[None if math.isnan(x) else float(x) for x in r] for r in dtime],
+        "dose_duration": [
+            [None if math.isnan(x) else float(x) for x in r]
+            for r in (np.full(amount.shape, math.nan) if dur is None else dur)
+        ],
         "options": options,
         "parameters": parameters,
         "point_variables": points,
@@ -244,6 +275,23 @@ def build_cases():
             [s1, m1, s2, m2],
             Route.ORAL,
             {},
+        )
+    )
+    # three infusions of 2 h every 12 h, sampled at and after the end of each infusion
+    tf = np.array(
+        [0, 1, 2, 3, 6, 10, 12, 13, 14, 15, 18, 22, 24, 25, 26, 27, 30, 34, 36.0]
+    )
+    df = [(0.0, 100.0), (12.0, 100.0), (24.0, 100.0)]
+    cases.append(
+        case(
+            "infusion_regular",
+            "three 2 h infusions, a real dose_duration on the multiple dose path",
+            tf,
+            [infusion(tf, df, 2.0)],
+            [df],
+            Route.IV_INFUSION,
+            {},
+            duration=2.0,
         )
     )
     # a single dose row analysed at a steady state, with the dosing interval given
