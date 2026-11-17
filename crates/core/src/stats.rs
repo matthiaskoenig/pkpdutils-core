@@ -1,13 +1,28 @@
-//! The normal distribution function and its quantile.
+//! The normal and Student t distributions: distribution function, survival function and the
+//! quantiles of both.
 //!
-//! Written by hand, since the crate takes no dependency: the distribution function is the
+//! Written by hand, since the crate takes no dependency. The normal distribution function is the
 //! complementary error function by a power series near the origin and by a continued fraction
 //! (Abramowitz & Stegun 7.1.14, evaluated with the modified Lentz algorithm) in the tails, both
 //! to the last places and with a relative error which stays small down to the underflow of the
 //! density. The quantile starts from the rational approximation of Abramowitz & Stegun 26.2.23
 //! and is refined by Halley steps against the distribution function, which is what carries it
 //! to full precision. The survival function and the inverse survival function are the
-//! distribution function and the quantile at the mirrored argument, exact by symmetry.
+//! distribution function and the quantile at the mirrored argument, exact by symmetry. The
+//! Student t distribution function is the regularised incomplete beta function by its continued
+//! fraction (closed forms at 1 and 2 degrees of freedom) and its quantile a Newton iteration on
+//! `ln sf` kept inside a bracket.
+//!
+//! Conventions, for every function: a probability outside `[0, 1]` or a `NaN` argument gives
+//! `NaN`; `p = 0` and `p = 1` give `+inf` and `-inf` for the inverse survival function;
+//! degrees of freedom are real and below 1 give `NaN`; above `1e12` the Student t quantile is the
+//! normal one. None of them panics or loops without bound.
+//!
+//! Accuracy, measured against scipy on dense grids and mpmath (see
+//! `scripts/reference_t_isf.py` of the host repository for the generator of the references):
+//! a relative `1e-12` for `p` in `[1e-6, 1 - 1e-6]` and degrees of freedom in `[1, 1e4]`, `1e-9`
+//! down to `p = 1e-300` (about `1e-12` at the probabilities checked against mpmath), and a
+//! quantile which stays strictly monotone in `p` below that.
 
 use std::f64::consts::{FRAC_2_SQRT_PI, PI, SQRT_2};
 
@@ -62,7 +77,7 @@ fn erfc_nonnegative(x: f64) -> f64 {
 }
 
 /// The standard normal distribution function `P(X <= x)`.
-pub fn normal_cdf(x: f64) -> f64 {
+pub(crate) fn normal_cdf(x: f64) -> f64 {
     if x.is_nan() {
         return f64::NAN;
     }
@@ -71,13 +86,15 @@ pub fn normal_cdf(x: f64) -> f64 {
 }
 
 /// The standard normal survival function `P(X > x)`, exactly `normal_cdf(-x)`.
-pub fn normal_sf(x: f64) -> f64 {
+// no caller outside the tests yet: the summary statistics and the bootstrap of the next tasks
+#[cfg_attr(not(test), expect(dead_code))]
+pub(crate) fn normal_sf(x: f64) -> f64 {
     normal_cdf(-x)
 }
 
 /// The standard normal quantile, the inverse of [`normal_cdf`]: `-inf` at 0, `inf` at 1 and
 /// `NaN` outside `[0, 1]`.
-pub fn normal_ppf(p: f64) -> f64 {
+pub(crate) fn normal_ppf(p: f64) -> f64 {
     if p.is_nan() || !(0.0..=1.0).contains(&p) {
         return f64::NAN;
     }
@@ -276,7 +293,7 @@ fn student_t_two_sided(s: f64, df: f64) -> (f64, f64) {
 }
 
 /// The Student t distribution function `P(T <= t)` for `df >= 1` degrees of freedom.
-pub fn student_t_cdf(t: f64, df: f64) -> f64 {
+pub(crate) fn student_t_cdf(t: f64, df: f64) -> f64 {
     if t.is_nan() || df.is_nan() || df < 1.0 {
         return f64::NAN;
     }
@@ -291,7 +308,9 @@ pub fn student_t_cdf(t: f64, df: f64) -> f64 {
     }
 }
 
-/// The Student t survival function `P(T > t)`, exactly `student_t_cdf(-t, df)`.
+/// The Student t survival function `P(T > t)`, exactly `student_t_cdf(-t, df)`, for real
+/// `df >= 1`; accurate to a relative `1e-12` over `df` in `[1, 1e4]` and every `t` whose result
+/// is a normal number.
 pub fn student_t_sf(t: f64, df: f64) -> f64 {
     student_t_cdf(-t, df)
 }
@@ -371,7 +390,9 @@ fn student_t_upper_quantile(p: f64, df: f64) -> f64 {
     t
 }
 
-/// The Student t inverse survival function: the `t` with `P(T > t) = p`. Infinite at 0 and 1,
+/// The Student t inverse survival function: the `t` with `P(T > t) = p`, for real `df >= 1`;
+/// accurate to a relative `1e-12` for `p` in `[1e-6, 1 - 1e-6]` and `df` in `[1, 1e4]`, `1e-9`
+/// down to `1e-300` and monotone below. Infinite at 0 and 1,
 /// `NaN` outside `[0, 1]` and below one degree of freedom.
 pub fn student_t_isf(p: f64, df: f64) -> f64 {
     if p.is_nan() || df.is_nan() || !(0.0..=1.0).contains(&p) || df < 1.0 {
@@ -397,7 +418,9 @@ pub fn student_t_isf(p: f64, df: f64) -> f64 {
 }
 
 /// The Student t quantile, the inverse of [`student_t_cdf`], exactly `-student_t_isf(p, df)`.
-pub fn student_t_ppf(p: f64, df: f64) -> f64 {
+// no caller outside the tests yet: the summary statistics and the bootstrap of the next tasks
+#[cfg_attr(not(test), expect(dead_code))]
+pub(crate) fn student_t_ppf(p: f64, df: f64) -> f64 {
     -student_t_isf(p, df)
 }
 
@@ -949,9 +972,9 @@ mod tests {
     }
 
     /// scipy answers `-inf` for these, which is why the committed table has no entry; the
-    /// references are mpmath at 60 digits, by bisection on `log t` of the regularised
-    /// incomplete beta function:
-    ///   sf(t) = betainc(df/2, 1/2, 0, df/(df+t^2), regularized=True) / 2
+    /// references are mpmath at 60 digits for the exact `f64` of the input, made by
+    /// `scripts/reference_t_isf.py` of the host repository:
+    ///   python3 scripts/reference_t_isf.py 1e-300 3 10 2.5
     #[test]
     fn the_student_t_inverse_survival_function_at_the_smallest_probability_matches_mpmath() {
         for (df, expected) in [

@@ -21,7 +21,9 @@ mod intervals;
 mod pack;
 mod parameters;
 mod shard;
-pub mod stats;
+mod stats;
+
+pub use crate::stats::{normal_isf, student_t_isf, student_t_sf};
 mod steady_state;
 mod terminal;
 

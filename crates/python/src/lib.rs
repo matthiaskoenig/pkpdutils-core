@@ -190,7 +190,7 @@ fn is_supported(
 fn map_scalar_or_array<'py>(
     py: Python<'py>,
     x: &Bound<'py, PyAny>,
-    f: impl Fn(f64) -> f64 + Send,
+    f: impl Fn(f64) -> f64,
 ) -> PyResult<Bound<'py, PyAny>> {
     if let Ok(value) = x.extract::<f64>() {
         let out = guarded(|| f(value))?;
@@ -215,10 +215,15 @@ fn map_scalar_or_array<'py>(
 /// A `TypeError` when `p` is neither a float nor a 1-d float array.
 #[pyfunction]
 fn normal_isf<'py>(py: Python<'py>, p: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
-    map_scalar_or_array(py, p, kernel::stats::normal_isf)
+    map_scalar_or_array(py, p, kernel::normal_isf)
 }
 
-/// The Student t quantile of the upper tail with `df` degrees of freedom (real, at least 1).
+/// The Student t quantile of the upper tail with `df` degrees of freedom (real, at least 1,
+/// `NaN` below).
+///
+/// Accurate to a relative `1e-12` for `p` in `[1e-6, 1 - 1e-6]` and `df` in `[1, 1e4]`, `1e-9`
+/// down to `1e-300`, strictly monotone below; above `1e12` degrees of freedom it is the normal
+/// quantile.
 ///
 /// # Errors
 ///
@@ -229,10 +234,11 @@ fn student_t_isf<'py>(
     p: &Bound<'py, PyAny>,
     df: f64,
 ) -> PyResult<Bound<'py, PyAny>> {
-    map_scalar_or_array(py, p, move |p| kernel::stats::student_t_isf(p, df))
+    map_scalar_or_array(py, p, move |p| kernel::student_t_isf(p, df))
 }
 
-/// The survival function `P(T > t)` of the Student t distribution with `df` degrees of freedom.
+/// The survival function `P(T > t)` of the Student t distribution with `df` degrees of freedom
+/// (real, at least 1, `NaN` below), accurate to a relative `1e-12` for `df` in `[1, 1e4]`.
 ///
 /// # Errors
 ///
@@ -243,7 +249,7 @@ fn student_t_sf<'py>(
     t: &Bound<'py, PyAny>,
     df: f64,
 ) -> PyResult<Bound<'py, PyAny>> {
-    map_scalar_or_array(py, t, move |t| kernel::stats::student_t_sf(t, df))
+    map_scalar_or_array(py, t, move |t| kernel::student_t_sf(t, df))
 }
 
 /// Run `f` with the unwind boundary of the extension around it.
