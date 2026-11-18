@@ -169,7 +169,7 @@ const FAILURES_SHOWN: usize = 10;
 /// These are the backstop that fires in continuous integration, where there is no `pkpdutils` to
 /// compare against at all. Update them deliberately together with the fixture, never to make a
 /// failing gate pass.
-const PKPDUTILS_VERSION: &str = "1.4.0";
+const PKPDUTILS_VERSION: &str = "1.7.0";
 
 /// The digest of the two sections of the crosswalk fixture, see [`PKPDUTILS_VERSION`].
 ///
