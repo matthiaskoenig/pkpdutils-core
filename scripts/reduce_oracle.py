@@ -42,7 +42,9 @@ from pkpdutils.nca.uncertainty import (
     reduce_replicates,
 )
 
-FIXTURE = Path(__file__).resolve().parent.parent / "crates/core/tests/data/reduce_oracle.json"
+FIXTURE = (
+    Path(__file__).resolve().parent.parent / "crates/core/tests/data/reduce_oracle.json"
+)
 
 #: rows and replicates of every case, small enough to read in the fixture
 N_ROWS, N_BOOT = 4, 25
@@ -106,7 +108,9 @@ def case(
         replicates,
         point,
         spread_kind=spread_kind,
-        n_subjects=None if n_subjects is None else np.array(n_subjects, dtype=np.float64),
+        n_subjects=None
+        if n_subjects is None
+        else np.array(n_subjects, dtype=np.float64),
         ci_level=ci_level,
         usable_rows=np.array(usable_rows, dtype=bool),
     )
@@ -159,14 +163,38 @@ def fixture() -> dict[str, object]:
         "lognormal": sorted(LOGNORMAL_PARAMETERS),
         "discrete": sorted(DISCRETE_PARAMETERS),
         "cases": [
-            case("se_with_n", BootstrapSpread.SE, [12.0, 8.0, 5.0, 10.0], [True] * 4, 0.90),
-            case("sd_with_n", BootstrapSpread.SD, [12.0, 8.0, 5.0, 10.0], [True] * 4, 0.90),
+            case(
+                "se_with_n",
+                BootstrapSpread.SE,
+                [12.0, 8.0, 5.0, 10.0],
+                [True] * 4,
+                0.90,
+            ),
+            case(
+                "sd_with_n",
+                BootstrapSpread.SD,
+                [12.0, 8.0, 5.0, 10.0],
+                [True] * 4,
+                0.90,
+            ),
             case("se_without_n", BootstrapSpread.SE, None, [True] * 4, 0.90),
             case("sd_without_n", BootstrapSpread.SD, None, [True] * 4, 0.95),
             # the third row carries no uncertainty however good its replicates are
-            case("row_not_usable", BootstrapSpread.SE, [12.0, 8.0, 5.0, 10.0], [True, True, False, True], 0.90),
+            case(
+                "row_not_usable",
+                BootstrapSpread.SE,
+                [12.0, 8.0, 5.0, 10.0],
+                [True, True, False, True],
+                0.90,
+            ),
             # a subject count of its own per row, one of them missing
-            case("n_partly_missing", BootstrapSpread.SE, [12.0, float("nan"), 5.0, 10.0], [True] * 4, 0.90),
+            case(
+                "n_partly_missing",
+                BootstrapSpread.SE,
+                [12.0, float("nan"), 5.0, 10.0],
+                [True] * 4,
+                0.90,
+            ),
         ],
     }
 

@@ -82,6 +82,14 @@ def column(result: dict, name: str) -> np.ndarray:
 
 @pytest.mark.parametrize("method", ["bootstrap", "delta"])
 def test_the_uncertainty_of_a_parameter_travels_through_the_wheel(method: str) -> None:
+    """Every uncertainty variable of a parameter arrives through the dict of the binding.
+
+    The numbers themselves are held against the python library in the kernel's own tests;
+    what is asserted here are the relations which have to hold whatever they are: a standard
+    error is positive, an interval brackets its estimate, the spread over the subjects is the
+    standard error times the square root of their count, and the unit of a variable is the
+    unit of the parameter it belongs to.
+    """
     batch = group_batch(2)
     result = pkpdutils_core.analyze_batch(batch, uncertainty_options(method))
     estimate = column(result, "auc_inf_obs")
@@ -109,15 +117,19 @@ def test_the_uncertainty_of_a_parameter_travels_through_the_wheel(method: str) -
 
 
 def test_a_discrete_parameter_carries_no_uncertainty() -> None:
+    """A count has no uncertainty, in the wheel as in the library."""
     # the number of points of the terminal regression is a count and not an estimate: python
     # reports no uncertainty for it and neither does the wheel
-    result = pkpdutils_core.analyze_batch(group_batch(1), uncertainty_options("bootstrap"))
+    result = pkpdutils_core.analyze_batch(
+        group_batch(1), uncertainty_options("bootstrap")
+    )
     columns = result["parameters"]
     assert "lambda_z_n_points" in columns
     assert "lambda_z_n_points_se" not in columns
 
 
 def test_a_bootstrap_without_a_seed_is_unsupported_and_the_delta_is_not() -> None:
+    """The one part of a bootstrap the kernel cannot do is draw the seed."""
     # the kernel reads no entropy, so a seed is the host's to draw; the predicate says so, which
     # is how a host knows to take its own path instead of being handed an error
     batch = group_batch(1)
@@ -127,12 +139,22 @@ def test_a_bootstrap_without_a_seed_is_unsupported_and_the_delta_is_not() -> Non
     with pytest.raises(ValueError, match="seed"):
         pkpdutils_core.analyze_batch(batch, seedless)
     # the delta method draws nothing, so it needs no seed
-    assert pkpdutils_core.is_supported(batch, uncertainty_options("delta", seed=None)) is None
-    without_seed = pkpdutils_core.analyze_batch(batch, uncertainty_options("delta", seed=None))
+    assert (
+        pkpdutils_core.is_supported(batch, uncertainty_options("delta", seed=None))
+        is None
+    )
+    without_seed = pkpdutils_core.analyze_batch(
+        batch, uncertainty_options("delta", seed=None)
+    )
     assert column(without_seed, "auc_inf_obs_se")[0] > 0.0
 
 
 def test_the_draws_of_the_wheel_are_a_pure_function_of_the_seed_and_the_index() -> None:
+    """`bootstrap_normals` is a function of the module and a function of its arguments.
+
+    A host streams the draws of a large batch in pieces and a block of rows asks for its own,
+    so the same request twice and a range in pieces both have to be the range itself.
+    """
     draws = pkpdutils_core.bootstrap_normals
     whole = draws(7, 0, 32)
     assert whole.dtype == np.float64 and whole.shape == (32,)

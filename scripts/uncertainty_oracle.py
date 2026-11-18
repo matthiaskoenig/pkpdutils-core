@@ -41,7 +41,8 @@ from pkpdutils.nca.uncertainty import DISCRETE_PARAMETERS
 from pkpdutils.result import base_name
 
 FIXTURE = (
-    Path(__file__).resolve().parent.parent / "crates/core/tests/data/uncertainty_oracle.json"
+    Path(__file__).resolve().parent.parent
+    / "crates/core/tests/data/uncertainty_oracle.json"
 )
 
 T = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 6.0, 9.0, 12.0, 24.0])
@@ -62,7 +63,7 @@ def encode(value: Any) -> Any:
         return value
     if isinstance(value, (int, np.integer)):
         return int(value)
-    if isinstance(value, float) or isinstance(value, np.floating):
+    if isinstance(value, (float, np.floating)):
         number = float(value)
         if math.isfinite(number):
             return number
@@ -205,7 +206,9 @@ def case(name: str, timecourses: Timecourses, options: NCAOptions) -> dict[str, 
         "name": name,
         "batch": encode(batch),
         "options": encode(kernel_options),
-        "flags": encode(np.asarray(result.ds["flags"].values, dtype=np.float64).ravel()),
+        "flags": encode(
+            np.asarray(result.ds["flags"].values, dtype=np.float64).ravel()
+        ),
         "order": uncertainty_names(result),
         "expected": answer,
     }
