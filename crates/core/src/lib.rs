@@ -435,11 +435,19 @@ fn row_slice(values: &[f64], row: usize, width: usize) -> &[f64] {
 /// [`KernelError::Options`] for an index which is no column of the row, which python answers
 /// with an `IndexError`.
 fn manual_columns(batch: &Batch, options: &NcaOptions) -> Result<Option<Vec<bool>>, KernelError> {
+    manual_mask(options, batch.n_time)
+}
+
+/// [`manual_columns`] for a curve of `n_time` points, which is all it reads of a batch; the
+/// urine analysis has no batch and calls this directly.
+pub(crate) fn manual_mask(
+    options: &NcaOptions,
+    n_time: usize,
+) -> Result<Option<Vec<bool>>, KernelError> {
     if options.terminal.method != TerminalMethod::Manual {
         return Ok(None);
     }
     let points = options.terminal.points.as_deref().unwrap_or(&[]);
-    let n_time = batch.n_time;
     let mut mask = vec![false; n_time];
     for &index in points {
         let resolved = if index < 0 {

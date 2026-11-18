@@ -92,6 +92,7 @@ fn recovery_factor(unit: &str, dose_unit: &str) -> Result<f64, KernelError> {
 ///
 /// # Errors
 ///
+/// [`KernelError::Options`] for a manual terminal point which is no column of the rate curve;
 /// [`KernelError::Urine`] when the recovered amount cannot be compared with the dose, whatever
 /// the dose amount; [`KernelError::Unsupported`] for a unit the registry of this build does not read.
 ///
@@ -126,6 +127,9 @@ pub fn nca_urine(urine: &CheckedUrine) -> Result<AnalysisResult, KernelError> {
     let dose = request.dose_amount.zip(request.dose_unit.as_deref());
     // python passes no dose to the analysis of the rate curve, and the route of the dose only
     // when there is one
+    // the columns of a manual terminal window, over the rate curve as it is, which is what the
+    // indices of `TerminalPhase::points` index
+    let manual = crate::manual_mask(&options, midpoint.len())?;
     let input = RowInput {
         times: &midpoint,
         values: &rate,
@@ -138,7 +142,7 @@ pub fn nca_urine(urine: &CheckedUrine) -> Result<AnalysisResult, KernelError> {
         has_dose: false,
         lloq: None,
         window: None,
-        manual: None,
+        manual: manual.as_deref(),
         single_dose: true,
         dose_times: &[],
         dose_amounts: &[],
@@ -483,5 +487,80 @@ mod tests {
         assert_eq!(value(&r, "amount_recovered"), 600.0);
         assert!(value(&r, "percent_recovered").is_nan());
         assert_eq!(param(&r, "aurc_last").unit, "milligram");
+    }
+
+    /// Six collections of 2 hours, python's rate curve for the manual terminal window.
+    fn six(points: &[i64], dosed: bool) -> AnalysisResult {
+        let mut q = request();
+        q.start = vec![0.0, 2.0, 4.0, 6.0, 8.0, 10.0];
+        q.end = vec![2.0, 4.0, 6.0, 8.0, 10.0, 12.0];
+        q.amount = vec![300.0, 200.0, 120.0, 70.0, 42.0, 25.0];
+        q.volume = None;
+        if !dosed {
+            q.dose_amount = None;
+            q.dose_unit = None;
+        }
+        q.options.terminal.method = pkpdutils_abi::TerminalMethod::Manual;
+        q.options.terminal.points = Some(points.to_vec());
+        run(&q).unwrap()
+    }
+
+    #[test]
+    fn a_manual_terminal_window_indexes_the_rate_curve_whatever_the_route() {
+        // values of python, forced onto its own path; the dose adds the segment from 0 to the
+        // first midpoint to the area and moves no index of the window
+        let bits = |r: &AnalysisResult, name: &str| value(r, name).to_bits();
+        for (points, dosed, lambda_z, thalf, aurc_inf_obs, flags) in [
+            (
+                [3, 4, 5].as_slice(),
+                false,
+                4598308613541456409,
+                4613246129977160905,
+                4648771645951269086,
+                1024,
+            ),
+            (
+                [3, 4, 5].as_slice(),
+                true,
+                4598308613541456409,
+                4613246129977160905,
+                4649431352927934686,
+                1040,
+            ),
+            (
+                [0, 1, 2, 3, 4, 5].as_slice(),
+                false,
+                4598212656809486281,
+                4613374262366758588,
+                4648780672121339879,
+                0,
+            ),
+            (
+                [0, 1, 2, 3, 4, 5].as_slice(),
+                true,
+                4598212656809486281,
+                4613374262366758588,
+                4649440379098005479,
+                16,
+            ),
+        ] {
+            let r = six(points, dosed);
+            assert_eq!(bits(&r, "lambda_z") as i64, lambda_z, "{points:?} {dosed}");
+            assert_eq!(bits(&r, "thalf") as i64, thalf, "{points:?} {dosed}");
+            assert_eq!(
+                bits(&r, "aurc_inf_obs") as i64,
+                aurc_inf_obs,
+                "{points:?} {dosed}"
+            );
+            assert_eq!(r.flags, vec![flags], "{points:?} {dosed}");
+        }
+    }
+
+    #[test]
+    fn a_manual_terminal_point_beyond_the_rate_curve_is_an_error() {
+        let mut q = request();
+        q.options.terminal.method = pkpdutils_abi::TerminalMethod::Manual;
+        q.options.terminal.points = Some(vec![7]);
+        assert!(matches!(run(&q), Err(KernelError::Options(_))));
     }
 }
