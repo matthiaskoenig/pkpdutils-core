@@ -310,9 +310,9 @@ mod tests {
         assert_eq!(point("rate").dim, "collection");
         assert_eq!(point("rate").size, 3);
         // python oracle
-        // the oracle is printed to three decimals (483.9335383...)
-        assert!((value(&r, "aurc_last") - 483.934).abs() < 5e-4);
-        assert!((value(&r, "aurc_all") - 483.934).abs() < 5e-4);
+        // the exact value of python, 0x1.e3eefc5e55c69p+8, bit for bit
+        assert_eq!(value(&r, "aurc_last").to_bits(), 4647221065031179369);
+        assert_eq!(value(&r, "aurc_all").to_bits(), 4647221065031179369);
         assert_eq!(value(&r, "max_rate"), 150.0);
         assert_eq!(value(&r, "rate_last"), 25.0);
         assert_eq!(value(&r, "tmax_rate"), 1.0);
