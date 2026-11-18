@@ -580,25 +580,49 @@ fn resample_values(values: &[f64], spread: &[f64], spec: &Resampling) -> Vec<f64
     out
 }
 
-/// One parameter whose replicates are reduced: its column of the result and its field reader.
-type Reducible<'a> = (&'a ParameterColumn, fn(&RowParameters) -> f64);
+/// One parameter whose replicates are reduced.
+///
+/// Its column of the result, its field reader and the factor the assembly multiplied the column
+/// by ([`crate::assemble::factors_of`]): a replicate and a perturbed curve are analysed by the
+/// core and their parameters are therefore in the unit the core computes in, while the estimate
+/// of the column is in the unit the result reports. The factor is what makes the two comparable,
+/// and without it the uncertainty of a clearance of a batch in `ng/ml` comes out a thousand
+/// times too small.
+type Reducible<'a> = (&'a ParameterColumn, fn(&RowParameters) -> f64, f64);
 
 /// The parameters of a result which carry an uncertainty, with the reader of every one.
 ///
 /// A parameter of the result which is discrete, is itself a derived variable or has no entry in
 /// [`PARAMETERS`] is left out here rather than inside the reduction, so the replicates of a
 /// parameter nothing will reduce are never collected.
-fn reducible(point: &[ParameterColumn]) -> Vec<Reducible<'_>> {
+fn reducible<'a>(point: &'a [ParameterColumn], factors: &[f64]) -> Vec<Reducible<'a>> {
     point
         .iter()
-        .filter(|column| !is_discrete(&column.name) && !is_derived(&column.name))
-        .filter_map(|column| {
+        .zip(factors)
+        .filter(|(column, _)| !is_discrete(&column.name) && !is_derived(&column.name))
+        .filter_map(|(column, &factor)| {
             PARAMETERS
                 .iter()
                 .find(|parameter| parameter.name == column.name)
-                .map(|parameter| (column, parameter.read))
+                .map(|parameter| (column, parameter.read, factor))
         })
         .collect()
+}
+
+/// What an uncertainty is built on: the estimates of a result and their scales.
+///
+/// The three travel together because they are three views of the same columns and a caller which
+/// held one without the others would be holding an inconsistent result: the estimate of every
+/// interval, the factor which brings a parameter of a replicate into the unit that estimate is
+/// in ([`crate::assemble::factors_of`]) and the subjects behind every row, which is the scale of
+/// `x_sd` and of `x_geocv`.
+pub(crate) struct Estimates<'a> {
+    /// The parameters of the original curves, in the units the result reports.
+    pub point: &'a [ParameterColumn],
+    /// The factor of every column of `point`, by position.
+    pub factors: &'a [f64],
+    /// The subjects behind every row, `None` for a batch which carries no count.
+    pub n_subjects: Option<&'a [f64]>,
 }
 
 /// The uncertainty of the parameters of a batch from the parametric bootstrap.
@@ -616,8 +640,7 @@ fn reducible(point: &[ParameterColumn]) -> Vec<Reducible<'_>> {
 ///
 /// * `batch` - the batch, which carries the spread the points are resampled with
 /// * `options` - `n_boot`, `seed`, `ci_level`, `bootstrap_spread` and `bootstrap_distribution`
-/// * `point` - the parameters of the original curves, the estimates of the intervals
-/// * `n_subjects` - the subjects of every row, the `n` column of the result
+/// * `estimates` - the parameters of the original curves with their scales ([`Estimates`])
 /// * `shards` - the shard plan of the replicate rows
 /// * `block_rows` - the rows of one block, `None` for [`block_rows_of`]
 /// * `analyse` - the analysis of one row with the values of a replicate in place of its own
@@ -631,8 +654,7 @@ fn reducible(point: &[ParameterColumn]) -> Vec<Reducible<'_>> {
 pub(crate) fn bootstrap<F>(
     batch: &Batch,
     options: &NcaOptions,
-    point: &[ParameterColumn],
-    n_subjects: Option<&[f64]>,
+    estimates: &Estimates<'_>,
     shards: usize,
     block_rows: Option<usize>,
     analyse: F,
@@ -668,7 +690,7 @@ where
                 .any(|s| s.is_finite() && *s > 0.0)
         })
         .collect();
-    let columns = reducible(point);
+    let columns = reducible(estimates.point, estimates.factors);
     let block = block_rows
         .unwrap_or_else(|| block_rows_of(n_boot, n_time))
         .max(1);
@@ -697,14 +719,19 @@ where
             });
         let replicates: Vec<Replicates> = columns
             .iter()
-            .map(|(column, read)| Replicates {
+            .map(|(column, read, factor)| Replicates {
                 name: column.name.clone(),
-                values: analysed.iter().map(read).collect(),
+                // a replicate comes out of the core in the unit the core computes in and the
+                // estimate of the column is in the unit the result reports
+                values: analysed
+                    .iter()
+                    .map(|replicate| read(replicate) * factor)
+                    .collect(),
             })
             .collect();
         let block_point: Vec<ParameterColumn> = columns
             .iter()
-            .map(|(column, _)| ParameterColumn {
+            .map(|(column, _, _)| ParameterColumn {
                 name: column.name.clone(),
                 unit: column.unit.clone(),
                 values: column.values[start..stop].to_vec(),
@@ -714,7 +741,7 @@ where
             &replicates,
             &block_point,
             options.bootstrap_spread,
-            n_subjects.map(|values| &values[start..stop]),
+            estimates.n_subjects.map(|values| &values[start..stop]),
             options.ci_level,
             &usable_rows[start..stop],
         ));
@@ -771,8 +798,9 @@ fn terminal_independent(name: &str, options: &NcaOptions) -> bool {
 /// are not.
 const WINDOW_VARIABLES: [&str; 2] = ["lambda_z_n_points", "lambda_z_t_first"];
 
-/// One window variable of a result: its field reader and the column of the original curves.
-type WindowVariable<'a> = (fn(&RowParameters) -> f64, &'a [f64]);
+/// One window variable of a result: its field reader, the column of the original curves and the
+/// factor the assembly multiplied that column by.
+type WindowVariable<'a> = (fn(&RowParameters) -> f64, &'a [f64], f64);
 
 /// What the delta method propagated for one row.
 struct DeltaRow {
@@ -824,8 +852,7 @@ fn delta_step(value: f64, se: f64, relative: f64) -> f64 {
 ///
 /// * `batch` - the batch, which carries `se` or `sd` and the subject count
 /// * `options` - `delta_step`, `ci_level`, `tau_tolerance`
-/// * `point` - the parameters of the original curves
-/// * `n_subjects` - the subjects of every row, for the between subject scale
+/// * `estimates` - the parameters of the original curves with their scales ([`Estimates`])
 /// * `shards` - the shard plan of the rows
 /// * `analyse` - the analysis of one row with the values of a perturbed curve
 ///
@@ -837,8 +864,7 @@ fn delta_step(value: f64, se: f64, relative: f64) -> f64 {
 pub(crate) fn delta<F>(
     batch: &Batch,
     options: &NcaOptions,
-    point: &[ParameterColumn],
-    n_subjects: Option<&[f64]>,
+    estimates: &Estimates<'_>,
     shards: usize,
     analyse: F,
 ) -> Result<DeltaAnswer, KernelError>
@@ -850,7 +876,7 @@ where
     // the delta method propagates the uncertainty of the mean curve whatever the bootstrap would
     // resample with, so the spread is `se` and not `options.bootstrap_spread`
     let se = resolve_spread(batch, options, Some(BootstrapSpread::Se))?;
-    let columns = reducible(point);
+    let columns = reducible(estimates.point, estimates.factors);
     let window: Vec<Option<WindowVariable<'_>>> = WINDOW_VARIABLES
         .iter()
         .map(|name| {
@@ -858,16 +884,18 @@ where
                 .iter()
                 .find(|parameter| parameter.name == *name)
                 .map(|parameter| parameter.read)?;
-            let values = point
+            let (values, factor) = estimates
+                .point
                 .iter()
-                .find(|column| column.name == *name)
-                .map(|column| column.values.as_slice())?;
-            Some((read, values))
+                .zip(estimates.factors)
+                .find(|(column, _)| column.name == *name)
+                .map(|(column, &factor)| (column.values.as_slice(), factor))?;
+            Some((read, values, factor))
         })
         .collect();
     let keep: Vec<bool> = columns
         .iter()
-        .map(|(column, _)| terminal_independent(&column.name, options))
+        .map(|(column, _, _)| terminal_independent(&column.name, options))
         .collect();
 
     let rows: Vec<DeltaRow> = rows_of(n_rows, n_time, shards, |row, scratch| {
@@ -895,17 +923,19 @@ where
             let actual_step = perturbed[time] - value;
             let answer = analyse(row, &perturbed, scratch);
             perturbed[time] = value;
-            let changed = window.iter().flatten().any(|(read, values)| {
+            let changed = window.iter().flatten().any(|(read, values, factor)| {
                 let base = values[row];
-                let other = read(&answer);
+                let other = read(&answer) * factor;
                 !((base.is_nan() && other.is_nan()) || base == other)
             });
             window_changed |= changed;
-            for (index, ((column, read), independent)) in columns.iter().zip(&keep).enumerate() {
+            for (index, ((column, read, factor), independent)) in
+                columns.iter().zip(&keep).enumerate()
+            {
                 if changed && !independent {
                     continue;
                 }
-                let derivative = (read(&answer) - column.values[row]) / actual_step;
+                let derivative = (read(&answer) * factor - column.values[row]) / actual_step;
                 standard_error[index] = standard_error[index].hypot(derivative * point_se);
             }
         }
@@ -919,7 +949,7 @@ where
     let alpha = 1.0 - options.ci_level;
     let z = normal_isf(alpha / 2.0);
     let mut out = Vec::new();
-    for (index, (column, _)) in columns.iter().enumerate() {
+    for (index, (column, _, _)) in columns.iter().enumerate() {
         let name = column.name.as_str();
         let lognormal = is_lognormal(name);
         let unit = column.unit.as_str();
@@ -936,7 +966,9 @@ where
                 continue;
             }
             x_se[row] = standard_error;
-            x_sd[row] = n_subjects.map_or(f64::NAN, |counts| standard_error * counts[row].sqrt());
+            x_sd[row] = estimates
+                .n_subjects
+                .map_or(f64::NAN, |counts| standard_error * counts[row].sqrt());
             if lognormal {
                 let relative = standard_error / estimate;
                 low[row] = estimate * (-z * relative).exp();
@@ -1071,6 +1103,16 @@ mod tests {
             .parameters
     }
 
+    /// The factor of every column of a point result, as the analysis computes it.
+    ///
+    /// The batches of these tests are in `mg/l` over `hour`, whose canonical units are the same,
+    /// so every factor is 1; the helper computes them anyway, so that a test which changes a
+    /// unit of its batch keeps asserting the numbers of the analysis and not of a fixed scale.
+    fn factors_of(point: &[ParameterColumn], batch: &Batch) -> Vec<f64> {
+        crate::assemble::factors_of(point, &crate::assemble::context_of(batch, None, None))
+            .expect("the factors")
+    }
+
     /// The bootstrap of a batch at a chosen block size, through the analysis of the crate.
     fn bootstrap_at(
         batch: &Batch,
@@ -1089,8 +1131,11 @@ mod tests {
         bootstrap(
             batch,
             options,
-            &point,
-            Some(&n_subjects),
+            &Estimates {
+                point: &point,
+                factors: &factors_of(&point, batch),
+                n_subjects: Some(&n_subjects),
+            },
             1,
             block_rows,
             |row, values, scratch| rows.row_of(row, values, scratch, None).parameters,
@@ -1112,8 +1157,11 @@ mod tests {
         delta(
             batch,
             options,
-            &point,
-            Some(&n_subjects),
+            &Estimates {
+                point: &point,
+                factors: &factors_of(&point, batch),
+                n_subjects: Some(&n_subjects),
+            },
             1,
             |row, values, scratch| rows.row_of(row, values, scratch, None).parameters,
         )
@@ -1484,9 +1532,19 @@ mod tests {
             ..boot_options(8, 1)
         };
         let point = point_of(&batch, &boot_options(8, 1));
-        let error = bootstrap(&batch, &options, &point, None, 1, None, |_, _, _| {
-            RowParameters::EMPTY
-        })
+        let factors = factors_of(&point, &batch);
+        let error = bootstrap(
+            &batch,
+            &options,
+            &Estimates {
+                point: &point,
+                factors: &factors,
+                n_subjects: None,
+            },
+            1,
+            None,
+            |_, _, _| RowParameters::EMPTY,
+        )
         .expect_err("the pair is refused");
         assert!(
             matches!(&error, KernelError::Options(what)
@@ -1500,9 +1558,18 @@ mod tests {
             ..options
         };
         assert!(
-            bootstrap(&batch, &normal, &point, None, 1, None, |_, _, _| {
-                RowParameters::EMPTY
-            })
+            bootstrap(
+                &batch,
+                &normal,
+                &Estimates {
+                    point: &point,
+                    factors: &factors,
+                    n_subjects: None,
+                },
+                1,
+                None,
+                |_, _, _| { RowParameters::EMPTY }
+            )
             .is_ok()
         );
     }
@@ -1517,9 +1584,19 @@ mod tests {
             ..boot_options(8, 1)
         };
         let point = point_of(&batch, &boot_options(8, 1));
-        let error = bootstrap(&batch, &options, &point, None, 1, None, |_, _, _| {
-            RowParameters::EMPTY
-        })
+        let factors = factors_of(&point, &batch);
+        let error = bootstrap(
+            &batch,
+            &options,
+            &Estimates {
+                point: &point,
+                factors: &factors,
+                n_subjects: None,
+            },
+            1,
+            None,
+            |_, _, _| RowParameters::EMPTY,
+        )
         .expect_err("a seedless bootstrap is refused");
         assert!(matches!(&error, KernelError::Options(what) if what.contains("reads no entropy")));
         assert!(

@@ -72,8 +72,16 @@ def encode(value: Any) -> Any:
     raise TypeError(f"{type(value)} is no value of the wire")
 
 
-def group_batch(n_rows: int = 4, cv: float = 0.18) -> Timecourses:
-    """A batch of group curves with `se`, `sd` and the subject count of every point."""
+def group_batch(
+    n_rows: int = 4, cv: float = 0.18, unit: str = "mg/l", dose_unit: str = "mg"
+) -> Timecourses:
+    """A batch of group curves with `se`, `sd` and the subject count of every point.
+
+    `unit` and `dose_unit` are what the `scaled_units` cases vary: a batch in `ng/ml` with a
+    dose in `mg` reports a clearance in `l/h` and a volume in `l`, which is not the unit the
+    core computes them in, so every column of such a result carries a factor and the
+    uncertainty of a replicate has to be scaled by it as well.
+    """
     rng = np.random.default_rng(4711)
     rows, spread, counts = [], [], []
     for row in range(n_rows):
@@ -95,8 +103,8 @@ def group_batch(n_rows: int = 4, cv: float = 0.18) -> Timecourses:
         sd=sd,
         n=n,
         time_unit="hr",
-        unit="mg/l",
-        dose={"amount": 100.0, "unit": "mg"},
+        unit=unit,
+        dose={"amount": 100.0, "unit": dose_unit},
         route="oral",
         dims=("subject",),
     )
@@ -280,6 +288,15 @@ def fixture() -> dict[str, Any]:
             ),
             # a step which really moves the terminal window: the terminal parameters keep the
             # points at which it did not move and the row carries DELTA_WINDOW_CHANGE
+            # a batch whose columns are not in the unit the core computes them in: the
+            # clearance of a curve in ng/ml with a dose in mg is reported in l/h, and an
+            # uncertainty which skipped that factor would be a thousand times too small
+            case("scaled_units", group_batch(unit="ng/ml"), NCAOptions(**base)),
+            case(
+                "delta_scaled_units",
+                group_batch(unit="ng/ml"),
+                NCAOptions(uncertainty=UncertaintyMethod.DELTA, ci_level=0.90),
+            ),
             case(
                 "delta_window_change",
                 window_batch(),

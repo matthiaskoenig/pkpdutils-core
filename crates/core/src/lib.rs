@@ -295,6 +295,18 @@ fn analyze_checked(
     let method = resolved_uncertainty(batch, options);
     if method != UncertaintyMethod::None {
         let n_subjects = subject_counts(&result);
+        // the columns of the result are in the unit the result reports and the parameters of a
+        // replicate are in the unit the core computes in, so the uncertainty is given the factor
+        // between them for every column it reduces
+        let factors = crate::assemble::factors_of(
+            &result.parameters,
+            &crate::assemble::context_of(batch, None, None),
+        )?;
+        let estimates = crate::uncertainty::Estimates {
+            point: &result.parameters,
+            factors: &factors,
+            n_subjects: n_subjects.as_deref(),
+        };
         let analyse = |row: usize, values: &[f64], scratch: &mut Scratch| {
             rows_of_batch.row_of(row, values, scratch, None).parameters
         };
@@ -302,8 +314,7 @@ fn analyze_checked(
             let uncertainty = bootstrap(
                 batch,
                 options,
-                &result.parameters,
-                n_subjects.as_deref(),
+                &estimates,
                 automatic_shards(n_samples * options.n_boot as usize, batch.n_time),
                 None,
                 analyse,
@@ -315,8 +326,7 @@ fn analyze_checked(
             let answer = delta(
                 batch,
                 options,
-                &result.parameters,
-                n_subjects.as_deref(),
+                &estimates,
                 automatic_shards(n_samples * batch.n_time, batch.n_time),
                 analyse,
             )?;

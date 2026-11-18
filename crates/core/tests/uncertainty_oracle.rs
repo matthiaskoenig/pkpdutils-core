@@ -1,11 +1,13 @@
 //! The uncertainty of `analyze_batch` against python's own answer.
 //!
 //! `crates/core/tests/data/uncertainty_oracle.json` is written by `scripts/uncertainty_oracle.py`
-//! from the `pkpdutils` checkout this crate mirrors: eight batches of group curves, the batch and
+//! from the `pkpdutils` checkout this crate mirrors: ten batches of group curves, the batch and
 //! the options in the encoding of the wire, and every uncertainty variable and flag word the
 //! **python** engine reports for them (`engine._force_python`, so no part of the answer comes
-//! from the kernel). Four cases are the bootstrap and four the delta method, among them one
-//! whose perturbations move the terminal window.
+//! from the kernel). Five cases are the bootstrap and five the delta method, among them one
+//! whose perturbations move the terminal window and one pair whose columns are not in the unit
+//! the core computes them in (a curve in `ng/ml` with a dose in `mg`, whose clearance is
+//! reported in `l/h`), which is a factor every uncertainty of a replicate carries too.
 //!
 //! The two engines draw their normals from the same generator, which is the whole point of the
 //! design: python asks `pkpdutils_core.bootstrap_normals` for its draws, so the replicates are
@@ -53,7 +55,7 @@ fn oracle() -> Oracle {
 #[test]
 fn the_uncertainty_matches_the_python_oracle() {
     let oracle = oracle();
-    assert_eq!(oracle.cases.len(), 8, "the fixture lost a case");
+    assert_eq!(oracle.cases.len(), 10, "the fixture lost a case");
     let mut compared = 0usize;
     let mut worst = 0.0f64;
     let mut where_worst = String::new();
