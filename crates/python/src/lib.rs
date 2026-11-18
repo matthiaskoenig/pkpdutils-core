@@ -39,7 +39,7 @@ use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::convert::{at_key, batch_from_python, field, required};
+use crate::convert::{at_key, batch_from_python, field, required, route_named};
 use crate::options::{options_from_python, unsupported_reason};
 use crate::result::result_into_python;
 
@@ -52,6 +52,12 @@ pub(crate) const SUMMARY_REQUEST: &str = "a `summarize` request";
 /// How an error of [`time_to_steady_state`] names the dict it was given, as
 /// [`SUMMARY_REQUEST`] does.
 pub(crate) const TSS_REQUEST: &str = "a `time_to_steady_state` request";
+
+/// How an error of [`nca_sparse`] names the dict it was given, as [`SUMMARY_REQUEST`] does.
+pub(crate) const SPARSE_REQUEST: &str = "a `nca_sparse` request";
+
+/// How an error of [`nca_urine`] names the dict it was given, as [`SUMMARY_REQUEST`] does.
+pub(crate) const URINE_REQUEST: &str = "a `nca_urine` request";
 
 create_exception!(
     pkpdutils_core,
@@ -134,14 +140,7 @@ fn analyze_batch<'py>(
             Some(shards) => kernel::analyze_batch_in_shards(&batch, &options, shards),
         })
     })?;
-    let result = analysed.map_err(|error| match error {
-        // the predicate answers for every refusal of the kernel, which
-        // `the_predicate_agrees_with_the_kernel` of `crate::options` holds it to, so this arm
-        // is reached only if the two have drifted apart. It is the type of the refusal which a
-        // host routes on, so a refusal which got past the predicate must still carry it
-        kernel::KernelError::Unsupported { .. } => unsupported(&error),
-        _ => PyValueError::new_err(error.to_string()),
-    })?;
+    let result = analysed.map_err(kernel_error)?;
     result_into_python(py, result)
 }
 
@@ -179,7 +178,7 @@ fn summarize<'py>(py: Python<'py>, request: &Bound<'py, PyDict>) -> PyResult<Bou
     let (n_vars, n_groups) = (request.n_vars, request.n_groups);
     let answer = py
         .detach(|| guarded(|| kernel::summarize(&request)))?
-        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        .map_err(kernel_error)?;
     let out = PyDict::new(py);
     for (name, column) in [
         ("mean", answer.mean),
@@ -258,11 +257,129 @@ fn time_to_steady_state<'py>(
     };
     let answer = py
         .detach(|| guarded(|| kernel::time_to_steady_state(&request)))?
-        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        .map_err(kernel_error)?;
     let out = PyDict::new(py);
     out.set_item("tss", PyArray1::from_vec(py, answer.tss))?;
     out.set_item("c_ss", PyArray1::from_vec(py, answer.c_ss))?;
     Ok(out)
+}
+
+/// The sparse analysis of the host, `nca_sparse` of `pkpdutils.nca.sparse`.
+///
+/// `request` is a dict of the fields of the kernel's `SparseRequest`: `times` (a float array of
+/// `n_cols`) and `values` (a float array of `n_rows * n_cols`, read in C order), `n_rows`,
+/// `n_cols`, `design` (`"serial"` or `"batch"`), `unit`, `time_unit` and `dose_unit` (a string
+/// or `None`). The answer is the dict of an analysis result (see [`analyze_batch`]) with two
+/// more entries, the integers `n_batches` and `singletons`: the number of batches of the
+/// variance and how many of them hold fewer than two animals. A host warns when `singletons`
+/// is above zero, since the variance and the degrees of freedom of the area are then `NaN`.
+///
+/// # Errors
+///
+/// A `KeyError` for a missing field and a `TypeError` for a field of the wrong type. A request
+/// whose arrays disagree with its shape, whose times do not increase, whose `design` is unknown
+/// or whose serial design has an animal with several samples is a plain `ValueError`, never an
+/// `UnsupportedError`, so that the fallback of a host cannot hide a bug in the request.
+#[pyfunction]
+fn nca_sparse<'py>(py: Python<'py>, request: &Bound<'py, PyDict>) -> PyResult<Bound<'py, PyDict>> {
+    let floats = |key: &str| -> PyResult<Vec<f64>> {
+        let array: PyReadonlyArrayDyn<'_, f64> = required(request, key, SPARSE_REQUEST)?
+            .extract()
+            .map_err(|err| at_key(py, key, err))?;
+        Ok(array.as_array().iter().copied().collect())
+    };
+    let design: String = field(py, request, "design", SPARSE_REQUEST)?;
+    let design = match design.as_str() {
+        "serial" => kernel::pkpdutils_abi::SparseDesign::Serial,
+        "batch" => kernel::pkpdutils_abi::SparseDesign::Batch,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "design {other:?} is neither \"serial\" nor \"batch\""
+            )));
+        }
+    };
+    let request = kernel::pkpdutils_abi::SparseRequest {
+        times: floats("times")?,
+        values: floats("values")?,
+        n_rows: field(py, request, "n_rows", SPARSE_REQUEST)?,
+        n_cols: field(py, request, "n_cols", SPARSE_REQUEST)?,
+        design,
+        unit: field(py, request, "unit", SPARSE_REQUEST)?,
+        time_unit: field(py, request, "time_unit", SPARSE_REQUEST)?,
+        dose_unit: field(py, request, "dose_unit", SPARSE_REQUEST)?,
+    };
+    let answer = py
+        .detach(|| guarded(|| kernel::nca_sparse(&request)))?
+        .map_err(kernel_error)?;
+    let out = result_into_python(py, answer.result)?;
+    out.set_item("n_batches", answer.n_batches)?;
+    out.set_item("singletons", answer.singletons)?;
+    Ok(out)
+}
+
+/// The urine analysis of the host, `nca_urine` of `pkpdutils.nca.urine`.
+///
+/// `request` is a dict of the fields of the kernel's `UrineRequest`: `start`, `end` and `amount`
+/// (float arrays of one entry per collection), `volume` (a float array of the same length, or
+/// `None` when the excretion carries no volumes at all; an array of `NaN` is a different
+/// excretion from `None`, since `vol_ur` is then `0` and not `NaN`), `unit`, `time_unit` and
+/// `volume_unit` (strings), `route` (`"iv_bolus"`, `"iv_infusion"` or `"oral"`), `dose_amount`
+/// (a float or `None`), `dose_unit` (a string or `None`), `area` (a float or `None`),
+/// `area_unit` (a string or `None`) and `options`, the options dict of [`analyze_batch`]. The
+/// answer is the dict of an analysis result (see [`analyze_batch`]), whose point variables
+/// `rate` and `midpoint` run over the dimension `collection`.
+///
+/// # Errors
+///
+/// A `KeyError` for a missing field and a `TypeError` for a field of the wrong type. A request
+/// whose arrays differ in length, which has no collection, whose intervals do not end after
+/// they start or overlap, whose `route` is unknown or whose dose or area comes without its unit
+/// is a plain `ValueError`, never an `UnsupportedError`, so that the fallback of a host cannot
+/// hide a bug in the request. The collections need not be sorted.
+#[pyfunction]
+fn nca_urine<'py>(py: Python<'py>, request: &Bound<'py, PyDict>) -> PyResult<Bound<'py, PyDict>> {
+    let floats = |key: &str| -> PyResult<Vec<f64>> {
+        let array: PyReadonlyArray1<'_, f64> = required(request, key, URINE_REQUEST)?
+            .extract()
+            .map_err(|err| at_key(py, key, err))?;
+        Ok(array.as_array().iter().copied().collect())
+    };
+    let volume = match required(request, "volume", URINE_REQUEST)? {
+        value if value.is_none() => None,
+        value => {
+            let array: PyReadonlyArray1<'_, f64> =
+                value.extract().map_err(|err| at_key(py, "volume", err))?;
+            Some(array.as_array().iter().copied().collect())
+        }
+    };
+    let route: String = field(py, request, "route", URINE_REQUEST)?;
+    let options = required(request, "options", URINE_REQUEST)?
+        .cast_into::<PyDict>()
+        .map_err(|err| PyTypeError::new_err(format!("options: {err}")))?;
+    let request = kernel::pkpdutils_abi::UrineRequest {
+        start: floats("start")?,
+        end: floats("end")?,
+        amount: floats("amount")?,
+        volume,
+        unit: field(py, request, "unit", URINE_REQUEST)?,
+        time_unit: field(py, request, "time_unit", URINE_REQUEST)?,
+        volume_unit: field(py, request, "volume_unit", URINE_REQUEST)?,
+        route: route_named("route", &route)?,
+        dose_amount: field(py, request, "dose_amount", URINE_REQUEST)?,
+        dose_unit: field(py, request, "dose_unit", URINE_REQUEST)?,
+        area: field(py, request, "area", URINE_REQUEST)?,
+        area_unit: field(py, request, "area_unit", URINE_REQUEST)?,
+        options: options_from_python(&options)?,
+    };
+    let answer = py
+        .detach(|| {
+            guarded(|| {
+                let checked = request.checked().map_err(kernel::KernelError::Urine)?;
+                kernel::nca_urine(&checked)
+            })
+        })?
+        .map_err(kernel_error)?;
+    result_into_python(py, answer)
 }
 
 /// The exception of an analysis this build does not carry.
@@ -413,6 +530,19 @@ fn guarded<T>(f: impl FnOnce() -> T) -> PyResult<T> {
     })
 }
 
+/// The python exception of an error of the kernel, the one mapping of every entry point.
+///
+/// A refusal of the kernel to carry an analysis, a unit its registry cannot read included, is
+/// the [`UnsupportedError`] a host routes on, whichever entry point raised it; everything else
+/// is a malformed request and a plain `ValueError`. For `analyze_batch` the predicate answers
+/// for the refusals before a row runs, so the first arm is there reached only for a unit.
+fn kernel_error(error: kernel::KernelError) -> PyErr {
+    match error {
+        kernel::KernelError::Unsupported { .. } => unsupported(&error),
+        _ => PyValueError::new_err(error.to_string()),
+    }
+}
+
 /// The module `pkpdutils` imports: the two entry points, the refusal a host routes on and the
 /// version of this build.
 ///
@@ -433,6 +563,8 @@ fn pkpdutils_core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(is_supported, module)?)?;
     module.add_function(wrap_pyfunction!(summarize, module)?)?;
     module.add_function(wrap_pyfunction!(time_to_steady_state, module)?)?;
+    module.add_function(wrap_pyfunction!(nca_sparse, module)?)?;
+    module.add_function(wrap_pyfunction!(nca_urine, module)?)?;
     module.add_function(wrap_pyfunction!(normal_isf, module)?)?;
     module.add_function(wrap_pyfunction!(student_t_isf, module)?)?;
     module.add_function(wrap_pyfunction!(student_t_sf, module)?)?;
@@ -1152,6 +1284,138 @@ mod tests {
         });
     }
 
+    /// A request of three animals in a batch design at two times.
+    fn sparse_request<'py>(py: Python<'py>, design: &str) -> Bound<'py, PyDict> {
+        let request = PyDict::new(py);
+        let v = [1.0, 0.5, 1.2, 0.4, 0.9, 0.6];
+        request
+            .set_item("times", PyArray1::from_slice(py, &[1.0, 2.0]))
+            .unwrap();
+        request
+            .set_item("values", PyArray1::from_slice(py, &v))
+            .unwrap();
+        request.set_item("n_rows", 3).unwrap();
+        request.set_item("n_cols", 2).unwrap();
+        request.set_item("design", design).unwrap();
+        request.set_item("unit", "mg/l").unwrap();
+        request.set_item("time_unit", "h").unwrap();
+        request.set_item("dose_unit", py.None()).unwrap();
+        request
+    }
+
+    #[test]
+    fn a_sparse_request_answers_the_result_and_the_counts() {
+        Python::attach(|py| {
+            let answer = nca_sparse(py, &sparse_request(py, "batch")).unwrap();
+            assert!(answer.contains("parameters").unwrap());
+            let n_batches: usize = answer
+                .get_item("n_batches")
+                .unwrap()
+                .unwrap()
+                .extract()
+                .unwrap();
+            let singletons: usize = answer
+                .get_item("singletons")
+                .unwrap()
+                .unwrap()
+                .extract()
+                .unwrap();
+            // three animals share the one pattern of both times, so the variance has one batch
+            assert_eq!(n_batches, 1);
+            assert_eq!(singletons, 0);
+        });
+    }
+
+    /// The `parameters` entry of a sparse answer as a name to values mapping.
+    fn sparse_parameters(answer: &Bound<'_, PyDict>) -> Vec<(String, Vec<f64>)> {
+        let parameters = answer.get_item("parameters").unwrap().unwrap();
+        let parameters = parameters.cast::<PyDict>().unwrap();
+        parameters
+            .iter()
+            .map(|(name, values)| {
+                let values = values.cast::<PyArray1<f64>>().unwrap().readonly();
+                (name.extract().unwrap(), values.as_array().to_vec())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_empty_sparse_shape_still_carries_the_batch_counts() {
+        Python::attach(|py| {
+            let request = sparse_request(py, "batch");
+            request
+                .set_item("values", PyArray1::from_slice(py, &[] as &[f64]))
+                .unwrap();
+            request.set_item("n_rows", 0).unwrap();
+            let answer = nca_sparse(py, &request).unwrap();
+            for key in ["n_batches", "singletons"] {
+                let count: usize = answer.get_item(key).unwrap().unwrap().extract().unwrap();
+                assert_eq!(count, 0, "{key}");
+            }
+            let parameters = sparse_parameters(&answer);
+            assert_eq!(parameters.len(), 7);
+            for (name, values) in parameters {
+                assert!(values.iter().all(|v| v.is_nan()), "{name}: {values:?}");
+            }
+        });
+    }
+
+    #[test]
+    fn a_design_of_single_animal_patterns_reports_its_singletons() {
+        Python::attach(|py| {
+            let request = sparse_request(py, "batch");
+            let nan = f64::NAN;
+            let v = [1.0, nan, nan, nan, 0.5, nan, nan, nan, 0.2];
+            request
+                .set_item("times", PyArray1::from_slice(py, &[1.0, 2.0, 3.0]))
+                .unwrap();
+            request
+                .set_item("values", PyArray1::from_slice(py, &v))
+                .unwrap();
+            request.set_item("n_cols", 3).unwrap();
+            let answer = nca_sparse(py, &request).unwrap();
+            let count =
+                |key: &str| -> usize { answer.get_item(key).unwrap().unwrap().extract().unwrap() };
+            assert_eq!((count("n_batches"), count("singletons")), (3, 3));
+            for (name, values) in sparse_parameters(&answer) {
+                if name == "auc_last_se" || name == "auc_last_df" {
+                    assert!(values[0].is_nan(), "{name}");
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn a_sparse_request_without_values_is_a_key_error() {
+        Python::attach(|py| {
+            let request = sparse_request(py, "batch");
+            request.del_item("values").unwrap();
+            let err = nca_sparse(py, &request).unwrap_err();
+            assert!(err.is_instance_of::<PyKeyError>(py), "{err}");
+            assert!(err.value(py).to_string().contains("nca_sparse"));
+        });
+    }
+
+    #[test]
+    fn a_sparse_request_whose_design_is_unknown_is_a_value_error() {
+        Python::attach(|py| {
+            let err = nca_sparse(py, &sparse_request(py, "bogus")).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+        });
+    }
+
+    #[test]
+    fn a_sparse_request_of_the_wrong_length_is_a_value_error() {
+        Python::attach(|py| {
+            let request = sparse_request(py, "batch");
+            request.set_item("n_cols", 5).unwrap();
+            let err = nca_sparse(py, &request).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+        });
+    }
+
     #[test]
     fn a_missing_key_names_the_request_it_belongs_to() {
         // one helper reads the required keys of all three entry points, and its message has to
@@ -1179,6 +1443,169 @@ mod tests {
             let message = err.value(py).to_string();
             assert!(message.contains(TSS_REQUEST), "{message}");
             assert!(!message.contains(contract), "{message}");
+        });
+    }
+
+    /// A request of three collections of a plasma-free oral excretion.
+    fn urine_request<'py>(py: Python<'py>) -> Bound<'py, PyDict> {
+        let request = PyDict::new(py);
+        let arr = |v: &[f64]| PyArray1::from_slice(py, v);
+        request.set_item("start", arr(&[0.0, 2.0, 4.0])).unwrap();
+        request.set_item("end", arr(&[2.0, 4.0, 8.0])).unwrap();
+        request.set_item("amount", arr(&[1.0, 2.0, 1.5])).unwrap();
+        request
+            .set_item("volume", arr(&[100.0, 80.0, 120.0]))
+            .unwrap();
+        request.set_item("unit", "mg").unwrap();
+        request.set_item("time_unit", "h").unwrap();
+        request.set_item("volume_unit", "ml").unwrap();
+        request.set_item("route", "oral").unwrap();
+        request.set_item("dose_amount", py.None()).unwrap();
+        request.set_item("dose_unit", py.None()).unwrap();
+        request.set_item("area", py.None()).unwrap();
+        request.set_item("area_unit", py.None()).unwrap();
+        request.set_item("options", options_dict(py)).unwrap();
+        request
+    }
+
+    /// The first value of the parameter `name` of an answer.
+    fn urine_parameter(answer: &Bound<'_, PyDict>, name: &str) -> f64 {
+        sparse_parameters(answer)
+            .into_iter()
+            .find(|(n, _)| n == name)
+            .unwrap_or_else(|| panic!("no parameter {name}"))
+            .1[0]
+    }
+
+    #[test]
+    fn a_urine_request_answers_the_rate_over_the_collections() {
+        Python::attach(|py| {
+            let answer = nca_urine(py, &urine_request(py)).unwrap();
+            let points = answer.get_item("point_variables").unwrap().unwrap();
+            let rate = points
+                .cast::<PyDict>()
+                .unwrap()
+                .get_item("rate")
+                .unwrap()
+                .unwrap();
+            let rate = rate.cast::<PyDict>().unwrap();
+            let dim: String = rate.get_item("dim").unwrap().unwrap().extract().unwrap();
+            let size: usize = rate.get_item("size").unwrap().unwrap().extract().unwrap();
+            assert_eq!((dim.as_str(), size), ("collection", 3));
+            // 300 ml, reported in liter
+            assert!((urine_parameter(&answer, "vol_ur") - 0.3).abs() < 1e-12);
+        });
+    }
+
+    #[test]
+    fn a_urine_request_without_volumes_has_no_urine_volume() {
+        Python::attach(|py| {
+            let request = urine_request(py);
+            request.set_item("volume", py.None()).unwrap();
+            let answer = nca_urine(py, &request).unwrap();
+            assert!(urine_parameter(&answer, "vol_ur").is_nan());
+        });
+    }
+
+    #[test]
+    fn a_urine_request_with_nan_volumes_has_a_zero_urine_volume() {
+        Python::attach(|py| {
+            let request = urine_request(py);
+            let nan = PyArray1::from_slice(py, &[f64::NAN; 3]);
+            request.set_item("volume", nan).unwrap();
+            let answer = nca_urine(py, &request).unwrap();
+            assert_eq!(urine_parameter(&answer, "vol_ur"), 0.0);
+        });
+    }
+
+    #[test]
+    fn a_urine_request_without_an_amount_is_a_value_error() {
+        Python::attach(|py| {
+            let request = urine_request(py);
+            request
+                .set_item("amount", PyArray1::from_slice(py, &[] as &[f64]))
+                .unwrap();
+            let err = nca_urine(py, &request).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py));
+            let absent = urine_request(py);
+            absent.del_item("amount").unwrap();
+            let err = nca_urine(py, &absent).unwrap_err();
+            assert!(err.is_instance_of::<PyKeyError>(py), "{err}");
+        });
+    }
+
+    #[test]
+    fn a_urine_request_with_overlapping_collections_is_a_value_error() {
+        Python::attach(|py| {
+            let request = urine_request(py);
+            request
+                .set_item("end", PyArray1::from_slice(py, &[3.0, 4.0, 8.0]))
+                .unwrap();
+            let err = nca_urine(py, &request).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py));
+        });
+    }
+
+    #[test]
+    fn a_urine_request_whose_route_is_unknown_is_a_value_error() {
+        Python::attach(|py| {
+            let request = urine_request(py);
+            request.set_item("route", "bogus").unwrap();
+            let err = nca_urine(py, &request).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py));
+        });
+    }
+
+    #[test]
+    fn a_urine_request_in_a_unit_the_registry_cannot_read_is_unsupported() {
+        Python::attach(|py| {
+            let request = urine_request(py);
+            request.set_item("unit", "grain").unwrap();
+            let err = nca_urine(py, &request).unwrap_err();
+            assert!(err.is_instance_of::<UnsupportedError>(py), "{err}");
+        });
+    }
+
+    #[test]
+    fn a_sparse_request_in_a_unit_the_registry_cannot_read_is_unsupported() {
+        Python::attach(|py| {
+            let request = sparse_request(py, "batch");
+            request.set_item("unit", "grain").unwrap();
+            let err = nca_sparse(py, &request).unwrap_err();
+            assert!(err.is_instance_of::<UnsupportedError>(py), "{err}");
+        });
+    }
+
+    #[test]
+    fn a_kernel_rejection_of_a_sparse_request_is_a_value_error_through_the_helper() {
+        Python::attach(|py| {
+            // serial design with one animal of two samples: it parses, then the kernel refuses
+            // with `KernelError::Sparse`
+            let request = sparse_request(py, "serial");
+            request.set_item("n_rows", 1).unwrap();
+            request
+                .set_item("values", PyArray1::from_slice(py, &[1.0, 0.5]))
+                .unwrap();
+            let err = nca_sparse(py, &request).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+        });
+    }
+
+    #[test]
+    fn a_kernel_rejection_of_a_urine_request_is_a_value_error_through_the_helper() {
+        Python::attach(|py| {
+            // parses and passes `checked()`; the core refuses a dose of another dimension than
+            // the amounts with `KernelError::Urine`
+            let request = urine_request(py);
+            request.set_item("dose_amount", 1.0).unwrap();
+            request.set_item("dose_unit", "h").unwrap();
+            let err = nca_urine(py, &request).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
         });
     }
 }

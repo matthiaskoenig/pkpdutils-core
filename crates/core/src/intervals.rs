@@ -740,7 +740,7 @@ mod tests {
                 }
             })
             .collect();
-        let result = result_of(&batch, &NcaOptions::default(), &rows, &[]).unwrap();
+        let result = result_of(&batch, &NcaOptions::default(), &rows, &[], None, None).unwrap();
         let start = result
             .point_variables
             .iter()
@@ -1394,7 +1394,7 @@ mod tests {
         };
         let emitted = |batch: &Batch| -> Vec<String> {
             let rows = [row(10.0)];
-            let result = result_of(batch, &NcaOptions::default(), &rows, &[]).unwrap();
+            let result = result_of(batch, &NcaOptions::default(), &rows, &[], None, None).unwrap();
             result
                 .point_variables
                 .iter()

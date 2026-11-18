@@ -188,7 +188,7 @@ fn route_name(route: Route) -> &'static str {
 }
 
 /// The route of its name in `batch/1`.
-fn route_named(key: &str, name: &str) -> PyResult<Route> {
+pub(crate) fn route_named(key: &str, name: &str) -> PyResult<Route> {
     Route::ALL
         .iter()
         .copied()

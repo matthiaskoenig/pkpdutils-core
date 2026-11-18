@@ -5,8 +5,10 @@ pub mod enums;
 pub mod nonfinite;
 pub mod options;
 pub mod result;
+pub mod sparse;
 pub mod summary;
 pub mod tss;
+pub mod urine;
 pub mod window;
 
 pub use batch::{Batch, Coordinate, Dosing, SampleCoordinate};
@@ -19,8 +21,10 @@ pub use result::{
     AnalysisRequest, AnalysisResult, Attributes, BooleanColumn, ParameterColumn, PointVariable,
     TextColumn,
 };
+pub use sparse::{SparseAnswer, SparseDesign, SparseRequest};
 pub use summary::{SummaryAnswer, SummaryRequest};
 pub use tss::{TssAnswer, TssMethod, TssRequest};
+pub use urine::{CheckedUrine, UrineRequest};
 pub use window::WindowLabel;
 
 /// The contract of an analysis request and its result.
