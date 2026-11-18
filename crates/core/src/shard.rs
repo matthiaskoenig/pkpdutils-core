@@ -27,7 +27,6 @@
 //! thread. [`SHARD_WORK_THRESHOLD`] counts the work instead, rows times time points, and the
 //! figure comes from the measurement in `BENCHMARKS.md`.
 
-use crate::assemble::RowResult;
 use crate::parameters::Scratch;
 
 /// The work of a batch below which the automatic plan is a single shard.
@@ -127,7 +126,11 @@ pub(crate) fn shard_rows(rows: usize, shards: usize) -> usize {
     rows.div_ceil(shards.max(1)).max(1)
 }
 
-/// The parameters of every row of a batch, in the row order of the batch.
+/// What `row` answers for every row of a batch, in the row order of the batch.
+///
+/// The answer of a row is whatever `row` returns: the parameters of the row for an analysis, the
+/// parameters of a replicate for the bootstrap and the propagated standard errors of a row for
+/// the delta method, which all shard the same way and differ only in what one row costs.
 ///
 /// `row` computes one row into the [`Scratch`] it is given, which it may overwrite: a shard
 /// reuses one set of buffers for every row it holds, so the kernel allocates per shard and not
@@ -136,9 +139,10 @@ pub(crate) fn shard_rows(rows: usize, shards: usize) -> usize {
 /// never touches the pool at all, so a host which parallelizes outside the kernel does not even
 /// start it. Row `i` of the answer is `row(i, ..)` in every one of those cases, which is what
 /// keeps them bit identical.
-pub(crate) fn rows_of<F>(n_rows: usize, n_time: usize, shards: usize, row: F) -> Vec<RowResult>
+pub(crate) fn rows_of<T, F>(n_rows: usize, n_time: usize, shards: usize, row: F) -> Vec<T>
 where
-    F: Fn(usize, &mut Scratch) -> RowResult + Send + Sync,
+    T: Send,
+    F: Fn(usize, &mut Scratch) -> T + Send + Sync,
 {
     let per_shard = shard_rows(n_rows, shards);
     #[cfg(feature = "parallel")]
@@ -149,9 +153,10 @@ where
 }
 
 /// The shards of a plan, one after the other in the calling thread.
-fn in_order<F>(n_rows: usize, n_time: usize, per_shard: usize, row: &F) -> Vec<RowResult>
+fn in_order<T, F>(n_rows: usize, n_time: usize, per_shard: usize, row: &F) -> Vec<T>
 where
-    F: Fn(usize, &mut Scratch) -> RowResult + Send + Sync,
+    T: Send,
+    F: Fn(usize, &mut Scratch) -> T + Send + Sync,
 {
     let mut out = Vec::with_capacity(n_rows);
     for first in (0..n_rows).step_by(per_shard.max(1)) {
@@ -173,9 +178,10 @@ where
 /// still run several shards on one thread, which is the point of cutting more of them than there
 /// are threads.
 #[cfg(feature = "parallel")]
-fn in_parallel<F>(n_rows: usize, n_time: usize, per_shard: usize, row: &F) -> Vec<RowResult>
+fn in_parallel<T, F>(n_rows: usize, n_time: usize, per_shard: usize, row: &F) -> Vec<T>
 where
-    F: Fn(usize, &mut Scratch) -> RowResult + Send + Sync,
+    T: Send,
+    F: Fn(usize, &mut Scratch) -> T + Send + Sync,
 {
     use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 

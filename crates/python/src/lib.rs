@@ -545,6 +545,79 @@ fn student_t_sf<'py>(
     map_scalar_or_array(py, t, move |t| kernel::student_t_sf(t, df))
 }
 
+/// The standard normal draws of a range of flat indices of the bootstrap.
+///
+/// This exists so that a host which analyses a batch itself draws the same numbers the kernel
+/// would have drawn for it. The draws are a pure function of the seed and the index, so a caller
+/// asks for any range in any order and in any number of pieces and gets the same stream: a host
+/// streams a large batch in chunks instead of materializing `n_rows * n_boot * n_time` floats,
+/// and a shard draws for its own rows alone.
+///
+/// `seed` is the seed of the bootstrap, every value of which is a seed, `0` included: the kernel
+/// reads no entropy, on any target, so a host which wants an arbitrary seed draws it from its own
+/// and passes it. The index is the flat position in the C order of `(n_rows, n_boot, n_time)`,
+/// which is the order `pkpdutils.nca.uncertainty.resample_values` draws in, and a point whose
+/// spread is not usable still consumes its draw, because python draws for every point and masks
+/// afterwards.
+///
+/// The draws are not numpy's and are not meant to be: numpy promises its stream only on the same
+/// build, in the same environment, on the same machine, and reserves the right to change a
+/// distribution method, while these are the same numbers on every platform, in the browser and
+/// across numpy releases.
+///
+/// # Errors
+///
+/// A `ValueError` for a `count` above [`NORMALS_CEILING`], which is a request a host should be
+/// told about rather than have the allocator answer, and for a range whose end does not fit
+/// `u64`.
+#[pyfunction]
+#[pyo3(signature = (seed, start, count))]
+fn bootstrap_normals<'py>(
+    py: Python<'py>,
+    seed: u64,
+    start: u64,
+    count: usize,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    checked_range(start, count).into_py_result()?;
+    let mut out = vec![0.0f64; count];
+    let draws = kernel::Draws::new(seed);
+    py.detach(|| draws.normals_into(start, &mut out));
+    Ok(PyArray1::from_vec(py, out))
+}
+
+/// Whether the kernel hands out this range in one call.
+///
+/// The guard is a function of its own so that the boundary is tested without drawing 16 Mi of
+/// normals: the condition is one comparison and the test of a one line condition should not cost
+/// 128 MB and eight seconds of every run of the suite.
+///
+/// # Errors
+///
+/// [`kernel::KernelError::Options`] for a `count` above [`NORMALS_CEILING`] and for a range whose
+/// end does not fit `u64`.
+fn checked_range(start: u64, count: usize) -> Result<(), kernel::KernelError> {
+    if count > NORMALS_CEILING {
+        return Err(kernel::KernelError::Options(format!(
+            "a request of {count} draws is above the {NORMALS_CEILING} of one call, ask for the \
+             range in pieces: the draws of a piece are those of the whole"
+        )));
+    }
+    if start.checked_add(count as u64).is_none() {
+        return Err(kernel::KernelError::Options(format!(
+            "the draws {start} to {start} plus {count} run past the end of the index"
+        )));
+    }
+    Ok(())
+}
+
+/// The most draws one call of [`bootstrap_normals`] hands out, 16 Mi of them, which is 128 MB.
+///
+/// The ceiling is a message rather than a limit of the generator: the draws of a range are the
+/// draws of its pieces, so a host which needs more asks for more pieces, and the one which asked
+/// for the whole `n_rows * n_boot * n_time` of a thousand group curves learns that from a
+/// `ValueError` instead of from the allocator.
+pub(crate) const NORMALS_CEILING: usize = 16 * 1024 * 1024;
+
 /// Run `f` with the unwind boundary of the extension around it.
 ///
 /// A panic which crosses into pyo3 aborts the process, so the user of a python package would
@@ -649,6 +722,7 @@ fn pkpdutils_core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(time_to_steady_state, module)?)?;
     module.add_function(wrap_pyfunction!(nca_sparse, module)?)?;
     module.add_function(wrap_pyfunction!(nca_urine, module)?)?;
+    module.add_function(wrap_pyfunction!(bootstrap_normals, module)?)?;
     module.add_function(wrap_pyfunction!(normal_isf, module)?)?;
     module.add_function(wrap_pyfunction!(student_t_isf, module)?)?;
     module.add_function(wrap_pyfunction!(student_t_sf, module)?)?;
@@ -1092,6 +1166,75 @@ mod tests {
             // the kernel's own text says what happened once: a message which says it twice is
             // what a prefix repeating the variant's `Display` reads like
             assert_eq!(message.matches("built a result").count(), 1, "{message}");
+        });
+    }
+
+    /// The values of a returned array of draws.
+    fn drawn(array: &Bound<'_, PyArray1<f64>>) -> Vec<f64> {
+        array
+            .readonly()
+            .as_slice()
+            .expect("the array is contiguous")
+            .to_vec()
+    }
+
+    #[test]
+    fn the_draws_entry_point_hands_out_the_indices_it_is_asked_for() {
+        Python::attach(|py| {
+            let whole = drawn(&bootstrap_normals(py, 7, 0, 32).unwrap());
+            assert_eq!(whole.len(), 32);
+            assert!(whole.iter().all(|v| v.is_finite()), "{whole:?}");
+
+            // the same range in pieces, none of them a multiple of the block of four
+            let mut pieces = Vec::new();
+            for (start, count) in [(0u64, 13usize), (13, 7), (20, 12)] {
+                pieces.extend(drawn(&bootstrap_normals(py, 7, start, count).unwrap()));
+            }
+            assert_eq!(pieces, whole, "the draws of a piece are those of the whole");
+
+            // a range which starts in the middle of the stream is the slice it names
+            let middle = drawn(&bootstrap_normals(py, 7, 20, 5).unwrap());
+            assert_eq!(middle, whole[20..25].to_vec());
+
+            // no draws is an empty array and not an error
+            assert!(drawn(&bootstrap_normals(py, 7, 0, 0).unwrap()).is_empty());
+        });
+    }
+
+    #[test]
+    fn a_seed_of_zero_is_the_seed_it_says() {
+        Python::attach(|py| {
+            // a host which resolved `seed=None` to a drawn seed may well draw 0, and a kernel
+            // which read 0 as "no seed" would redraw and break the one guarantee of the design
+            let zero = drawn(&bootstrap_normals(py, 0, 0, 8).unwrap());
+            assert_eq!(zero, drawn(&bootstrap_normals(py, 0, 0, 8).unwrap()));
+            assert_ne!(zero, drawn(&bootstrap_normals(py, 1, 0, 8).unwrap()));
+            assert_ne!(zero, drawn(&bootstrap_normals(py, u64::MAX, 0, 8).unwrap()));
+        });
+    }
+
+    #[test]
+    fn a_range_the_kernel_will_not_hand_out_in_one_call_is_a_value_error() {
+        Python::attach(|py| {
+            let err = bootstrap_normals(py, 1, 0, NORMALS_CEILING + 1).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+            let message = err.to_string();
+            assert!(message.contains(&NORMALS_CEILING.to_string()), "{message}");
+            assert!(message.contains("in pieces"), "{message}");
+
+            // the ceiling itself is allowed, which is what makes the message a boundary and
+            // not an off by one. It is asserted on the guard rather than through the entry
+            // point, so that pinning a one line condition does not cost 128 MB of draws
+            assert!(checked_range(0, NORMALS_CEILING).is_ok());
+            assert!(checked_range(0, NORMALS_CEILING + 1).is_err());
+            assert!(checked_range(u64::MAX - 8, 8).is_ok());
+            assert!(checked_range(u64::MAX - 7, 8).is_err());
+
+            // a range whose end does not fit the index is refused rather than wrapped
+            let err = bootstrap_normals(py, 1, u64::MAX - 2, 8).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(err.to_string().contains("past the end"), "{err}");
         });
     }
 

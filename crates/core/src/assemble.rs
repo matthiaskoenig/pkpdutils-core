@@ -117,13 +117,7 @@ pub(crate) fn result_of(
     amount: Option<&str>,
     volume: Option<&str>,
 ) -> Result<AnalysisResult, KernelError> {
-    let context = UnitContext {
-        unit: &batch.unit,
-        time: &batch.time_unit,
-        dose: batch.dose_unit.as_deref(),
-        amount,
-        volume,
-    };
+    let context = context_of(batch, amount, volume);
     let has_dose = batch.max_doses > 0;
     let n_samples = rows.len();
     let mut parameters = parameter_columns(rows, has_dose, &context)?;
@@ -392,6 +386,56 @@ fn acceptance_variables(n_samples: usize) -> Vec<BooleanColumn> {
             values: vec![false; n_samples],
         },
     ]
+}
+
+/// The units a parameter expression of this batch resolves against.
+///
+/// `amount` and `volume` are the units of an excreted amount and of a collected volume, which a
+/// concentration analysis does not have and passes as `None`.
+pub(crate) fn context_of<'a>(
+    batch: &'a Batch,
+    amount: Option<&'a str>,
+    volume: Option<&'a str>,
+) -> UnitContext<'a> {
+    UnitContext {
+        unit: &batch.unit,
+        time: &batch.time_unit,
+        dose: batch.dose_unit.as_deref(),
+        amount,
+        volume,
+    }
+}
+
+/// The factor every column of a result was multiplied by, in the order of the columns.
+///
+/// The columns of a result are reported in the canonical unit of their parameter and not in the
+/// unit the kernel computed them in: a clearance in `ml/h` is reported in `l/h`, a thousand
+/// times the number the core produced ([`unit_of`]). Anything derived from the parameters of a
+/// **replicate** or of a **perturbed** curve - the whole uncertainty of
+/// [`crate::uncertainty`] - therefore has to be scaled the same way before it is compared with
+/// an estimate of the result, which is what this gives it: one factor per column, by position,
+/// `1.0` for a column which is no parameter of [`PARAMETERS`] (the subject count).
+///
+/// # Errors
+///
+/// Whatever [`unit_of`] refuses, which the assembly of the very same columns has already
+/// answered: in practice this cannot fail where `result_of` succeeded.
+pub(crate) fn factors_of(
+    columns: &[ParameterColumn],
+    context: &UnitContext,
+) -> Result<Vec<f64>, KernelError> {
+    columns
+        .iter()
+        .map(|column| {
+            match PARAMETERS
+                .iter()
+                .find(|parameter| parameter.name == column.name)
+            {
+                None => Ok(1.0),
+                Some(parameter) => Ok(unit_of(parameter.name, parameter.unit, context)?.1),
+            }
+        })
+        .collect()
 }
 
 /// The unit of one variable and the factor from the unit it was computed in to it.

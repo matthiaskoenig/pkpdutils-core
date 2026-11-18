@@ -1119,8 +1119,8 @@ mod tests {
         let single_spread = batch_with_spread();
         let single = batch(1);
 
-        // every refusal at once: the options trip four of the five conditions and the batch
-        // the other. Each one is taken away in turn, so the next check of the kernel is
+        // every refusal at once: the options trip four of the five conditions and the spread
+        // of the batch the other. Each one is taken away in turn, so the next check of the kernel is
         // the one which has to fire and every adjacent pair of the two orders is pinned, not
         // only the first. The text has to match the kernel's, which is what makes the order a
         // thing this binding can get wrong quietly
@@ -1155,18 +1155,27 @@ mod tests {
         assert!(partial.contains("NcaOptions::partial_aucs"), "{partial}");
         options.partial_aucs.clear();
 
-        let uncertainty = agreed(&single_spread, &options);
-        assert!(
-            uncertainty.contains("uncertainty of a group curve"),
-            "{uncertainty}"
-        );
-        // and the spread is what trips the fourth
+        // the spread of the batch and the open seed trip the fourth together
+        let seed = agreed(&single_spread, &options);
+        assert!(seed.contains("NcaOptions::seed"), "{seed}");
+        options.seed = Some(7);
+
         let units = agreed(&single, &options);
         assert!(units.contains("NcaOptions::units"), "{units}");
         options.units.clear();
 
         assert_eq!(unsupported_reason(&single, &options), None);
         assert!(analyze_batch(&single, &options).is_ok());
+        // the group batch of the chain above has no refusal left once the seed is given, and
+        // what the kernel answers it with is an error of its spread and not a refusal: it
+        // carries `sd` without the counts the standard error of the mean is derived from,
+        // which is what python raises for too. A host must not read that as a refusal and
+        // take its own path, so the predicate stays silent and the error arrives
+        assert_eq!(unsupported_reason(&single_spread, &options), None);
+        assert!(matches!(
+            analyze_batch(&single_spread, &options),
+            Err(KernelError::Batch(_))
+        ));
     }
 
     #[test]
