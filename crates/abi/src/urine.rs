@@ -54,7 +54,7 @@ impl UrineRequest {
     /// The numerics consume the request through this method, since the collections of a request
     /// are not necessarily in order. An array whose length differs from `start` is left alone,
     /// which [`validate`](Self::validate) rejects.
-    pub fn sorted(&self) -> Self {
+    pub(crate) fn sorted(&self) -> Self {
         let n = self.start.len();
         let mut order: Vec<usize> = (0..n).collect();
         order.sort_by(|&i, &j| {

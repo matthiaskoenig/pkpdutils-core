@@ -43,7 +43,7 @@ const PAIRWISE_BLOCK: usize = 128;
 /// The sum of numpy's `np.sum` over a contiguous array: pairwise, eight accumulators per block.
 ///
 /// Plain left to right summation differs from it in the last bits above eight terms.
-fn numpy_sum(a: &[f64]) -> f64 {
+pub(crate) fn numpy_sum(a: &[f64]) -> f64 {
     let n = a.len();
     if n < 8 {
         let mut result = 0.0;

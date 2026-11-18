@@ -25,11 +25,13 @@ mod shard;
 mod sparse;
 mod stats;
 mod summarize;
+mod urine;
 
 pub use crate::sparse::nca_sparse;
 pub use crate::stats::{normal_isf, student_t_isf, student_t_sf};
 pub use crate::summarize::summarize;
 pub use crate::tss::time_to_steady_state;
+pub use crate::urine::nca_urine;
 mod steady_state;
 mod terminal;
 mod tss;
@@ -100,6 +102,10 @@ pub enum KernelError {
     /// `SparseRequest::validate` gave.
     #[error("the sparse request is malformed: {0}")]
     Sparse(String),
+    /// A urine request which is malformed, whose recovered amount cannot be compared with the
+    /// dose, or which carries a dose without its unit or the reverse.
+    #[error("the urine analysis is not possible: {0}")]
+    Urine(String),
     /// The kernel built a result which is not well formed, which is a bug in this build and
     /// not an answer to anything the caller sent.
     #[error("the kernel built a result which is not readable: {0}")]
@@ -215,7 +221,7 @@ fn analyze_checked(
         })
     };
 
-    let result = result_of(batch, options, &rows, &candidates)?;
+    let result = result_of(batch, options, &rows, &candidates, None, None)?;
     // unreachable after `batch.validate`, which is what every length here comes from, and kept
     // because a result the host cannot read is worth a named error rather than a surprise. The
     // batch validated, so the error names this build and not the input.

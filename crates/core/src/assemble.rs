@@ -99,6 +99,10 @@ const CANDIDATE_VARIABLES: [CandidateVariable; 3] = [
 /// `candidates` are the windows the terminal selection could have chosen from, which only an
 /// analysis of a single row reports and which the caller therefore collects only for one.
 ///
+/// `amount` and `volume` are the units of an excreted amount and of a collected volume, which
+/// resolve the placeholders `{amount}` and `{volume}`; the concentration analysis has neither
+/// and passes `None`.
+///
 /// # Errors
 ///
 /// Whatever [`unit_of`] refuses: the units of a batch are no part of `Batch::validate`, so a
@@ -110,14 +114,15 @@ pub(crate) fn result_of(
     options: &NcaOptions,
     rows: &[RowResult],
     candidates: &[Candidate],
+    amount: Option<&str>,
+    volume: Option<&str>,
 ) -> Result<AnalysisResult, KernelError> {
     let context = UnitContext {
         unit: &batch.unit,
         time: &batch.time_unit,
         dose: batch.dose_unit.as_deref(),
-        // the urinary excretion analysis is another plan and another front end
-        amount: None,
-        volume: None,
+        amount,
+        volume,
     };
     let has_dose = batch.max_doses > 0;
     let n_samples = rows.len();
