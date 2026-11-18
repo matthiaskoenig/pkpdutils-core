@@ -115,6 +115,68 @@ pub enum KernelError {
     Contract(#[from] pkpdutils_abi::ContractError),
 }
 
+/// What a host must do about a [`KernelError`], which is three things and not nine.
+///
+/// The errors are the kernel's own vocabulary and grow with every plan; what a host does about
+/// one does not. A refusal is work to run somewhere else, a malformed input is a defect of the
+/// caller or of the data to fix, and an internal error is a bug of this build to report, and no
+/// host of any kernel needs a fourth answer.
+///
+/// The classification belongs here and not in a host because [`KernelError`] is
+/// `#[non_exhaustive]`: a host can only match it with a `_` arm, so a host which routed on the
+/// variants would hand a variant added by a later plan whatever its `_` arm does, quietly and
+/// for every user. [`KernelError::class`] is matched exhaustively inside this crate instead,
+/// where the attribute does not apply, so the compiler refuses a new variant until someone has
+/// decided which of the three answers it is. This enumeration is therefore deliberately not
+/// `#[non_exhaustive]`: a host matches all three arms and must keep doing so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ErrorClass {
+    /// The request is well formed and this build does not carry the analysis it asks for, so a
+    /// host whose own engine carries it runs it there. This is the one class a host answers by
+    /// doing the work another way, which is why the python binding gives it a type of its own
+    /// (`UnsupportedError`) rather than a sentence a caller would have to read.
+    Refused,
+    /// The request is malformed, or the peer speaks another contract than this build. The caller
+    /// and the kernel disagree about something one of the two has to fix.
+    ///
+    /// A malformed request is one no engine would answer. A contract mismatch is not of that
+    /// kind: it is a version skew of the two sides and not bad data, and a host whose own engine
+    /// speaks its own contract may well answer the request after all. It is this class and not
+    /// [`ErrorClass::Refused`] because a skew is a deployment to fix rather than work to route
+    /// elsewhere, and a host which fell back on it would hide the skew for as long as its own
+    /// engine kept answering.
+    Malformed,
+    /// The kernel built something it cannot read, which is a bug of this build and no answer to
+    /// anything the caller sent. A host reports it rather than handling it, and a host which
+    /// maps the classes onto its own error types must not give it the type it gives
+    /// [`ErrorClass::Malformed`], or a caller which catches bad input would swallow a kernel
+    /// bug.
+    Internal,
+}
+
+impl KernelError {
+    /// What a host must do about this error: see [`ErrorClass`].
+    ///
+    /// The match carries no `_` arm, which is the whole purpose of the method. A variant a later
+    /// plan adds does not compile until it is classified here, which is the one place a human
+    /// reading three lines can see every error of the kernel next to the answer it asks of a
+    /// host.
+    #[must_use]
+    pub fn class(&self) -> ErrorClass {
+        match self {
+            Self::Unsupported { .. } => ErrorClass::Refused,
+            Self::Batch(_)
+            | Self::Options(_)
+            | Self::Summary(_)
+            | Self::Tss(_)
+            | Self::Sparse(_)
+            | Self::Urine(_)
+            | Self::Contract(_) => ErrorClass::Malformed,
+            Self::Internal(_) => ErrorClass::Internal,
+        }
+    }
+}
+
 /// Analyse the batch of a request, after checking that the peer speaks this contract.
 ///
 /// The contract of the request and the contract of its batch are both checked, since a host may
@@ -1719,5 +1781,39 @@ mod tests {
             analyze(&foreign_batch),
             Err(KernelError::Contract(_))
         ));
+    }
+
+    #[test]
+    fn every_error_of_the_kernel_carries_the_answer_it_asks_of_a_host() {
+        // the classification is what a host routes on, so the three answers are pinned here
+        // rather than read off the variant names. The match of `class` carries no `_` arm, so a
+        // variant a later plan adds does not compile until it is classified; this test is what
+        // says the classification is still the one the hosts were written against.
+        let reason = "a reason".to_string();
+        let cases = [
+            (
+                KernelError::Unsupported {
+                    what: "the bootstrap".to_string(),
+                },
+                ErrorClass::Refused,
+            ),
+            (KernelError::Batch(reason.clone()), ErrorClass::Malformed),
+            (KernelError::Options(reason.clone()), ErrorClass::Malformed),
+            (KernelError::Summary(reason.clone()), ErrorClass::Malformed),
+            (KernelError::Tss(reason.clone()), ErrorClass::Malformed),
+            (KernelError::Sparse(reason.clone()), ErrorClass::Malformed),
+            (KernelError::Urine(reason.clone()), ErrorClass::Malformed),
+            (KernelError::Internal(reason), ErrorClass::Internal),
+        ];
+        for (error, class) in cases {
+            assert_eq!(error.class(), class, "{error}");
+        }
+
+        // the contract error is the one variant built from another type rather than from a
+        // string, and a peer which speaks another contract is a disagreement to fix
+        let foreign = KernelError::from(
+            check_contract("analysis/0", ANALYSIS_CONTRACT).expect_err("the contract is foreign"),
+        );
+        assert_eq!(foreign.class(), ErrorClass::Malformed, "{foreign}");
     }
 }
