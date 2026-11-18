@@ -11,6 +11,7 @@ Every number asserted here is written out from the formula it comes from, so tha
 states what the analysis should produce rather than what it did produce.
 """
 
+import importlib.machinery
 import importlib.metadata
 import math
 import subprocess
@@ -464,6 +465,40 @@ def test_the_wheel_is_built_against_the_stable_abi() -> None:
     assert tags, wheel
     for tag in tags:
         assert tag.startswith("cp313-abi3-"), f"{tag} is no abi3 tag of the 3.13 floor"
+
+
+def test_the_macos_wheel_carries_no_fixed_slot_allocator() -> None:
+    """The macOS wheel allocates through the system allocator, every other one through mimalloc.
+
+    On macOS mimalloc keeps the heap of a thread in two slots of the pthread TLS block which it
+    claims by compiled in number, so two extension modules which each link a copy of it hand
+    each other their heaps and corrupt them. The test suite of `sbmlsim`, which loads this module
+    next to `sbmlsim_core`, failed on macOS and only on macOS until this wheel stopped linking
+    one (sbmlsim#565); the `mod allocator` comment of `crates/python/src/lib.rs` is the long
+    version.
+
+    Both halves are asserted, so the test fails if a build loses mimalloc where it is wanted as
+    well as if it gains one where it corrupts: the attribute is what the compiled code says about
+    itself, and the bytes of the extension are what it actually links. mimalloc's symbols are
+    stripped from a release build but the texts of its own error messages are not. The two halves
+    are not equally strong: finding the string proves it is linked, while not finding it only
+    fails to prove it, so the macOS half rests on `__allocator__`, which is exact, and the byte
+    search is what makes the other platforms assert anything at all.
+    """
+    linked = sys.platform != "darwin"
+    assert pkpdutils_core.__allocator__ == ("mimalloc" if linked else "system")
+
+    suffixes = tuple(importlib.machinery.EXTENSION_SUFFIXES)
+    extensions = [
+        path
+        for directory in pkpdutils_core.__path__
+        for path in sorted(Path(directory).iterdir())
+        if path.name.endswith(suffixes)
+    ]
+    assert len(extensions) == 1, f"one extension module, not {extensions}"
+    assert (b"mimalloc" in extensions[0].read_bytes()) is linked, (
+        f"{extensions[0].name} and __allocator__ disagree about mimalloc"
+    )
 
 
 def test_the_wheel_summarizes_and_refuses_a_malformed_request_as_a_value_error() -> (

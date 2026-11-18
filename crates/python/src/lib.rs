@@ -11,7 +11,7 @@
 //! supports. It cannot be built for `wasm32`, which is why continuous integration excludes it
 //! from the wasm gates by name; the kernel it binds is checked there as before.
 
-/// The allocator of the extension module.
+/// The allocator of the extension module on every target but macOS.
 ///
 /// A batch of many rows and few points spends about a tenth of its time in the allocator, which
 /// is visible from outside the process: turning off glibc's thread cache
@@ -21,8 +21,50 @@
 /// size on that shape; a batch of few rows and many points is unaffected either way. Unlike the
 /// instruction set the wheel is compiled for, this is a choice a wheel is allowed to make: it
 /// travels inside the artifact and depends on nothing about the machine that installs it.
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+///
+/// On macOS it is not a choice this wheel is allowed to make, and the macOS wheel links no
+/// mimalloc at all. mimalloc keeps the heap of a thread in a thread local, and on macOS, where a
+/// first access to a `__thread` variable can call `malloc` and recurse into the allocator, it
+/// does not use one: it claims two slots of the pthread TLS block by compiled in number (108 and
+/// 109 in mimalloc v3, which is what `mimalloc 0.1` builds unless asked for v2, which claimed
+/// 89) and reads them with inline assembly off `tpidrro_el0`. The slots are process wide, so two
+/// extension modules which each link a copy of mimalloc own the same two: every allocation of
+/// the one reads the heap the other left in the slot, takes blocks out of the free lists of
+/// pages owned by a heap of the other instance without a lock, because the heap of a thread
+/// needs none, and frees blocks through a page map which never saw the arena they came from.
+/// What follows is heap corruption, and its symptom is anything at all: an impossible value, a
+/// dependency panicking on a state it cannot reach, a SIGBUS while a backtrace is symbolized.
+/// mimalloc's own header says it of the model it picks there, "This goes wrong though if the OS
+/// or a library uses the same fixed slot".
+///
+/// This is the fix of sbmlsim#565 and it was observed, not deduced. `sbmlsim-core` links the
+/// same mimalloc as its own `#[global_allocator]`, and the test suite of `sbmlsim`, which
+/// imports both extensions into one interpreter, failed on macOS with exactly those symptoms:
+/// 25 failures and 26 errors with both modules loaded, a clean run of the same commit with this
+/// module held back, and a clean run on linux x86_64, linux aarch64 and windows with both. Every
+/// other platform keeps mimalloc, because no other platform has the collision: the ELF targets
+/// give each shared object its own initial-exec TLS block and windows allocates a slot per
+/// instance with `TlsAlloc`. Pinning the other major version of mimalloc would only move the
+/// collision to whatever extension pins that one, and a wheel cannot know what else an
+/// interpreter will load, so on macOS the system allocator it is.
+///
+/// `pkpdutils_core.__allocator__` reports which of the two a build is, so that the question is
+/// answered by the artifact and not by this comment.
+#[cfg(not(target_os = "macos"))]
+mod allocator {
+    /// The value of `__allocator__` of the module.
+    pub const NAME: &str = "mimalloc";
+
+    #[global_allocator]
+    static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+}
+
+/// The allocator of the extension module on macOS: the system one, for the reason above.
+#[cfg(target_os = "macos")]
+mod allocator {
+    /// The value of `__allocator__` of the module.
+    pub const NAME: &str = "system";
+}
 
 mod convert;
 mod options;
@@ -543,8 +585,8 @@ fn kernel_error(error: kernel::KernelError) -> PyErr {
     }
 }
 
-/// The module `pkpdutils` imports: the two entry points, the refusal a host routes on and the
-/// version of this build.
+/// The module `pkpdutils` imports: the entry points, the refusal a host routes on, and the
+/// version and the allocator of this build.
 ///
 /// # Errors
 ///
@@ -553,6 +595,9 @@ fn kernel_error(error: kernel::KernelError) -> PyErr {
 #[pymodule]
 fn pkpdutils_core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    // the allocator this build routes its allocations through, which is not the same on every
+    // platform: see `mod allocator`
+    module.add("__allocator__", allocator::NAME)?;
     // by name, so that a host writes `except pkpdutils_core.UnsupportedError` rather than
     // matching on the text of a message
     module.add(
