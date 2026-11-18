@@ -26,6 +26,7 @@ mod shard;
 mod sparse;
 mod stats;
 mod summarize;
+mod uncertainty;
 mod urine;
 
 pub use crate::sparse::nca_sparse;

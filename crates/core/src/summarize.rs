@@ -63,12 +63,12 @@ fn pairwise_sum(a: &[f64]) -> f64 {
 
 /// `numpy.nanmean` of a row which has `count` values besides its `NaN`: `zeroed` is the row with
 /// every missing value as 0. `NaN` for a count of 0.
-fn mean_of(zeroed: &[f64], count: usize) -> f64 {
+pub(crate) fn mean_of(zeroed: &[f64], count: usize) -> f64 {
     pairwise_sum(zeroed) / count as f64
 }
 
 /// `numpy.nanvar(ddof=1)` of the same row, `NaN` below two values; `present` flags the values.
-fn variance_of(zeroed: &[f64], present: impl Fn(usize) -> bool, count: usize) -> f64 {
+pub(crate) fn variance_of(zeroed: &[f64], present: impl Fn(usize) -> bool, count: usize) -> f64 {
     if count < 2 {
         return f64::NAN;
     }
