@@ -161,7 +161,11 @@ create_exception!(
 /// - a `ValueError` carrying what the kernel refused the batch with: a malformed batch, doses
 ///   without a dose unit, options which contradict each other.
 ///
-/// A `RuntimeError` is the fourth and is a bug: see [`guarded`] and [`result_into_python`].
+/// A `RuntimeError` is the fourth outcome and is a bug of the kernel rather than an answer to
+/// the request: a panic ([`guarded`]), a result the binding cannot read
+/// ([`result_into_python`]), or a result the kernel itself refuses to hand over
+/// ([`kernel::ErrorClass::Internal`], mapped by [`kernel_error`]). A caller which catches
+/// `ValueError` as bad input catches none of the three, which is the point of the type.
 #[pyfunction]
 #[pyo3(signature = (batch, options, n_workers = None))]
 fn analyze_batch<'py>(
@@ -182,7 +186,7 @@ fn analyze_batch<'py>(
             Some(shards) => kernel::analyze_batch_in_shards(&batch, &options, shards),
         })
     })?;
-    let result = analysed.map_err(kernel_error)?;
+    let result = analysed.into_py_result()?;
     result_into_python(py, result)
 }
 
@@ -220,7 +224,7 @@ fn summarize<'py>(py: Python<'py>, request: &Bound<'py, PyDict>) -> PyResult<Bou
     let (n_vars, n_groups) = (request.n_vars, request.n_groups);
     let answer = py
         .detach(|| guarded(|| kernel::summarize(&request)))?
-        .map_err(kernel_error)?;
+        .into_py_result()?;
     let out = PyDict::new(py);
     for (name, column) in [
         ("mean", answer.mean),
@@ -299,7 +303,7 @@ fn time_to_steady_state<'py>(
     };
     let answer = py
         .detach(|| guarded(|| kernel::time_to_steady_state(&request)))?
-        .map_err(kernel_error)?;
+        .into_py_result()?;
     let out = PyDict::new(py);
     out.set_item("tss", PyArray1::from_vec(py, answer.tss))?;
     out.set_item("c_ss", PyArray1::from_vec(py, answer.c_ss))?;
@@ -352,7 +356,7 @@ fn nca_sparse<'py>(py: Python<'py>, request: &Bound<'py, PyDict>) -> PyResult<Bo
     };
     let answer = py
         .detach(|| guarded(|| kernel::nca_sparse(&request)))?
-        .map_err(kernel_error)?;
+        .into_py_result()?;
     let out = result_into_python(py, answer.result)?;
     out.set_item("n_batches", answer.n_batches)?;
     out.set_item("singletons", answer.singletons)?;
@@ -420,7 +424,7 @@ fn nca_urine<'py>(py: Python<'py>, request: &Bound<'py, PyDict>) -> PyResult<Bou
                 kernel::nca_urine(&checked)
             })
         })?
-        .map_err(kernel_error)?;
+        .into_py_result()?;
     result_into_python(py, answer)
 }
 
@@ -574,14 +578,49 @@ fn guarded<T>(f: impl FnOnce() -> T) -> PyResult<T> {
 
 /// The python exception of an error of the kernel, the one mapping of every entry point.
 ///
-/// A refusal of the kernel to carry an analysis, a unit its registry cannot read included, is
-/// the [`UnsupportedError`] a host routes on, whichever entry point raised it; everything else
-/// is a malformed request and a plain `ValueError`. For `analyze_batch` the predicate answers
-/// for the refusals before a row runs, so the first arm is there reached only for a unit.
+/// The three arms are the three classes of [`kernel::ErrorClass`] and nothing else, so this
+/// function cannot fall behind the kernel's vocabulary: a variant a later release of the kernel
+/// adds is classified there, inside the crate which defines it and under a match with no `_`
+/// arm, and arrives here already carrying the answer it asks for. A refusal of the kernel to
+/// carry an analysis, a unit its registry cannot read included, is the [`UnsupportedError`] a
+/// host routes on, whichever entry point raised it. A malformed request is a plain `ValueError`.
+/// An internal error is a `RuntimeError` of the family [`guarded`] and
+/// [`crate::result::result_into_python`] raise, since a caller which catches `ValueError` as bad
+/// input would otherwise swallow a bug of the kernel and read it as its own fault.
+///
+/// For `analyze_batch` the predicate answers for the refusals before a row runs, so the first
+/// arm is there reached only for a unit.
 fn kernel_error(error: kernel::KernelError) -> PyErr {
-    match error {
-        kernel::KernelError::Unsupported { .. } => unsupported(&error),
-        _ => PyValueError::new_err(error.to_string()),
+    match error.class() {
+        kernel::ErrorClass::Refused => unsupported(&error),
+        kernel::ErrorClass::Malformed => PyValueError::new_err(error.to_string()),
+        kernel::ErrorClass::Internal => PyRuntimeError::new_err(format!(
+            "pkpdutils-core: {error}. This is a bug of the kernel and not of the request it was \
+             given; please report it at {}",
+            env!("CARGO_PKG_REPOSITORY")
+        )),
+    }
+}
+
+/// The one idiom which turns an answer of the kernel into an answer of python.
+///
+/// Every entry point ends in `.into_py_result()?`, so the mapping of [`kernel_error`] is not a
+/// convention a sixth entry point can forget: a hand rolled `map_err(|e| PyValueError::new_err(
+/// e.to_string()))` is the mistake this trait exists to make unnecessary, and it would give a
+/// refusal a host routes on and a bug of the kernel both the type of bad input.
+pub(crate) trait IntoPyResult<T> {
+    /// The value, or the python exception of [`kernel_error`].
+    ///
+    /// # Errors
+    ///
+    /// The three of [`kernel_error`]: an [`UnsupportedError`] for a refusal, a `ValueError` for
+    /// a malformed request and a `RuntimeError` for a bug of the kernel.
+    fn into_py_result(self) -> PyResult<T>;
+}
+
+impl<T> IntoPyResult<T> for Result<T, kernel::KernelError> {
+    fn into_py_result(self) -> PyResult<T> {
+        self.map_err(kernel_error)
     }
 }
 
@@ -991,6 +1030,90 @@ mod tests {
             assert!(message.contains("the batch is not analysable"), "{message}");
             assert!(message.contains("cl_f"), "{message}");
         });
+    }
+
+    #[test]
+    fn the_three_classes_of_the_kernel_are_three_python_exceptions() {
+        // the mapping is the one thing a host's `except` clauses are written against, so each
+        // class is asserted here, through `into_py_result` and therefore through `kernel_error`.
+        // What this pins is the mapping and not the call sites: the two reachable classes are
+        // asserted through the entry points themselves by the tests of each of them, and
+        // `the_entry_points_cannot_bypass_the_one_mapping` is what says no entry point maps an
+        // error of the kernel its own way. `Internal` has no test through an entry point and
+        // cannot have one, since no request reaches it; that is what makes it a bug
+        Python::attach(|py| {
+            let refused: Result<(), kernel::KernelError> = Err(kernel::KernelError::Unsupported {
+                what: "the bootstrap".to_string(),
+            });
+            let err = refused.into_py_result().unwrap_err();
+            assert!(err.is_instance_of::<UnsupportedError>(py), "{err}");
+            // the refusal a host routes on stays a `ValueError` as well, which is what it was
+            // before it had a type of its own
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+
+            let malformed: Result<(), kernel::KernelError> =
+                Err(kernel::KernelError::Batch("two rows, one time".to_string()));
+            let err = malformed.into_py_result().unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+            assert!(!err.is_instance_of::<PyRuntimeError>(py), "{err}");
+
+            // a peer which speaks another contract is of that class as well, and it is the one
+            // variant the binding cannot produce through an entry point: the contract strings
+            // are this build's own, so only another host can disagree about them
+            let skewed: Result<(), kernel::KernelError> = Err(kernel::KernelError::from(
+                kernel::pkpdutils_abi::check_contract(
+                    "batch/0",
+                    kernel::pkpdutils_abi::BATCH_CONTRACT,
+                )
+                .expect_err("the contract is foreign"),
+            ));
+            let err = skewed.into_py_result().unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+            assert!(!err.is_instance_of::<PyRuntimeError>(py), "{err}");
+
+            // a bug of the kernel is no answer to the request, so it is neither the refusal a
+            // host routes on nor the bad input a host reports to its user: a caller which
+            // catches `ValueError` must not catch this one
+            let internal: Result<(), kernel::KernelError> = Err(kernel::KernelError::Internal(
+                "two sections claim the name cmax".to_string(),
+            ));
+            let err = internal.into_py_result().unwrap_err();
+            assert!(err.is_instance_of::<PyRuntimeError>(py), "{err}");
+            assert!(!err.is_instance_of::<PyValueError>(py), "{err}");
+            let message = err.to_string();
+            assert!(
+                message.contains("two sections claim the name cmax"),
+                "{message}"
+            );
+            assert!(message.contains("a bug of the kernel"), "{message}");
+            assert!(message.contains(env!("CARGO_PKG_REPOSITORY")), "{message}");
+            // the kernel's own text says what happened once: a message which says it twice is
+            // what a prefix repeating the variant's `Display` reads like
+            assert_eq!(message.matches("built a result").count(), 1, "{message}");
+        });
+    }
+
+    #[test]
+    fn the_entry_points_cannot_bypass_the_one_mapping() {
+        // `into_py_result` is the idiom because `kernel_error` called by hand is the mistake it
+        // exists to prevent: an entry point which wrote `map_err(|e| PyValueError::new_err(
+        // e.to_string()))` would give a refusal a host routes on and a bug of the kernel both
+        // the type of bad input, and nothing but this would notice. The needle is assembled
+        // from two literals so that this test does not match itself in the source it reads
+        let source = include_str!("lib.rs");
+        let by_hand = concat!("map_err(", "kernel_error)");
+        assert_eq!(
+            source.matches(by_hand).count(),
+            1,
+            "`{by_hand}` belongs in `IntoPyResult::into_py_result` alone, and is now in {} places",
+            source.matches(by_hand).count()
+        );
+        assert!(
+            source.contains(concat!("fn into_py", "_result(self) -> PyResult<T> {")),
+            "the one place it belongs is the trait implementation"
+        );
     }
 
     #[test]
