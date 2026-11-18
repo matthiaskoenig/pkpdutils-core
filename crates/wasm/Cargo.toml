@@ -22,8 +22,8 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 # `default-features = false` is how a wasm host builds the kernel: the `parallel` feature is
 # rayon, which compiles for both wasm targets but has no thread to run a shard on there
-pkpdutils-core = { path = "../core", version = "0.6.0", default-features = false }
-pkpdutils-abi = { path = "../abi", version = "0.6.0" }
+pkpdutils-core = { path = "../core", version = "0.7.0", default-features = false }
+pkpdutils-abi = { path = "../abi", version = "0.7.0" }
 serde_json.workspace = true
 
 [lints]

@@ -12,10 +12,23 @@ Write what a reader of the release needs: what changed, what it is worth where t
 
 1. branch off `develop`: `git switch -c release/x.y.z develop`
 2. write `release-notes/x.y.z.md`
-3. set `version` of `[workspace.package]` in `Cargo.toml`, set the same version in the `version` of every path dependency on a crate of this workspace (`pkpdutils-abi` and `pkpdutils-units` in `crates/core/Cargo.toml`, `pkpdutils-abi` and `pkpdutils-core` in `crates/python/Cargo.toml`), set the same version in `js/package.json`, and refresh `Cargo.lock` (`cargo metadata --format-version 1 > /dev/null`). Those pins are what a consumer of the published crates resolves against, so `cargo metadata` fails until they match the new version; `js/prepack.mjs` refuses to pack a package whose version is not the version of the crates, and `js/test/package.test.mjs` compares both against what the module reports.
-4. make sure everything passes: see [Checks](../README.md#checks)
-5. push the branch, open the pull request against `develop` and merge it once the checks are green
-6. tag the merged commit on `develop` and push the tag:
+3. set `version` of `[workspace.package]` in `Cargo.toml`, set the same version in the `version` of every path dependency on a crate of this workspace (`pkpdutils-abi` and `pkpdutils-units` in `crates/core/Cargo.toml`, `pkpdutils-abi` and `pkpdutils-core` in `crates/python/Cargo.toml`, `pkpdutils-abi` and `pkpdutils-core` in `crates/wasm/Cargo.toml`), set the same version in `js/package.json`, and refresh `Cargo.lock` (`cargo metadata --format-version 1 > /dev/null`). Those pins are what a consumer of the published crates resolves against, so `cargo metadata` fails until they match the new version; `js/prepack.mjs` refuses to pack a package whose version is not the version of the crates, and `js/test/package.test.mjs` compares both against what the module reports.
+4. regenerate `js/test/fixtures/cases.json`: its provenance names the version of the kernel which wrote it and `js/test/same_bits.test.mjs` compares that with what the module reports, so the fixture of the version before the bump fails the tests of the package. It takes the wheel of this checkout, because the script asks `pkpdutils_core` for the numbers and the one on PyPI is the previous release:
+
+    ```bash
+    uvx maturin build --release --locked -m crates/python/Cargo.toml
+    uv venv --python 3.14 .venv-release
+    uv pip install --python .venv-release/bin/python -e path/to/pkpdutils
+    uv pip install --python .venv-release/bin/python --no-deps --force-reinstall target/wheels/pkpdutils_core-x.y.z-*.whl
+    .venv-release/bin/python scripts/wasm_fixtures.py
+    ```
+
+    The interpreter of that environment is called directly and never through `uv run`, which resolves the dependencies of `pkpdutils` again and puts the released kernel back over the local wheel. Only the two provenance lines may change: a number which moves is a change of the analysis and belongs in the release notes.
+
+5. make sure everything passes: see [Checks](../README.md#checks)
+6. push the branch, open the pull request against `develop` and merge it once the checks are green
+7. for the release which first carries the npm package, publish it by hand now, from the merged `develop`: see [The npm package, and its first publish](#the-npm-package-and-its-first-publish). It goes before the tag, because the release of the tag needs the `npm` job.
+8. tag the merged commit on `develop` and push the tag:
 
     ```bash
     git switch develop

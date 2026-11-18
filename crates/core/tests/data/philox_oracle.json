@@ -1,6 +1,6 @@
 {
   "source": "numpy.random.Philox, which is Random123 philox4x64-10",
-  "numpy": "2.5.4",
+  "numpy": "2.5.5",
   "recipe": "word i = block(counter = i >> 2)[i & 3], key = [seed, 0]; numpy's counter is pre-incremented, so block 0 is its wrapped counter",
   "digest": "FNV-1a 64 over the little-endian bytes of the first 100000 words",
   "seeds": [
