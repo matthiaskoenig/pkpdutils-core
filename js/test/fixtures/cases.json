@@ -1,8 +1,8 @@
 {
   "source": "scripts/wasm_fixtures.py, the native build of this kernel; every number is the answer of pkpdutils_core.analyze_batch as its bits",
   "pkpdutils": "1.7.0",
-  "pkpdutils_core": "0.6.0",
-  "commit": "9e414847865fdab582ff721e1140e010951f4591",
+  "pkpdutils_core": "0.7.0",
+  "commit": "e88a61a81d8981743bf692d4c079a9c4d48473cc",
   "cases": [
     {
       "name": "single_dose",

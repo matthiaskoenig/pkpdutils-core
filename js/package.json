@@ -1,6 +1,6 @@
 {
   "name": "pkpdutils-core",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Non-compartmental analysis of pharmacokinetic timecourses in browsers and Node: the JavaScript host of pkpdutils-core, the rust kernel of pkpdutils, compiled to WebAssembly",
   "keywords": [
     "pharmacokinetics",

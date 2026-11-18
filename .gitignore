@@ -5,3 +5,6 @@ __pycache__/
 .superpowers/
 js/runtime/
 js/node_modules/
+
+# the environment of the fixture step of a release, see docs/release.md
+.venv-release/
