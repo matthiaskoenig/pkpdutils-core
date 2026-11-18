@@ -2,7 +2,7 @@
   "source": "scripts/wasm_fixtures.py, the native build of this kernel; every number is the answer of pkpdutils_core.analyze_batch as its bits",
   "pkpdutils": "1.7.0",
   "pkpdutils_core": "0.6.0",
-  "commit": "a0b5db32ec55084a3a122982d9ca5311d2ce982a",
+  "commit": "9e414847865fdab582ff721e1140e010951f4591",
   "cases": [
     {
       "name": "single_dose",
@@ -6550,6 +6550,631 @@
             "name": "excluded",
             "width": 1,
             "bits": [
+              "0x0000000000000000"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "mixed_routes",
+      "note": "two routes in one batch, which is analysed per route and filled per column",
+      "exact": true,
+      "request": {
+        "contract": "analysis/1",
+        "batch": {
+          "contract": "batch/1",
+          "sample_dims": [
+            "subject"
+          ],
+          "sample_shape": [
+            2
+          ],
+          "n_time": 9,
+          "times": [
+            0.25,
+            0.5,
+            1.0,
+            2.0,
+            4.0,
+            6.0,
+            9.0,
+            12.0,
+            24.0,
+            0.25,
+            0.5,
+            1.0,
+            2.0,
+            4.0,
+            6.0,
+            9.0,
+            12.0,
+            24.0
+          ],
+          "values": [
+            23.78073561251785,
+            22.62093545089899,
+            20.468268826949547,
+            16.758001150890983,
+            11.23322410293054,
+            7.529855297805053,
+            4.132472205539664,
+            2.2679488322353127,
+            0.20574367622550074,
+            12.65251099572423,
+            17.86886892623535,
+            20.10844703453344,
+            17.86888017570137,
+            12.83534911221967,
+            9.196985889216148,
+            5.578254003700262,
+            3.383382080915317,
+            0.45789097221835445
+          ],
+          "sd": null,
+          "se": null,
+          "n": null,
+          "nominal_time": null,
+          "lloq": null,
+          "max_doses": 1,
+          "dose_amount": [
+            100.0,
+            100.0
+          ],
+          "dose_time": [
+            0.0,
+            0.0
+          ],
+          "dose_duration": [
+            "NaN",
+            "NaN"
+          ],
+          "time_unit": "hr",
+          "unit": "mg/l",
+          "dose_unit": "mg",
+          "substance": "caffeine",
+          "substances": null,
+          "route": null,
+          "routes": [
+            "iv_bolus",
+            "oral"
+          ],
+          "tissue": null,
+          "coords": [
+            {
+              "name": "subject",
+              "dims": [
+                "subject"
+              ],
+              "values": {
+                "str": [
+                  "iv",
+                  "po"
+                ]
+              }
+            },
+            {
+              "name": "route",
+              "dims": [
+                "subject"
+              ],
+              "values": {
+                "str": [
+                  "iv_bolus",
+                  "oral"
+                ]
+              }
+            }
+          ]
+        },
+        "options": {
+          "kind": "concentration",
+          "auc_method": "linear_log",
+          "terminal": {
+            "method": "best_fit",
+            "min_points": 3,
+            "exclude_cmax": true,
+            "n_points": null,
+            "points": null,
+            "min_adj_r2": null,
+            "tie_tolerance": 0.0001,
+            "relative_warning": 1e-08,
+            "keep_candidates": false,
+            "windows": null
+          },
+          "lloq": null,
+          "lloq_relative": null,
+          "blq": "nan",
+          "c0_method": "log_back_extrapolation",
+          "extrapolation_warning": 0.2,
+          "acceptance": {
+            "r2_adj_min": null,
+            "extrapolation_max": null,
+            "span_min": null,
+            "n_points_min": null,
+            "exclude": false
+          },
+          "partial_aucs": {},
+          "tau": null,
+          "tau_tolerance": 0.1,
+          "intervals": true,
+          "units": {},
+          "effect_threshold": null,
+          "n_workers": null,
+          "chunk_rows": 5000,
+          "uncertainty": null,
+          "n_boot": 1000,
+          "seed": null,
+          "ci_level": 0.95,
+          "bootstrap_spread": "se",
+          "bootstrap_distribution": "normal",
+          "delta_step": 0.01
+        }
+      },
+      "expected": {
+        "n_rows": 2,
+        "columns": [
+          {
+            "name": "cmax",
+            "width": 1,
+            "bits": [
+              "0x4037c7de4a029632",
+              "0x40341bc32f52ab58"
+            ]
+          },
+          {
+            "name": "tmax",
+            "width": 1,
+            "bits": [
+              "0x3fd0000000000000",
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "cmin",
+            "width": 1,
+            "bits": [
+              "0x3fca55cf0c5fa8c9",
+              "0x3fdd4e15efb3ef3d"
+            ]
+          },
+          {
+            "name": "tmin",
+            "width": 1,
+            "bits": [
+              "0x4038000000000000",
+              "0x4038000000000000"
+            ]
+          },
+          {
+            "name": "clast",
+            "width": 1,
+            "bits": [
+              "0x3fca55cf0c5fa8c9",
+              "0x3fdd4e15efb3ef3d"
+            ]
+          },
+          {
+            "name": "clast_pred",
+            "width": 1,
+            "bits": [
+              "0x3fca55cf0c5fa8be",
+              "0x3fdd5167ae8fbea1"
+            ]
+          },
+          {
+            "name": "tlast",
+            "width": 1,
+            "bits": [
+              "0x4038000000000000",
+              "0x4038000000000000"
+            ]
+          },
+          {
+            "name": "auc_last",
+            "width": 1,
+            "bits": [
+              "0x405efe297a6110d8",
+              "0x40615199c041bf82"
+            ]
+          },
+          {
+            "name": "auc_all",
+            "width": 1,
+            "bits": [
+              "0x405efe297a6110d8",
+              "0x40615199c041bf82"
+            ]
+          },
+          {
+            "name": "auc_inf_obs",
+            "width": 1,
+            "bits": [
+              "0x405f3ffffffffffe",
+              "0x4061a98bfe055966"
+            ]
+          },
+          {
+            "name": "auc_inf_pred",
+            "width": 1,
+            "bits": [
+              "0x405f3ffffffffffe",
+              "0x4061a995f429708b"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3f80dac1f3706c09",
+              "0x3f93ead398280f52"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3f80dac1f3706c09",
+              "0x3f93ed09e3bc78ca"
+            ]
+          },
+          {
+            "name": "aumc_last",
+            "width": 1,
+            "bits": [
+              "0x408299565b9fdd15",
+              "0x408975f267b4b5eb"
+            ]
+          },
+          {
+            "name": "aumc_all",
+            "width": 1,
+            "bits": [
+              "0x408299565b9fdd15",
+              "0x408975f267b4b5eb"
+            ]
+          },
+          {
+            "name": "aumc_inf",
+            "width": 1,
+            "bits": [
+              "0x408387ffffffffff",
+              "0x408c099731f4e5b3"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred",
+            "width": 1,
+            "bits": [
+              "0x408387fffffffffe",
+              "0x408c09e1e95ef864"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3fa8706607630314",
+              "0x3fb786f839cccb30"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3fa87066076302fb",
+              "0x3fb78963b6688405"
+            ]
+          },
+          {
+            "name": "mrt",
+            "width": 1,
+            "bits": [
+              "0x4014000000000000",
+              "0x40196611c075a184"
+            ]
+          },
+          {
+            "name": "mrt_last",
+            "width": 1,
+            "bits": [
+              "0x4013341142a239ea",
+              "0x401785a1c052e73c"
+            ]
+          },
+          {
+            "name": "mrt_pred",
+            "width": 1,
+            "bits": [
+              "0x4013ffffffffffff",
+              "0x401966471c6c3f35"
+            ]
+          },
+          {
+            "name": "thalf_eff",
+            "width": 1,
+            "bits": [
+              "0x400bb9d3beb8c86b",
+              "0x40119ae41abaed63"
+            ]
+          },
+          {
+            "name": "lambda_z",
+            "width": 1,
+            "bits": [
+              "0x3fc999999999999c",
+              "0x3fc5536586b9a503"
+            ]
+          },
+          {
+            "name": "lambda_z_stderr",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000",
+              "0x3f0d9c8708f4a708"
+            ]
+          },
+          {
+            "name": "lambda_z_intercept",
+            "width": 1,
+            "bits": [
+              "0x4009c041f7ed8d34",
+              "0x4009be422de2e3b1"
+            ]
+          },
+          {
+            "name": "lambda_z_r2",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000",
+              "0x3fefffff0936f4c9"
+            ]
+          },
+          {
+            "name": "lambda_z_r2_adj",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000",
+              "0x3feffffecb84b1fb"
+            ]
+          },
+          {
+            "name": "lambda_z_n_points",
+            "width": 1,
+            "bits": [
+              "0x4020000000000000",
+              "0x4018000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_t_first",
+            "width": 1,
+            "bits": [
+              "0x3fe0000000000000",
+              "0x4000000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_t_last",
+            "width": 1,
+            "bits": [
+              "0x4038000000000000",
+              "0x4038000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_span",
+            "width": 1,
+            "bits": [
+              "0x401b1f6716dfed21",
+              "0x401526eb02e39257"
+            ]
+          },
+          {
+            "name": "thalf",
+            "width": 1,
+            "bits": [
+              "0x400bb9d3beb8c868",
+              "0x4010a4350284bc60"
+            ]
+          },
+          {
+            "name": "c0",
+            "width": 1,
+            "bits": [
+              "0x4038ffffffffffff",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "c0_method",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000",
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "auc_back_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3fa8f874f58d959a",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "auc_back_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3fa8f874f58d959a",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "aumc_back_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3f53cf59d42ed59c",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "tlag",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000",
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "cmax_half",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000",
+              "0x40294e15ebd5d4f9"
+            ]
+          },
+          {
+            "name": "tmax_half",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000",
+              "0x3fd0000000000000"
+            ]
+          },
+          {
+            "name": "cl",
+            "width": 1,
+            "bits": [
+              "0x3fe999999999999b",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "cl_f",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000",
+              "0x3fe6a5a974254be9"
+            ]
+          },
+          {
+            "name": "vz",
+            "width": 1,
+            "bits": [
+              "0x400fffffffffffff",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "vz_f",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000",
+              "0x4010fdc9fc5d5360"
+            ]
+          },
+          {
+            "name": "cl_pred",
+            "width": 1,
+            "bits": [
+              "0x3fe999999999999b",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "cl_f_pred",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000",
+              "0x3fe6a59cae4ea2ec"
+            ]
+          },
+          {
+            "name": "vz_pred",
+            "width": 1,
+            "bits": [
+              "0x400fffffffffffff",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "vz_f_pred",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000",
+              "0x4010fdc0671d9cc9"
+            ]
+          },
+          {
+            "name": "vss",
+            "width": 1,
+            "bits": [
+              "0x4010000000000001",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "vss_pred",
+            "width": 1,
+            "bits": [
+              "0x4010000000000000",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "auc_inf_dn",
+            "width": 1,
+            "bits": [
+              "0x3ff3ffffffffffff",
+              "0x3ff69b947858c45a"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn",
+            "width": 1,
+            "bits": [
+              "0x3ff3ffffffffffff",
+              "0x3ff69ba13886f674"
+            ]
+          },
+          {
+            "name": "cmax_dn",
+            "width": 1,
+            "bits": [
+              "0x3fce7078b0a726a6",
+              "0x3fc9bd22cbeeefcd"
+            ]
+          },
+          {
+            "name": "n",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "flags",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000",
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "accepted",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000",
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "excluded",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000",
               "0x0000000000000000"
             ]
           }

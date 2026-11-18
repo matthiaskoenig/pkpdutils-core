@@ -184,6 +184,37 @@ def two_subjects() -> Timecourses:
     return Timecourses.from_timecourses(rows, dim="subject")
 
 
+def mixed_routes() -> Timecourses:
+    """Two curves of two routes, the batch which is analysed per route.
+
+    The intravenous row reports `cl`, `vz`, `vss` and a back extrapolated `c0`, and the
+    extravascular one `cl_f`, `vz_f` and `tlag`; the result carries the union of the two
+    and fills what a row does not report. That fill is what the header of the wasm host
+    declares per column and what a pool of workers merges its shards with, so it is a
+    case of this fixture and not only of the tests of the pool.
+    """
+    rows = []
+    for label, route, clearance in (
+        ("iv", Route.IV_BOLUS, 2.4),
+        ("po", Route.ORAL, 2.0),
+    ):
+        values = 25.0 * np.exp(-clearance * T / 12.0)
+        if route is Route.ORAL:
+            values = values * (1.0 - np.exp(-3.0 * T))
+        rows.append(
+            Timecourse(
+                time=T,
+                value=values,
+                time_unit="hr",
+                unit="mg/l",
+                dose=Dose(amount=100, unit="mg", route=route),
+                substance="caffeine",
+                label=label,
+            )
+        )
+    return Timecourses.from_timecourses(rows, dim="subject")
+
+
 def multiple_dose() -> Timecourses:
     """One curve over three doses of twelve hours, the steady state path with intervals."""
     dosing = Dosing.regimen(
@@ -329,6 +360,13 @@ def fixture() -> dict[str, Any]:
                 infusion(),
                 NCAOptions(),
                 "an intravenous infusion, the route of cl and vss rather than cl_f",
+                exact=True,
+            ),
+            case(
+                "mixed_routes",
+                mixed_routes(),
+                NCAOptions(),
+                "two routes in one batch, which is analysed per route and filled per column",
                 exact=True,
             ),
             case(

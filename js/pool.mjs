@@ -35,13 +35,19 @@ export function defaultWorkers() {
 }
 
 /** The arrays of a batch which carry one block per sample over the time axis. */
-const TIME_ARRAYS = ["times", "values", "sd", "se", "n", "nominal_time", "lloq"];
+const TIME_ARRAYS = ["times", "values", "sd", "se", "n", "nominal_time"];
 
 /** The arrays of a batch which carry one block per sample over the dose axis. */
 const DOSE_ARRAYS = ["dose_amount", "dose_time", "dose_duration"];
 
-/** The arrays of a batch which carry one value per sample. */
-const SAMPLE_ARRAYS = ["substances", "routes"];
+/**
+ * The arrays of a batch which carry one value per sample.
+ *
+ * `lloq` is one of them and not one per time point: a limit of quantification belongs to the
+ * assay of a sample, which is why `Batch::validate` of the kernel checks it against the number of
+ * samples and the python host reshapes it to the rows.
+ */
+const SAMPLE_ARRAYS = ["substances", "routes", "lloq"];
 
 /**
  * Whether the rows of a request can be cut, and why not when they cannot.
@@ -134,9 +140,17 @@ export function shardRequest(request, start, end) {
  * does not carry a column is filled with what the module says that row contributes: the `fill`
  * of the column of the header, which is a `NaN` for a parameter and 0 for a variable carrying an
  * integer code (`c0_method` means "no rule was applied" by 0, not by a missing number). That is
- * what makes the answer of a pool the answer of one instance, which fills a mixed batch the same
- * way from the same table. A point variable takes the widest width of any shard and the short
- * rows are padded.
+ * what makes `column(name)` of a pool the column of one instance, value for value, which fills a
+ * mixed batch the same way from the same table. A point variable takes the widest width of any
+ * shard and the short rows are padded.
+ *
+ * What is not reproduced is the order of the columns. One instance reports them in the order of
+ * the parameter table of the kernel, filtered by what the whole batch reports; the union of the
+ * shards is in the order they first appear, which for a batch of two routes interleaves the two
+ * sets (`cl` of the first shard, then the columns only the second has, where one instance has
+ * `cl` and `cl_f` side by side). A caller reads a column by name, which is what `column(name)`
+ * is for; a caller walking `header.columns` positionally against the layout of one instance has
+ * to read the names.
  *
  * @param {object[]} answers the answers of the shards, in the order of their rows
  * @returns {{header: object, columns: object[], values: Float64Array, column: (name: string) => Float64Array | undefined}}
@@ -146,12 +160,19 @@ export function mergeAnswers(answers) {
     return answers[0];
   }
   const first = answers[0].header;
-  for (const { header } of answers.slice(1)) {
-    if (header.contract !== first.contract) {
-      throw new KernelError(
-        "internal",
-        `a shard answered ${header.contract} and another ${first.contract}`,
-      );
+  // the shards of one batch answer one contract, one set of sample dimensions and one set of
+  // batch attributes, since `shardRequest` changes nothing but the rows; a disagreement is a bug
+  // of this pool or of the kernel and not something to merge over, because everything but the
+  // rows is taken from the first shard
+  for (const key of ["contract", "sample_dims", "attributes"]) {
+    for (const { header } of answers.slice(1)) {
+      if (JSON.stringify(header[key]) !== JSON.stringify(first[key])) {
+        throw new KernelError(
+          "internal",
+          `a shard answered ${key} ${JSON.stringify(header[key])} and another ` +
+            JSON.stringify(first[key]),
+        );
+      }
     }
   }
   const described = new Map();
@@ -233,7 +254,9 @@ function mergeTexts(answers) {
     unit,
     values: answers.flatMap(({ header }) => {
       const variable = (header.text_variables ?? []).find((one) => one.name === name);
-      return variable === undefined ? new Array(header.n_rows).fill(null) : variable.values;
+      // a `TextColumn` of the kernel carries strings, so a row which does not report one is
+      // the empty string and never a `null`, which is no value of that column
+      return variable === undefined ? new Array(header.n_rows).fill("") : variable.values;
     }),
   }));
 }
@@ -314,12 +337,16 @@ export async function createPool({
           }
           const job = running.get(worker);
           running.delete(worker);
-          if (job !== undefined) {
-            if (message.kind === "error") {
-              job.reject(errorOf(message.error));
-            } else {
-              job.resolve(answerOf(message));
+          if (message.kind === "error") {
+            // a panic leaves the instance of that worker dead: its loader answers nothing more,
+            // so the seat leaves the rotation like one whose worker failed outright. Every other
+            // kind is an answer about the request and says nothing about the instance.
+            if (message.error?.kind === "panic") {
+              dead.add(worker);
             }
+            job?.reject(errorOf(message.error));
+          } else {
+            job?.resolve(answerOf(message));
           }
           pump();
         });
@@ -337,6 +364,9 @@ export async function createPool({
       });
       worker.post({ kind: "init", module: compiled });
       await ready;
+      // from here the seat is idle, and an idle seat does not keep a node process alive; `pump`
+      // references it again while it has a job, so an answer is never lost to an exit
+      worker.unref?.();
       return worker;
     }),
   );
@@ -405,14 +435,35 @@ export async function createPool({
     next += 1;
     const id = next;
     return new Promise((resolve, reject) => {
-      queue.push({ id, kind, request, resolve, reject, signal });
-      signal?.addEventListener("abort", () => {
-        const waiting = queue.findIndex((job) => job.id === id);
-        if (waiting !== -1) {
-          queue.splice(waiting, 1);
-          reject(signal.reason ?? new Error("aborted"));
-        }
-      });
+      // the listener of the signal is dropped as soon as the job settles: one long lived signal
+      // over many calls would otherwise collect one listener per call
+      let forget = () => {};
+      const job = {
+        id,
+        kind,
+        request,
+        signal,
+        resolve: (answer) => {
+          forget();
+          resolve(answer);
+        },
+        reject: (bad) => {
+          forget();
+          reject(bad);
+        },
+      };
+      if (signal !== undefined) {
+        const drop = () => {
+          const waiting = queue.findIndex((one) => one.id === id);
+          if (waiting !== -1) {
+            queue.splice(waiting, 1);
+            job.reject(signal.reason ?? new Error("aborted"));
+          }
+        };
+        signal.addEventListener("abort", drop, { once: true });
+        forget = () => signal.removeEventListener("abort", drop);
+      }
+      queue.push(job);
       pump();
     });
   }
@@ -432,8 +483,14 @@ export async function createPool({
      * @returns {Promise<object>} the merged answer
      */
     async analyze(request, { signal } = {}) {
-      const batch = request.batch;
-      const rows = (batch.sample_shape ?? []).reduce((all, one) => all * one, 1);
+      const batch = request?.batch;
+      // a request this pool cannot read is not a request this pool rejects: it goes to the module
+      // whole, which answers the `malformed` sentence of the contract rather than a `TypeError`
+      // of the sharding. Every call of this package throws a `KernelError`.
+      if (!Array.isArray(batch?.sample_dims) || !Array.isArray(batch?.sample_shape)) {
+        return submit("analyze", request, signal);
+      }
+      const rows = batch.sample_shape.reduce((all, one) => all * one, 1);
       const why = shardable(batch);
       if (rows <= 1 || why !== null || seats.length === 1) {
         return submit("analyze", request, signal);
@@ -462,12 +519,19 @@ export async function createPool({
     summarize(request, { signal } = {}) {
       return submit("summarize", request, signal);
     },
-    /** End every worker; a call after this throws. */
+    /** End every worker; a call after this throws, and every job of this pool is rejected. */
     close() {
       closed = true;
       for (const job of queue.splice(0)) {
         job.reject(new KernelError("internal", "this pool was closed before the job ran"));
       }
+      // a job in flight is rejected too: its worker is about to end and the answer cannot come,
+      // so a promise left pending would hang its caller, and a node script which awaits it would
+      // exit silently with neither an answer nor an error
+      for (const job of running.values()) {
+        job.reject(new KernelError("internal", "this pool was closed while the job ran"));
+      }
+      running.clear();
       for (const worker of seats) {
         worker.terminate();
       }

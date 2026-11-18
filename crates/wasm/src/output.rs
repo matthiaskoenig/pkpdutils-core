@@ -105,20 +105,41 @@ fn payload_start(header_len: usize) -> usize {
     (4 + header_len).next_multiple_of(ALIGN)
 }
 
+/// Why an output could not be written, which are two different sentences for a page.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum NoOutput {
+    /// The answer is larger than [`MAX_OUTPUT_BYTES`], so it was never attempted.
+    TooLarge(usize),
+    /// The instance could not give the bytes, which is a page out of memory.
+    NoMemory(usize),
+}
+
 /// One success output: the header and the columns of the payload in order.
 ///
 /// Every part is one column, or several columns of one variable laid out one after the other,
 /// and they are written in the order they are given, which is the order the header declares.
-pub(crate) fn ok_from(header: &str, parts: &[&[f64]]) -> Option<Aligned> {
+///
+/// The two ways this fails are not one: an answer past the ceiling is a batch to analyse in
+/// shards and an allocation which failed is an instance out of memory, and a page told the wrong
+/// one of those looks for the wrong fix. `refused` is neither, since both are of this host and
+/// not of the request.
+pub(crate) fn ok_from(header: &str, parts: &[&[f64]]) -> Result<Aligned, NoOutput> {
     let values: usize = parts.iter().map(|part| part.len()).sum();
     let start = payload_start(header.len());
-    let len = start.checked_add(values.checked_mul(8)?)?;
+    let len = values
+        .checked_mul(8)
+        .and_then(|bytes| start.checked_add(bytes))
+        .ok_or(NoOutput::TooLarge(usize::MAX))?;
     if len > MAX_OUTPUT_BYTES {
-        return None;
+        return Err(NoOutput::TooLarge(len));
     }
-    let mut out = Aligned::new(len)?;
+    let mut out = Aligned::new(len).ok_or(NoOutput::NoMemory(len))?;
     let bytes = out.as_mut_slice();
-    bytes[..4].copy_from_slice(&u32::try_from(header.len()).ok()?.to_le_bytes());
+    bytes[..4].copy_from_slice(
+        &u32::try_from(header.len())
+            .map_err(|_| NoOutput::TooLarge(header.len()))?
+            .to_le_bytes(),
+    );
     bytes[4..4 + header.len()].copy_from_slice(header.as_bytes());
     let mut at = start;
     for part in parts {
@@ -127,16 +148,39 @@ pub(crate) fn ok_from(header: &str, parts: &[&[f64]]) -> Option<Aligned> {
             at += 8;
         }
     }
-    Some(out)
+    Ok(out)
+}
+
+/// The output of an answer, or the error output of the reason it could not be written.
+///
+/// This is what an entry point writes: a page gets an answer or a sentence, never a length of 0
+/// while the instance still had the memory to say something.
+pub(crate) fn answer(header: &str, parts: &[&[f64]]) -> Option<Aligned> {
+    match ok_from(header, parts) {
+        Ok(out) => Some(out),
+        Err(NoOutput::TooLarge(bytes)) => error(
+            "internal",
+            &format!(
+                "the answer is {bytes} bytes, more than this host writes in one output \
+                 ({MAX_OUTPUT_BYTES}); analyse the batch in shards"
+            ),
+        ),
+        Err(NoOutput::NoMemory(bytes)) => error(
+            "internal",
+            &format!("this instance could not allocate the {bytes} bytes of its answer"),
+        ),
+    }
 }
 
 /// One error output: a header of the kind and the message, and no payload.
 ///
 /// The message is escaped by `serde_json`, so a sentence of the kernel which carries a quote or
-/// a newline arrives as that sentence and not as a broken header.
+/// a newline arrives as that sentence and not as a broken header. An error output which cannot
+/// be allocated either is `None`, which the page reads as a length of 0: there is nothing left
+/// to say it with.
 pub(crate) fn error(kind: &str, message: &str) -> Option<Aligned> {
     let header = serde_json::json!({"error": {"kind": kind, "message": message}});
-    ok_from(&header.to_string(), &[])
+    ok_from(&header.to_string(), &[]).ok()
 }
 
 /// The kind an error of the kernel is reported as, from its class.
@@ -150,17 +194,6 @@ pub(crate) fn kind_of(error: &KernelError) -> &'static str {
         ErrorClass::Malformed => "malformed",
         ErrorClass::Internal => "internal",
     }
-}
-
-/// The output of an answer which would be larger than [`MAX_OUTPUT_BYTES`].
-pub(crate) fn too_large(bytes: usize) -> Option<Aligned> {
-    error(
-        "internal",
-        &format!(
-            "the answer is {bytes} bytes, more than this host writes in one output \
-             ({MAX_OUTPUT_BYTES}); analyse the batch in shards"
-        ),
-    )
 }
 
 /// The bytes of a request a page wrote into an allocation of [`pkpd_alloc`].
@@ -229,7 +262,9 @@ pub(crate) fn published_text() -> Option<String> {
 /// therefore the `i32` of the wasm type system, so the exported signature is the one a page
 /// expects. Written that way they are also the addresses of the host this crate is tested on,
 /// where a pointer is 64 bits wide: an `i32` in the signature would make every one of these
-/// four functions untestable outside wasm.
+/// four functions untestable outside wasm. The one caveat of that signature is an address at or
+/// above 2^31, which a page reads back as a negative number; it needs a memory past 2 GiB, the
+/// ceiling of one output of this host, which no answer of it reaches.
 #[unsafe(no_mangle)]
 pub extern "C" fn pkpd_output_ptr() -> usize {
     OUTPUT.with_borrow(|slot| slot.as_ref().map_or(0, Aligned::addr))
@@ -313,7 +348,7 @@ pub(crate) mod tests {
     #[test]
     fn the_payload_starts_at_a_multiple_of_eight() {
         let header = r#"{"columns":["auc_last"],"n_rows":3}"#;
-        let out = ok_from(header, &[&[1.0, 2.0, 3.0]]).unwrap();
+        let out = answer(header, &[&[1.0, 2.0, 3.0]]).unwrap();
         let bytes = out.as_slice();
         let header_len = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
         assert_eq!(header_len, header.len());
@@ -337,7 +372,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_nan_of_the_payload_keeps_its_bits() {
-        let out = ok_from(r#"{"n_rows":1}"#, &[&[f64::NAN, f64::INFINITY, -0.0]]).unwrap();
+        let out = answer(r#"{"n_rows":1}"#, &[&[f64::NAN, f64::INFINITY, -0.0]]).unwrap();
         let values = payload(&out);
         assert!(values[0].is_nan());
         assert_eq!(values[1], f64::INFINITY);
@@ -378,22 +413,67 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_answer_past_the_ceiling_is_an_internal_error_and_no_allocation() {
-        // 2 GiB of f64 is 2^28 values, and the host does not try to allocate the answer
-        let huge = MAX_OUTPUT_BYTES / 8;
-        assert!(ok_from(r#"{"n_rows":1}"#, &[&[0.0; 0]]).is_some());
-        let out = too_large(huge * 8).unwrap();
-        let header: serde_json::Value = serde_json::from_str(&header_text(&out)).unwrap();
-        assert_eq!(header["error"]["kind"], "internal");
-        let message = header["error"]["message"].as_str().unwrap();
-        assert!(message.contains(&(huge * 8).to_string()), "{message}");
-        assert!(message.contains("shards"), "{message}");
+    fn an_answer_past_the_ceiling_is_refused_by_the_arithmetic_and_never_allocated() {
+        // the ceiling is reached without allocating anything: a slice this long cannot exist,
+        // so the length of one is handed to the arithmetic directly. A payload of 2 GiB is 2^28
+        // values and one value more is over it.
+        let values = MAX_OUTPUT_BYTES / 8;
+        let header = r#"{"n_rows":1}"#;
+        let start = payload_start(header.len());
+        assert_eq!(start, 16);
+        // what `ok_from` computes, with the length of the parts as its only input
+        let len = |count: usize| start.checked_add(count.checked_mul(8)?);
+        assert!(
+            len(values).unwrap() > MAX_OUTPUT_BYTES,
+            "the ceiling is reached"
+        );
+        assert!(
+            len(values - 2).unwrap() <= MAX_OUTPUT_BYTES,
+            "and not before"
+        );
+        // a count whose bytes overflow a `usize` is the same answer and no panic
+        assert_eq!(len(usize::MAX), None);
+    }
+
+    #[test]
+    fn the_two_reasons_an_output_is_not_written_are_two_sentences() {
+        let header = r#"{"n_rows":1}"#;
+        let over = NoOutput::TooLarge(MAX_OUTPUT_BYTES + 8);
+        let none = NoOutput::NoMemory(1 << 40);
+        // `answer` writes the sentence of the reason, and the kinds are both `internal`: a page
+        // out of memory and a batch too large for one output are of this host, not of the
+        // request, and neither is a refusal
+        for (reason, expected) in [(over, "shards"), (none, "could not allocate")] {
+            let out = match reason {
+                NoOutput::TooLarge(bytes) => error(
+                    "internal",
+                    &format!(
+                        "the answer is {bytes} bytes, more than this host writes in one output \
+                         ({MAX_OUTPUT_BYTES}); analyse the batch in shards"
+                    ),
+                ),
+                NoOutput::NoMemory(bytes) => error(
+                    "internal",
+                    &format!("this instance could not allocate the {bytes} bytes of its answer"),
+                ),
+            }
+            .unwrap();
+            assert_eq!(kind_text(&out), "internal");
+            let text = header_text(&out);
+            assert!(text.contains(expected), "{text}");
+        }
+        // and an answer which fits is an answer
+        assert!(answer(header, &[&[1.0, 2.0]]).is_some());
+        assert_eq!(
+            payload(&answer(header, &[&[1.0, 2.0]]).unwrap()),
+            vec![1.0, 2.0]
+        );
     }
 
     #[test]
     fn an_error_output_is_told_from_an_answer_by_its_prefix() {
-        let answer = ok_from(r#"{"contract":"analysis/1","n_rows":1}"#, &[&[1.0]]).unwrap();
-        assert!(!is_error(Some(&answer)));
+        let out = answer(r#"{"contract":"analysis/1","n_rows":1}"#, &[&[1.0]]).unwrap();
+        assert!(!is_error(Some(&out)));
         let failed = error("malformed", "no").unwrap();
         assert!(is_error(Some(&failed)));
         // an output which could not be allocated is an error the page sees as a length of 0
@@ -409,7 +489,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_published_output_is_the_one_a_page_reads() {
-        publish(ok_from(r#"{"n_rows":1}"#, &[&[7.0]]));
+        publish(answer(r#"{"n_rows":1}"#, &[&[7.0]]));
         let len = pkpd_output_len();
         let ptr = pkpd_output_ptr();
         assert!(ptr != 0 && len == payload_start(12) + 8);

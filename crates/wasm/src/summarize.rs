@@ -4,7 +4,7 @@
 use pkpdutils_abi::SummaryAnswer;
 use serde_json::{Value, json};
 
-use crate::output::{Aligned, error, kind_of, ok_from, publish, read_request};
+use crate::output::{Aligned, answer as write_answer, error, kind_of, publish, read_request};
 
 /// The statistics of an answer, in the order the payload carries them.
 ///
@@ -56,7 +56,9 @@ pub(crate) fn summarize(request: &[u8]) -> Option<Aligned> {
         Err(bad) => return error(kind_of(&bad), &bad.to_string()),
     };
     let header = header_of(&request);
-    ok_from(&header, &parts(&answer))
+    // `answer` and not `ok_from`: a summary of a table past the ceiling, or one this instance
+    // has no memory for, is a sentence like any other failure and never a length of 0
+    write_answer(&header, &parts(&answer))
 }
 
 /// The header of an answer: the statistics of the payload and the shape of every block.

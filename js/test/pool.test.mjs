@@ -71,6 +71,16 @@ test("shards which report different columns merge into the union", async () => {
       0,
       "the module declares the fill of the column",
     );
+    // what the merge does not reproduce is the order: the union is in the order the shards
+    // first report their columns, which interleaves the two routes, so a caller reads a column
+    // by name. The headers of the shards do agree on everything but their rows.
+    assert.notDeepEqual(
+      sharded.columns.map((column) => column.name),
+      whole.columns.map((column) => column.name),
+    );
+    assert.deepEqual(sharded.header.sample_dims, whole.header.sample_dims);
+    assert.deepEqual(sharded.header.attributes, whole.header.attributes);
+    assert.equal(sharded.header.contract, whole.header.contract);
   } finally {
     pool.close();
   }
@@ -271,6 +281,170 @@ test("a script which forgets close gets its answer and exits", async () => {
   const script = fileURLToPath(new URL("./fixtures/exit.mjs", import.meta.url));
   const { stdout } = await execFile(process.execPath, [script], { timeout: 60_000 });
   assert.equal(stdout.trim(), "2");
+});
+
+test("a batch with a limit of quantification is cut by its samples and not by its times", async () => {
+  // `lloq` is one value per sample: a shard which took a slice of it over the time axis would
+  // send four values for one row and the kernel would refuse the whole shard
+  const withLloq = () => {
+    const one = batchRequest(4);
+    // the last point of every row is under 0.5, so the limit really changes the answer
+    one.batch.lloq = [0.5, 0.5, 0.5, 0.5];
+    return one;
+  };
+  const pool = await createPool({ module: compiled, workers: 4 });
+  try {
+    const sharded = await pool.analyze(withLloq());
+    const whole = runtime.analyze(withLloq());
+    assert.deepEqual(columnsOf(sharded), columnsOf(whole));
+    // and the limit was applied, which is what makes this case bite
+    assert.notDeepEqual(columnsOf(whole), columnsOf(runtime.analyze(batchRequest(4))));
+  } finally {
+    pool.close();
+  }
+});
+
+test("close rejects the job which was running, not only the ones which waited", async () => {
+  const pool = await createPool({ module: compiled, workers: 1 });
+  const running = pool.analyze(batchRequest(400));
+  const queued = pool.analyze(batchRequest(4));
+  pool.close();
+  // neither promise can be answered by a worker which is gone, and a promise left pending would
+  // hang its caller: a node script awaiting it exits with no answer and no error
+  await assert.rejects(running, (bad) => /closed while the job ran/.test(bad.message));
+  await assert.rejects(queued, (bad) => /closed before the job ran/.test(bad.message));
+});
+
+test("a worker whose instance panicked leaves the rotation", async () => {
+  // a panic arrives as an error message and not as a failure of the worker, and the instance
+  // behind it is dead: every later job routed to that seat would fail the same way
+  let made = 0;
+  const pool = await createPool({
+    module: compiled,
+    workers: 2,
+    createWorker: async () => {
+      const seat = made;
+      made += 1;
+      if (seat === 0) {
+        const { Worker } = await import("node:worker_threads");
+        const worker = new Worker(WORKER_URL);
+        return {
+          post: (message, transfer) => worker.postMessage(message, transfer),
+          onMessage: (fn) => worker.on("message", fn),
+          onError: (fn) => worker.on("error", fn),
+          terminate: () => worker.terminate(),
+          ref: () => worker.ref(),
+          unref: () => worker.unref(),
+        };
+      }
+      const listeners = [];
+      return {
+        post: (message) => {
+          const answer =
+            message.kind === "init"
+              ? { kind: "ready", about: { version: "fake", output_format: 1 } }
+              : {
+                  kind: "error",
+                  id: message.id,
+                  error: { kind: "panic", message: "the kernel panicked somewhere" },
+                };
+          for (const fn of listeners) {
+            fn(answer);
+          }
+        },
+        onMessage: (fn) => listeners.push(fn),
+        onError: () => {},
+        terminate: () => {},
+        ref: () => {},
+        unref: () => {},
+      };
+    },
+  });
+  try {
+    await assert.rejects(pool.analyze(batchRequest(8)), (bad) => bad.kind === "panic");
+    assert.equal(pool.workers, 1, "the seat of the panic is out of the rotation");
+    const answer = await pool.analyze(batchRequest(8));
+    assert.deepEqual(columnsOf(answer), columnsOf(runtime.analyze(batchRequest(8))));
+  } finally {
+    pool.close();
+  }
+});
+
+test("a request the pool cannot read is the error of the module and not a TypeError", async () => {
+  const pool = await createPool({ module: compiled, workers: 2 });
+  try {
+    // every call of this package throws a `KernelError`, so a request which carries no batch at
+    // all goes to the module whole rather than through the sharding
+    for (const bad of [{}, { contract: "analysis/1" }, { contract: "analysis/1", batch: {} }]) {
+      await assert.rejects(pool.analyze(bad), (thrown) => {
+        assert.equal(thrown.name, "KernelError", `${JSON.stringify(bad)}: ${thrown}`);
+        assert.equal(thrown.kind, "malformed");
+        return true;
+      });
+    }
+  } finally {
+    pool.close();
+  }
+});
+
+test("the listener of a signal is dropped when the job settles", async () => {
+  // one signal over many calls would otherwise collect one listener per call
+  let added = 0;
+  let removed = 0;
+  const signal = {
+    aborted: false,
+    addEventListener: () => {
+      added += 1;
+    },
+    removeEventListener: () => {
+      removed += 1;
+    },
+  };
+  const pool = await createPool({ module: compiled, workers: 2 });
+  try {
+    for (let call = 0; call < 3; call += 1) {
+      await pool.analyze(batchRequest(4), { signal });
+    }
+    assert.ok(added >= 3, `${added} listeners`);
+    assert.equal(removed, added);
+  } finally {
+    pool.close();
+  }
+});
+
+test("a pool which is created and never used exits", async () => {
+  const script = fileURLToPath(new URL("./fixtures/idle.mjs", import.meta.url));
+  const { stdout } = await execFile(process.execPath, [script], { timeout: 60_000 });
+  assert.equal(stdout.trim().split(" ")[0], "2");
+});
+
+test("the text variables of the shards are merged row by row", async () => {
+  // no analysis of this kernel reports one yet, so the merge is checked on hand built answers:
+  // a shard which does not report a variable pads with the empty string, which is a value of a
+  // column of strings, and never with a `null`, which is not
+  const shard = (rows, texts) => ({
+    header: {
+      contract: "analysis/1",
+      n_rows: rows,
+      sample_dims: ["subject"],
+      attributes: null,
+      coords: [],
+      text_variables: texts,
+    },
+    columns: [],
+    values: new Float64Array(0),
+    column: () => undefined,
+  });
+  const merged = mergeAnswers([
+    shard(2, [{ name: "note", unit: null, values: ["one", "two"] }]),
+    shard(1, []),
+  ]);
+  assert.deepEqual(merged.header.text_variables, [
+    { name: "note", unit: null, values: ["one", "two", ""] },
+  ]);
+  // and shards which report none at all leave the empty list of the header they came with,
+  // which is what one instance answers
+  assert.deepEqual(mergeAnswers([shard(1, []), shard(1, [])]).header.text_variables, []);
 });
 
 test("the pool reports what the module is", async () => {

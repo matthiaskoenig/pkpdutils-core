@@ -4,7 +4,7 @@ use pkpdutils_abi::AnalysisResult;
 use pkpdutils_core::KernelError;
 use serde_json::{Value, json};
 
-use crate::output::{Aligned, error, kind_of, ok_from, publish, read_request, too_large};
+use crate::output::{Aligned, answer, error, kind_of, publish, read_request};
 
 /// Analyse a batch, the pure function every test and the export go through.
 ///
@@ -138,8 +138,7 @@ fn write(result: &AnalysisResult) -> Option<Aligned> {
     for variable in &result.point_variables {
         parts.push(&variable.values);
     }
-    let bytes: usize = parts.iter().map(|part| part.len() * 8).sum();
-    ok_from(&header, &parts).or_else(|| too_large(bytes))
+    answer(&header, &parts)
 }
 
 /// Analyse a batch: a JSON request of `len` bytes at `ptr`, the answer in the output buffer.

@@ -2,7 +2,7 @@
 
 use serde_json::json;
 
-use crate::output::{Aligned, ok_from, publish};
+use crate::output::{Aligned, answer, publish};
 
 /// The version of the output layout of this host.
 ///
@@ -30,7 +30,7 @@ pub(crate) fn about() -> Option<Aligned> {
         },
         "entry_points": ENTRY_POINTS,
     });
-    ok_from(&header.to_string(), &[])
+    answer(&header.to_string(), &[])
 }
 
 /// What this build is: the version, the output layout, the contracts and the entry points.

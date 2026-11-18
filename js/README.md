@@ -40,7 +40,7 @@ const answer = runtime.analyze({
 });
 
 answer.column("auc_last");        // Float64Array, one value per sample
-answer.column("thalf")[0];        // 1
+answer.column("thalf")[0];       // 0.9999999999999999, an hour
 answer.header.columns;            // every column with its unit, width and fill
 ```
 
@@ -60,7 +60,7 @@ const answer = await pool.analyze(request);           // the answer of the whole
 pool.close();
 ```
 
-The shards are merged back into one answer, and the merge is what one instance would have answered: the union of the columns, and a row which does not report one of them filled with what the module says it contributes. `summarize` is a reduction over the samples and runs whole on one worker. A page which bundles its own workers passes `createWorker`.
+The shards are merged back into one answer: the union of the columns, and a row which does not report one of them filled with what the module says it contributes, so `answer.column(name)` holds what one instance would have answered, value for value. The columns of a batch of mixed routes come out in the order the shards first report them, which is not the order one instance uses, so read a column by name and not by its position. `summarize` is a reduction over the samples and runs whole on one worker. A page which bundles its own workers passes `createWorker`.
 
 ## Errors
 
