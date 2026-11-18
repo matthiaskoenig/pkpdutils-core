@@ -1,0 +1,55 @@
+{
+  "name": "pkpdutils-core",
+  "version": "0.6.0",
+  "description": "Non-compartmental analysis of pharmacokinetic timecourses in browsers and Node: the JavaScript host of pkpdutils-core, the rust kernel of pkpdutils, compiled to WebAssembly",
+  "keywords": [
+    "pharmacokinetics",
+    "nca",
+    "non-compartmental-analysis",
+    "auc",
+    "bioequivalence",
+    "webassembly",
+    "wasm",
+    "web-worker"
+  ],
+  "homepage": "https://github.com/matthiaskoenig/pkpdutils-core",
+  "bugs": {
+    "url": "https://github.com/matthiaskoenig/pkpdutils-core/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/matthiaskoenig/pkpdutils-core.git",
+    "directory": "js"
+  },
+  "author": "Matthias König",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./loader.mjs",
+    "./pool": "./pool.mjs",
+    "./worker": "./worker.mjs",
+    "./runtime/pkpdutils-core.wasm": "./runtime/pkpdutils-core.wasm",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "loader.mjs",
+    "pool.mjs",
+    "worker.mjs",
+    "runtime/pkpdutils-core.wasm",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "node build.mjs --check",
+    "test": "node build.mjs --check && node --test test/",
+    "prepack": "node build.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

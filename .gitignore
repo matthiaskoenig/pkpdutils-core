@@ -3,3 +3,5 @@ __pycache__/
 .oracles-staging/
 .oracles-old/
 .superpowers/
+js/runtime/
+js/node_modules/
