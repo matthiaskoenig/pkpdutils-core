@@ -104,6 +104,11 @@ UNIT_FUNCTIONS = frozenset(
 #: entry is removed here.
 REJECTED = {
     "degC": "the registry has no temperature, `tests/stats/` keeps pint",
+    "grain": (
+        "the registry has no apothecary mass, and `tests/nca/test_sparse.py` and "
+        "`tests/nca/test_urine.py` of pkpdutils hand it to the kernel on purpose, as the "
+        "unit whose refusal takes the python path"
+    ),
     "kelvin": "the registry has no temperature, `tests/stats/` keeps pint",
 }
 

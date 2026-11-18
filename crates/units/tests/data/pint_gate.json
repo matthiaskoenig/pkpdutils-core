@@ -1,14 +1,14 @@
 {
 "provenance": {
-"pkpdutils_version": "1.4.0",
+"pkpdutils_version": "1.7.0",
 "pkpdutils_source": "checkout",
-"source_commit": "02e804d60e49d5fbbbf180e3e9a402c5c75b9fb0",
+"source_commit": "a0b5db32ec55084a3a122982d9ca5311d2ce982a",
 "parameter_units_digest": "e1c0af9d8f5bf2bd",
 "n_parameters": 135,
 "n_expressions": 16,
 "n_records": 6059,
 "n_spellings": 42,
-"n_rejected": 2,
+"n_rejected": 3,
 "axes": {
 "unit": [
 "IU",
@@ -441,6 +441,11 @@
 "literal": "degC",
 "unit": "degree_Celsius",
 "reason": "the registry has no temperature, `tests/stats/` keeps pint"
+},
+{
+"literal": "grain",
+"unit": "grain",
+"reason": "the registry has no apothecary mass, and `tests/nca/test_sparse.py` and `tests/nca/test_urine.py` of pkpdutils hand it to the kernel on purpose, as the unit whose refusal takes the python path"
 },
 {
 "literal": "kelvin",

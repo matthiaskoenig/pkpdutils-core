@@ -1,8 +1,8 @@
 {
   "provenance": {
-    "pkpdutils": "1.6.1",
-    "commit": "6e89f86b7a1e7616fa22993b44fb459e3c1e3473",
-    "numpy": "2.5.4",
+    "pkpdutils": "1.7.0",
+    "commit": "a0b5db32ec55084a3a122982d9ca5311d2ce982a",
+    "numpy": "2.5.5",
     "engine": "pkpdutils.nca.nca.nca with engine._force_python"
   },
   "cases": [
