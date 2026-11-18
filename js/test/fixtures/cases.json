@@ -1,0 +1,7656 @@
+{
+  "source": "scripts/wasm_fixtures.py, the native build of this kernel; every number is the answer of pkpdutils_core.analyze_batch as its bits",
+  "pkpdutils": "1.7.0",
+  "pkpdutils_core": "0.6.0",
+  "commit": "9e414847865fdab582ff721e1140e010951f4591",
+  "cases": [
+    {
+      "name": "single_dose",
+      "note": "one oral curve of four points",
+      "exact": true,
+      "request": {
+        "contract": "analysis/1",
+        "batch": {
+          "contract": "batch/1",
+          "sample_dims": [
+            "sample"
+          ],
+          "sample_shape": [
+            1
+          ],
+          "n_time": 4,
+          "times": [
+            0.0,
+            1.0,
+            2.0,
+            3.0
+          ],
+          "values": [
+            8.0,
+            4.0,
+            2.0,
+            1.0
+          ],
+          "sd": null,
+          "se": null,
+          "n": null,
+          "nominal_time": null,
+          "lloq": null,
+          "max_doses": 1,
+          "dose_amount": [
+            10.0
+          ],
+          "dose_time": [
+            0.0
+          ],
+          "dose_duration": [
+            "NaN"
+          ],
+          "time_unit": "hr",
+          "unit": "mg/l",
+          "dose_unit": "mg",
+          "substance": "caffeine",
+          "substances": null,
+          "route": "oral",
+          "routes": null,
+          "tissue": null,
+          "coords": [
+            {
+              "name": "sample",
+              "dims": [
+                "sample"
+              ],
+              "values": {
+                "str": [
+                  "s1"
+                ]
+              }
+            }
+          ]
+        },
+        "options": {
+          "kind": "concentration",
+          "auc_method": "linear_log",
+          "terminal": {
+            "method": "best_fit",
+            "min_points": 3,
+            "exclude_cmax": true,
+            "n_points": null,
+            "points": null,
+            "min_adj_r2": null,
+            "tie_tolerance": 0.0001,
+            "relative_warning": 1e-08,
+            "keep_candidates": false,
+            "windows": null
+          },
+          "lloq": null,
+          "lloq_relative": null,
+          "blq": "nan",
+          "c0_method": "log_back_extrapolation",
+          "extrapolation_warning": 0.2,
+          "acceptance": {
+            "r2_adj_min": null,
+            "extrapolation_max": null,
+            "span_min": null,
+            "n_points_min": null,
+            "exclude": false
+          },
+          "partial_aucs": {},
+          "tau": null,
+          "tau_tolerance": 0.1,
+          "intervals": true,
+          "units": {},
+          "effect_threshold": null,
+          "n_workers": null,
+          "chunk_rows": 5000,
+          "uncertainty": null,
+          "n_boot": 1000,
+          "seed": null,
+          "ci_level": 0.95,
+          "bootstrap_spread": "se",
+          "bootstrap_distribution": "normal",
+          "delta_step": 0.01
+        }
+      },
+      "expected": {
+        "n_rows": 1,
+        "columns": [
+          {
+            "name": "cmax",
+            "width": 1,
+            "bits": [
+              "0x4020000000000000"
+            ]
+          },
+          {
+            "name": "tmax",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "cmin",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "tmin",
+            "width": 1,
+            "bits": [
+              "0x4008000000000000"
+            ]
+          },
+          {
+            "name": "clast",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "clast_pred",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "tlast",
+            "width": 1,
+            "bits": [
+              "0x4008000000000000"
+            ]
+          },
+          {
+            "name": "auc_last",
+            "width": 1,
+            "bits": [
+              "0x4024329e7886129e"
+            ]
+          },
+          {
+            "name": "auc_all",
+            "width": 1,
+            "bits": [
+              "0x4024329e7886129e"
+            ]
+          },
+          {
+            "name": "auc_inf_obs",
+            "width": 1,
+            "bits": [
+              "0x40271547652b82fe"
+            ]
+          },
+          {
+            "name": "auc_inf_pred",
+            "width": 1,
+            "bits": [
+              "0x40271547652b82fe"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3fc0000000000001"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3fc0000000000001"
+            ]
+          },
+          {
+            "name": "aumc_last",
+            "width": 1,
+            "bits": [
+              "0x40247ba597a4462e"
+            ]
+          },
+          {
+            "name": "aumc_all",
+            "width": 1,
+            "bits": [
+              "0x40247ba597a4462e"
+            ]
+          },
+          {
+            "name": "aumc_inf",
+            "width": 1,
+            "bits": [
+              "0x4030a6a4c7c29f9a"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred",
+            "width": 1,
+            "bits": [
+              "0x4030a6a4c7c29f9a"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3fd8a2b23f3bab74"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3fd8a2b23f3bab74"
+            ]
+          },
+          {
+            "name": "mrt",
+            "width": 1,
+            "bits": [
+              "0x3ff71547652b82fe"
+            ]
+          },
+          {
+            "name": "mrt_last",
+            "width": 1,
+            "bits": [
+              "0x3ff039d9ae501547"
+            ]
+          },
+          {
+            "name": "mrt_pred",
+            "width": 1,
+            "bits": [
+              "0x3ff71547652b82fe"
+            ]
+          },
+          {
+            "name": "thalf_eff",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z",
+            "width": 1,
+            "bits": [
+              "0x3fe62e42fefa39f0"
+            ]
+          },
+          {
+            "name": "lambda_z_stderr",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_intercept",
+            "width": 1,
+            "bits": [
+              "0x4000a2b23f3bab74"
+            ]
+          },
+          {
+            "name": "lambda_z_r2",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_r2_adj",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_n_points",
+            "width": 1,
+            "bits": [
+              "0x4008000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_t_first",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_t_last",
+            "width": 1,
+            "bits": [
+              "0x4008000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_span",
+            "width": 1,
+            "bits": [
+              "0x4000000000000001"
+            ]
+          },
+          {
+            "name": "thalf",
+            "width": 1,
+            "bits": [
+              "0x3fefffffffffffff"
+            ]
+          },
+          {
+            "name": "tlag",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "cmax_half",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "tmax_half",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "cl_f",
+            "width": 1,
+            "bits": [
+              "0x3febb9d3beb8c86b"
+            ]
+          },
+          {
+            "name": "vz_f",
+            "width": 1,
+            "bits": [
+              "0x3ff3ffffffffffff"
+            ]
+          },
+          {
+            "name": "cl_f_pred",
+            "width": 1,
+            "bits": [
+              "0x3febb9d3beb8c86b"
+            ]
+          },
+          {
+            "name": "vz_f_pred",
+            "width": 1,
+            "bits": [
+              "0x3ff3ffffffffffff"
+            ]
+          },
+          {
+            "name": "auc_inf_dn",
+            "width": 1,
+            "bits": [
+              "0x3ff2776c50ef9bfe"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn",
+            "width": 1,
+            "bits": [
+              "0x3ff2776c50ef9bfe"
+            ]
+          },
+          {
+            "name": "cmax_dn",
+            "width": 1,
+            "bits": [
+              "0x3fe999999999999a"
+            ]
+          },
+          {
+            "name": "n",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "flags",
+            "width": 1,
+            "bits": [
+              "0x4030000000000000"
+            ]
+          },
+          {
+            "name": "accepted",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "excluded",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "two_subjects",
+      "note": "two individual curves, the batch path over a sample dimension",
+      "exact": true,
+      "request": {
+        "contract": "analysis/1",
+        "batch": {
+          "contract": "batch/1",
+          "sample_dims": [
+            "subject"
+          ],
+          "sample_shape": [
+            2
+          ],
+          "n_time": 9,
+          "times": [
+            0.25,
+            0.5,
+            1.0,
+            2.0,
+            4.0,
+            6.0,
+            9.0,
+            12.0,
+            24.0,
+            0.25,
+            0.5,
+            1.0,
+            2.0,
+            4.0,
+            6.0,
+            9.0,
+            12.0,
+            24.0
+          ],
+          "values": [
+            12.65251099572423,
+            17.86886892623535,
+            20.10844703453344,
+            17.86888017570137,
+            12.83534911221967,
+            9.196985889216148,
+            5.578254003700262,
+            3.383382080915317,
+            0.45789097221835445,
+            12.340119386177312,
+            16.997393905181543,
+            18.194875295440085,
+            14.629801722912207,
+            8.603791807786592,
+            5.0474128729943875,
+            2.26794883223105,
+            1.0190550994591545,
+            0.04153893182934831
+          ],
+          "sd": null,
+          "se": null,
+          "n": null,
+          "nominal_time": null,
+          "lloq": null,
+          "max_doses": 1,
+          "dose_amount": [
+            100.0,
+            100.0
+          ],
+          "dose_time": [
+            0.0,
+            0.0
+          ],
+          "dose_duration": [
+            "NaN",
+            "NaN"
+          ],
+          "time_unit": "hr",
+          "unit": "mg/l",
+          "dose_unit": "mg",
+          "substance": "caffeine",
+          "substances": null,
+          "route": "oral",
+          "routes": null,
+          "tissue": null,
+          "coords": [
+            {
+              "name": "subject",
+              "dims": [
+                "subject"
+              ],
+              "values": {
+                "str": [
+                  "s1",
+                  "s2"
+                ]
+              }
+            }
+          ]
+        },
+        "options": {
+          "kind": "concentration",
+          "auc_method": "linear_log",
+          "terminal": {
+            "method": "best_fit",
+            "min_points": 3,
+            "exclude_cmax": true,
+            "n_points": null,
+            "points": null,
+            "min_adj_r2": null,
+            "tie_tolerance": 0.0001,
+            "relative_warning": 1e-08,
+            "keep_candidates": false,
+            "windows": null
+          },
+          "lloq": null,
+          "lloq_relative": null,
+          "blq": "nan",
+          "c0_method": "log_back_extrapolation",
+          "extrapolation_warning": 0.2,
+          "acceptance": {
+            "r2_adj_min": null,
+            "extrapolation_max": null,
+            "span_min": null,
+            "n_points_min": null,
+            "exclude": false
+          },
+          "partial_aucs": {},
+          "tau": null,
+          "tau_tolerance": 0.1,
+          "intervals": true,
+          "units": {},
+          "effect_threshold": null,
+          "n_workers": null,
+          "chunk_rows": 5000,
+          "uncertainty": null,
+          "n_boot": 1000,
+          "seed": null,
+          "ci_level": 0.95,
+          "bootstrap_spread": "se",
+          "bootstrap_distribution": "normal",
+          "delta_step": 0.01
+        }
+      },
+      "expected": {
+        "n_rows": 2,
+        "columns": [
+          {
+            "name": "cmax",
+            "width": 1,
+            "bits": [
+              "0x40341bc32f52ab58",
+              "0x403231e358ecb6a8"
+            ]
+          },
+          {
+            "name": "tmax",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000",
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "cmin",
+            "width": 1,
+            "bits": [
+              "0x3fdd4e15efb3ef3d",
+              "0x3fa54497436f86b0"
+            ]
+          },
+          {
+            "name": "tmin",
+            "width": 1,
+            "bits": [
+              "0x4038000000000000",
+              "0x4038000000000000"
+            ]
+          },
+          {
+            "name": "clast",
+            "width": 1,
+            "bits": [
+              "0x3fdd4e15efb3ef3d",
+              "0x3fa54497436f86b0"
+            ]
+          },
+          {
+            "name": "clast_pred",
+            "width": 1,
+            "bits": [
+              "0x3fdd5167ae8fbea1",
+              "0x3fa546fff5f909a2"
+            ]
+          },
+          {
+            "name": "tlast",
+            "width": 1,
+            "bits": [
+              "0x4038000000000000",
+              "0x4038000000000000"
+            ]
+          },
+          {
+            "name": "auc_last",
+            "width": 1,
+            "bits": [
+              "0x40615199c041bf82",
+              "0x40554aae6c68707c"
+            ]
+          },
+          {
+            "name": "auc_all",
+            "width": 1,
+            "bits": [
+              "0x40615199c041bf82",
+              "0x40554aae6c68707c"
+            ]
+          },
+          {
+            "name": "auc_inf_obs",
+            "width": 1,
+            "bits": [
+              "0x4061a98bfe055966",
+              "0x405554a72427ccfe"
+            ]
+          },
+          {
+            "name": "auc_inf_pred",
+            "width": 1,
+            "bits": [
+              "0x4061a995f429708b",
+              "0x405554a8454be566"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3f93ead398280f52",
+              "0x3f5deb1b88a5f6eb"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3f93ed09e3bc78ca",
+              "0x3f5dee7d7ae06a3a"
+            ]
+          },
+          {
+            "name": "aumc_last",
+            "width": 1,
+            "bits": [
+              "0x408975f267b4b5eb",
+              "0x4075891403b2f802"
+            ]
+          },
+          {
+            "name": "aumc_all",
+            "width": 1,
+            "bits": [
+              "0x408975f267b4b5eb",
+              "0x4075891403b2f802"
+            ]
+          },
+          {
+            "name": "aumc_inf",
+            "width": 1,
+            "bits": [
+              "0x408c099731f4e5b3",
+              "0x4075ce42064482df"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred",
+            "width": 1,
+            "bits": [
+              "0x408c09e1e95ef864",
+              "0x4075ce49dc3e4e7f"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3fb786f839cccb30",
+              "0x3f8961638eb4011d"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3fb78963b6688405",
+              "0x3f89643a60f09790"
+            ]
+          },
+          {
+            "name": "mrt",
+            "width": 1,
+            "bits": [
+              "0x40196611c075a184",
+              "0x40105b371260fb7d"
+            ]
+          },
+          {
+            "name": "mrt_last",
+            "width": 1,
+            "bits": [
+              "0x401785a1c052e73c",
+              "0x40102ee39b039167"
+            ]
+          },
+          {
+            "name": "mrt_pred",
+            "width": 1,
+            "bits": [
+              "0x401966471c6c3f35",
+              "0x40105b3c1555a141"
+            ]
+          },
+          {
+            "name": "thalf_eff",
+            "width": 1,
+            "bits": [
+              "0x40119ae41abaed63",
+              "0x4006acb674853328"
+            ]
+          },
+          {
+            "name": "lambda_z",
+            "width": 1,
+            "bits": [
+              "0x3fc5536586b9a503",
+              "0x3fd1101929c338e9"
+            ]
+          },
+          {
+            "name": "lambda_z_stderr",
+            "width": 1,
+            "bits": [
+              "0x3f0d9c8708f4a708",
+              "0x3f0d9c8708f4a708"
+            ]
+          },
+          {
+            "name": "lambda_z_intercept",
+            "width": 1,
+            "bits": [
+              "0x4009be422de2e3b1",
+              "0x4009be422de2e3b2"
+            ]
+          },
+          {
+            "name": "lambda_z_r2",
+            "width": 1,
+            "bits": [
+              "0x3fefffff0936f4c9",
+              "0x3fefffff9fa00671"
+            ]
+          },
+          {
+            "name": "lambda_z_r2_adj",
+            "width": 1,
+            "bits": [
+              "0x3feffffecb84b1fb",
+              "0x3fefffff8788080d"
+            ]
+          },
+          {
+            "name": "lambda_z_n_points",
+            "width": 1,
+            "bits": [
+              "0x4018000000000000",
+              "0x4018000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_t_first",
+            "width": 1,
+            "bits": [
+              "0x4000000000000000",
+              "0x4000000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_t_last",
+            "width": 1,
+            "bits": [
+              "0x4038000000000000",
+              "0x4038000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_span",
+            "width": 1,
+            "bits": [
+              "0x401526eb02e39257",
+              "0x4020ec82bd4426cc"
+            ]
+          },
+          {
+            "name": "thalf",
+            "width": 1,
+            "bits": [
+              "0x4010a4350284bc60",
+              "0x4004cc8ced51aab9"
+            ]
+          },
+          {
+            "name": "tlag",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000",
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "cmax_half",
+            "width": 1,
+            "bits": [
+              "0x40294e15ebd5d4f9",
+              "0x4028ae2420d0bbfb"
+            ]
+          },
+          {
+            "name": "tmax_half",
+            "width": 1,
+            "bits": [
+              "0x3fd0000000000000",
+              "0x3fd0000000000000"
+            ]
+          },
+          {
+            "name": "cl_f",
+            "width": 1,
+            "bits": [
+              "0x3fe6a5a974254be9",
+              "0x3ff2c0991e1b435b"
+            ]
+          },
+          {
+            "name": "vz_f",
+            "width": 1,
+            "bits": [
+              "0x4010fdc9fc5d5360",
+              "0x4011958ef80d33b2"
+            ]
+          },
+          {
+            "name": "cl_f_pred",
+            "width": 1,
+            "bits": [
+              "0x3fe6a59cae4ea2ec",
+              "0x3ff2c0981fea608d"
+            ]
+          },
+          {
+            "name": "vz_f_pred",
+            "width": 1,
+            "bits": [
+              "0x4010fdc0671d9cc9",
+              "0x4011958e09b1d8ca"
+            ]
+          },
+          {
+            "name": "auc_inf_dn",
+            "width": 1,
+            "bits": [
+              "0x3ff69b947858c45a",
+              "0x3feb4da2bda395c0"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn",
+            "width": 1,
+            "bits": [
+              "0x3ff69ba13886f674",
+              "0x3feb4da42fbd4e97"
+            ]
+          },
+          {
+            "name": "cmax_dn",
+            "width": 1,
+            "bits": [
+              "0x3fc9bd22cbeeefcd",
+              "0x3fc74a18c3be5a71"
+            ]
+          },
+          {
+            "name": "n",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "flags",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000",
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "accepted",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000",
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "excluded",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000",
+              "0x0000000000000000"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "multiple_dose",
+      "note": "three doses of twelve hours, the steady state path with its intervals",
+      "exact": false,
+      "request": {
+        "contract": "analysis/1",
+        "batch": {
+          "contract": "batch/1",
+          "sample_dims": [
+            "sample"
+          ],
+          "sample_shape": [
+            1
+          ],
+          "n_time": 21,
+          "times": [
+            0.0,
+            0.5,
+            1.0,
+            2.0,
+            4.0,
+            8.0,
+            11.5,
+            12.0,
+            12.5,
+            13.0,
+            14.0,
+            16.0,
+            20.0,
+            23.5,
+            24.0,
+            24.5,
+            25.0,
+            26.0,
+            28.0,
+            32.0,
+            35.5
+          ],
+          "values": [
+            0.0,
+            2.484532336806538,
+            3.445108688167714,
+            3.7373198298378316,
+            3.0862479056340817,
+            1.9144526669995603,
+            1.2578927247419707,
+            1.1846387753685839,
+            3.600183129522547,
+            4.495789040601045,
+            4.669189709328285,
+            3.8192827162581593,
+            2.3680424334465804,
+            1.5559224382866674,
+            1.4653125895392525,
+            3.864511773214298,
+            4.744724382440364,
+            4.889975551426749,
+            3.9929590109818522,
+            2.4755104401720303,
+            1.6265339503374872
+          ],
+          "sd": null,
+          "se": null,
+          "n": null,
+          "nominal_time": null,
+          "lloq": null,
+          "max_doses": 3,
+          "dose_amount": [
+            50.0,
+            50.0,
+            50.0
+          ],
+          "dose_time": [
+            0.0,
+            12.0,
+            24.0
+          ],
+          "dose_duration": [
+            "NaN",
+            "NaN",
+            "NaN"
+          ],
+          "time_unit": "hr",
+          "unit": "mg/l",
+          "dose_unit": "mg",
+          "substance": "caffeine",
+          "substances": null,
+          "route": "oral",
+          "routes": null,
+          "tissue": null,
+          "coords": [
+            {
+              "name": "sample",
+              "dims": [
+                "sample"
+              ],
+              "values": {
+                "str": [
+                  "s1"
+                ]
+              }
+            }
+          ]
+        },
+        "options": {
+          "kind": "concentration",
+          "auc_method": "linear_log",
+          "terminal": {
+            "method": "best_fit",
+            "min_points": 3,
+            "exclude_cmax": true,
+            "n_points": null,
+            "points": null,
+            "min_adj_r2": null,
+            "tie_tolerance": 0.0001,
+            "relative_warning": 1e-08,
+            "keep_candidates": false,
+            "windows": null
+          },
+          "lloq": null,
+          "lloq_relative": null,
+          "blq": "nan",
+          "c0_method": "log_back_extrapolation",
+          "extrapolation_warning": 0.2,
+          "acceptance": {
+            "r2_adj_min": null,
+            "extrapolation_max": null,
+            "span_min": null,
+            "n_points_min": null,
+            "exclude": false
+          },
+          "partial_aucs": {},
+          "tau": null,
+          "tau_tolerance": 0.1,
+          "intervals": true,
+          "units": {},
+          "effect_threshold": null,
+          "n_workers": null,
+          "chunk_rows": 5000,
+          "uncertainty": null,
+          "n_boot": 1000,
+          "seed": null,
+          "ci_level": 0.95,
+          "bootstrap_spread": "se",
+          "bootstrap_distribution": "normal",
+          "delta_step": 0.01
+        }
+      },
+      "expected": {
+        "n_rows": 1,
+        "columns": [
+          {
+            "name": "cmax",
+            "width": 1,
+            "bits": [
+              "0x40138f55c03e7846"
+            ]
+          },
+          {
+            "name": "tmax",
+            "width": 1,
+            "bits": [
+              "0x4000000000000000"
+            ]
+          },
+          {
+            "name": "cmin",
+            "width": 1,
+            "bits": [
+              "0x3ff771eb9d27cf82"
+            ]
+          },
+          {
+            "name": "tmin",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "clast",
+            "width": 1,
+            "bits": [
+              "0x3ffa064876a887f8"
+            ]
+          },
+          {
+            "name": "clast_pred",
+            "width": 1,
+            "bits": [
+              "0x3ffa0863e2cab7a4"
+            ]
+          },
+          {
+            "name": "tlast",
+            "width": 1,
+            "bits": [
+              "0x4027000000000000"
+            ]
+          },
+          {
+            "name": "auc_last",
+            "width": 1,
+            "bits": [
+              "0x4042767cf30d3f02"
+            ]
+          },
+          {
+            "name": "auc_all",
+            "width": 1,
+            "bits": [
+              "0x4042767cf30d3f02"
+            ]
+          },
+          {
+            "name": "auc_inf_obs",
+            "width": 1,
+            "bits": [
+              "0x4049413db07bd039"
+            ]
+          },
+          {
+            "name": "auc_inf_pred",
+            "width": 1,
+            "bits": [
+              "0x404941ca78655421"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3fd1364a44985d7a"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3fd1374f0f98f1ac"
+            ]
+          },
+          {
+            "name": "aumc_last",
+            "width": 1,
+            "bits": [
+              "0x40663e69abb6456d"
+            ]
+          },
+          {
+            "name": "aumc_all",
+            "width": 1,
+            "bits": [
+              "0x40663e69abb6456d"
+            ]
+          },
+          {
+            "name": "aumc_inf",
+            "width": 1,
+            "bits": [
+              "0x407bf9d06d9c7a91"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred",
+            "width": 1,
+            "bits": [
+              "0x407bfb2dc46cc090"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3fe3473d44a5edd7"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3fe347dc18a29db0"
+            ]
+          },
+          {
+            "name": "mrt",
+            "width": 1,
+            "bits": [
+              "0x4021b94ee5d38008"
+            ]
+          },
+          {
+            "name": "mrt_last",
+            "width": 1,
+            "bits": [
+              "0x401346cf09f61f50"
+            ]
+          },
+          {
+            "name": "mrt_pred",
+            "width": 1,
+            "bits": [
+              "0x4021b9c9687d5448"
+            ]
+          },
+          {
+            "name": "thalf_eff",
+            "width": 1,
+            "bits": [
+              "0x4018920b75aff842"
+            ]
+          },
+          {
+            "name": "lambda_z",
+            "width": 1,
+            "bits": [
+              "0x3fbea73543d96121"
+            ]
+          },
+          {
+            "name": "lambda_z_stderr",
+            "width": 1,
+            "bits": [
+              "0x3f21f299cffd3d4f"
+            ]
+          },
+          {
+            "name": "lambda_z_intercept",
+            "width": 1,
+            "bits": [
+              "0x3ffdd1fb123d5b16"
+            ]
+          },
+          {
+            "name": "lambda_z_r2",
+            "width": 1,
+            "bits": [
+              "0x3feffffd41e83367"
+            ]
+          },
+          {
+            "name": "lambda_z_r2_adj",
+            "width": 1,
+            "bits": [
+              "0x3feffffa83d066ce"
+            ]
+          },
+          {
+            "name": "lambda_z_n_points",
+            "width": 1,
+            "bits": [
+              "0x4008000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_t_first",
+            "width": 1,
+            "bits": [
+              "0x4010000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_t_last",
+            "width": 1,
+            "bits": [
+              "0x4027000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_span",
+            "width": 1,
+            "bits": [
+              "0x3ff4bac761265b36"
+            ]
+          },
+          {
+            "name": "thalf",
+            "width": 1,
+            "bits": [
+              "0x401727c10d623ee9"
+            ]
+          },
+          {
+            "name": "tlag",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "cmax_half",
+            "width": 1,
+            "bits": [
+              "0x3ff771eb9d27cf82"
+            ]
+          },
+          {
+            "name": "tmax_half",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "cl_f",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "vz_f",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "cl_f_pred",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "vz_f_pred",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "auc_inf_dn",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "cmax_dn",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "auc_tau",
+            "width": 1,
+            "bits": [
+              "0x4042db88082304eb"
+            ]
+          },
+          {
+            "name": "auc_tau_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3f956ed70b885d6f"
+            ]
+          },
+          {
+            "name": "cmin_ss",
+            "width": 1,
+            "bits": [
+              "0x3ff771eb9d27cf82"
+            ]
+          },
+          {
+            "name": "cmax_ss",
+            "width": 1,
+            "bits": [
+              "0x40138f55c03e7846"
+            ]
+          },
+          {
+            "name": "ctrough",
+            "width": 1,
+            "bits": [
+              "0x3ff8831eff7c5933"
+            ]
+          },
+          {
+            "name": "cavg",
+            "width": 1,
+            "bits": [
+              "0x400924b5602eb139"
+            ]
+          },
+          {
+            "name": "fluctuation",
+            "width": 1,
+            "bits": [
+              "0x3ff16f2cbf34ec76"
+            ]
+          },
+          {
+            "name": "swing",
+            "width": 1,
+            "bits": [
+              "0x4002b27e6f174755"
+            ]
+          },
+          {
+            "name": "fluctuation_tau",
+            "width": 1,
+            "bits": [
+              "0x3ff1183fc7c7e934"
+            ]
+          },
+          {
+            "name": "swing_tau",
+            "width": 1,
+            "bits": [
+              "0x400188f08ef1bd2b"
+            ]
+          },
+          {
+            "name": "ptr",
+            "width": 1,
+            "bits": [
+              "0x400988f08ef1bd2b"
+            ]
+          },
+          {
+            "name": "accumulation_ratio",
+            "width": 1,
+            "bits": [
+              "0x3ff4fd02a039b183"
+            ]
+          },
+          {
+            "name": "accumulation_ratio_obs",
+            "width": 1,
+            "bits": [
+              "0x3ff5406d42de19e4"
+            ]
+          },
+          {
+            "name": "accumulation_ratio_cmax_obs",
+            "width": 1,
+            "bits": [
+              "0x3ff4ef476fabb7e4"
+            ]
+          },
+          {
+            "name": "accumulation_ratio_cmin_obs",
+            "width": 1,
+            "bits": [
+              "0x7ff0000000000000"
+            ]
+          },
+          {
+            "name": "accumulation_ratio_ctrough_obs",
+            "width": 1,
+            "bits": [
+              "0x3ff4b11356e0025a"
+            ]
+          },
+          {
+            "name": "cl_ss_f",
+            "width": 1,
+            "bits": [
+              "0x3ff5362ff8e39907"
+            ]
+          },
+          {
+            "name": "n_doses",
+            "width": 1,
+            "bits": [
+              "0x4008000000000000"
+            ]
+          },
+          {
+            "name": "tau",
+            "width": 1,
+            "bits": [
+              "0x4028000000000000"
+            ]
+          },
+          {
+            "name": "n",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "flags",
+            "width": 1,
+            "bits": [
+              "0x4090100000000000"
+            ]
+          },
+          {
+            "name": "accepted",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "excluded",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "interval_start",
+            "width": 3,
+            "bits": [
+              "0x0000000000000000",
+              "0x4028000000000000",
+              "0x4038000000000000"
+            ]
+          },
+          {
+            "name": "interval_end",
+            "width": 3,
+            "bits": [
+              "0x4028000000000000",
+              "0x4038000000000000",
+              "0x4042000000000000"
+            ]
+          },
+          {
+            "name": "interval_dose",
+            "width": 3,
+            "bits": [
+              "0x4049000000000000",
+              "0x4049000000000000",
+              "0x4049000000000000"
+            ]
+          },
+          {
+            "name": "interval_n_points",
+            "width": 3,
+            "bits": [
+              "0x4020000000000000",
+              "0x4020000000000000",
+              "0x401c000000000000"
+            ]
+          },
+          {
+            "name": "interval_auc",
+            "width": 3,
+            "bits": [
+              "0x403c651fbe442262",
+              "0x4041f70514f625e3",
+              "0x4042db88082304eb"
+            ]
+          },
+          {
+            "name": "interval_cmax",
+            "width": 3,
+            "bits": [
+              "0x400de607f05ec424",
+              "0x4012ad40113189f7",
+              "0x40138f55c03e7846"
+            ]
+          },
+          {
+            "name": "interval_tmax",
+            "width": 3,
+            "bits": [
+              "0x4000000000000000",
+              "0x4000000000000000",
+              "0x4000000000000000"
+            ]
+          },
+          {
+            "name": "interval_cmin",
+            "width": 3,
+            "bits": [
+              "0x0000000000000000",
+              "0x3ff2f447c9dc8143",
+              "0x3ff771eb9d27cf82"
+            ]
+          },
+          {
+            "name": "interval_ctrough",
+            "width": 3,
+            "bits": [
+              "0x3ff2f447c9dc8143",
+              "0x3ff771eb9d27cf82",
+              "0x3ff8831eff7c5933"
+            ]
+          },
+          {
+            "name": "interval_c_start",
+            "width": 3,
+            "bits": [
+              "0x0000000000000000",
+              "0x3ff2f447c9dc8143",
+              "0x3ff771eb9d27cf82"
+            ]
+          },
+          {
+            "name": "interval_cavg",
+            "width": 3,
+            "bits": [
+              "0x4002ee152982c197",
+              "0x4007f406c69d87d9",
+              "0x400924b5602eb139"
+            ]
+          },
+          {
+            "name": "interval_fluctuation",
+            "width": 3,
+            "bits": [
+              "0x3ff94554a43cda2a",
+              "0x3ff29edd00534934",
+              "0x3ff16f2cbf34ec76"
+            ]
+          },
+          {
+            "name": "interval_swing",
+            "width": 3,
+            "bits": [
+              "0x7ff0000000000000",
+              "0x40078814d11ddd7a",
+              "0x4002b27e6f174755"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "bootstrap_group",
+      "note": "a seeded bootstrap, which pins the draws of the generator in wasm",
+      "exact": false,
+      "request": {
+        "contract": "analysis/1",
+        "batch": {
+          "contract": "batch/1",
+          "sample_dims": [
+            "group"
+          ],
+          "sample_shape": [
+            3
+          ],
+          "n_time": 9,
+          "times": [
+            0.25,
+            0.5,
+            1.0,
+            2.0,
+            4.0,
+            6.0,
+            9.0,
+            12.0,
+            24.0,
+            0.25,
+            0.5,
+            1.0,
+            2.0,
+            4.0,
+            6.0,
+            9.0,
+            12.0,
+            24.0,
+            0.25,
+            0.5,
+            1.0,
+            2.0,
+            4.0,
+            6.0,
+            9.0,
+            12.0,
+            24.0
+          ],
+          "values": [
+            12.65251099572423,
+            17.86886892623535,
+            20.10844703453344,
+            17.86888017570137,
+            12.83534911221967,
+            9.196985889216148,
+            5.578254003700262,
+            3.383382080915317,
+            0.45789097221835445,
+            12.547511509587311,
+            17.573522501032606,
+            19.449213727490392,
+            16.716462219061636,
+            11.23315508361624,
+            7.52985518312551,
+            4.132472205531897,
+            2.2679488322353123,
+            0.20574367622550074,
+            12.44338338345891,
+            17.283057722857443,
+            18.811592658944353,
+            15.638367170949296,
+            9.830957617852583,
+            6.164924004648495,
+            3.0614107063187936,
+            1.5202515656304496,
+            0.09244659291207338
+          ],
+          "sd": [
+            2.021225580592665,
+            3.9526138197806615,
+            3.0421055756807167,
+            3.0520535419940624,
+            2.5627786384568005,
+            1.3666210827164547,
+            1.1017785343907647,
+            0.6105061867977778,
+            0.08548789994908852,
+            1.8777388886605533,
+            3.6386269379072793,
+            3.1774569885846478,
+            3.665962225149587,
+            1.9370872211056864,
+            1.0259957696869568,
+            0.7311086191056932,
+            0.5503030570368841,
+            0.04631211688775262,
+            2.5057228176003945,
+            3.5181600673823583,
+            1.685596420957902,
+            2.6910243843132022,
+            2.4546401568388654,
+            0.8860973763024873,
+            0.5958399111212548,
+            0.16392711227436318,
+            0.018024510285887443
+          ],
+          "se": [
+            0.714611157172395,
+            1.397460017689284,
+            1.0755467408246202,
+            1.0790638780442114,
+            0.9060790769664154,
+            0.48317351745065334,
+            0.3895375365167427,
+            0.21584653232052486,
+            0.0302245368816988,
+            0.625912962886851,
+            1.212875645969093,
+            1.059152329528216,
+            1.2219874083831956,
+            0.6456957403685621,
+            0.3419985898956523,
+            0.24370287303523108,
+            0.18343435234562802,
+            0.01543737229591754,
+            0.7923791288671894,
+            1.112539898597971,
+            0.5330323906054949,
+            0.8509766293482006,
+            0.776225373172375,
+            0.2802085937815169,
+            0.18842112399754565,
+            0.05183830450411324,
+            0.005699850621253702
+          ],
+          "n": [
+            8.0,
+            8.0,
+            8.0,
+            8.0,
+            8.0,
+            8.0,
+            8.0,
+            8.0,
+            8.0,
+            9.0,
+            9.0,
+            9.0,
+            9.0,
+            9.0,
+            9.0,
+            9.0,
+            9.0,
+            9.0,
+            10.0,
+            10.0,
+            10.0,
+            10.0,
+            10.0,
+            10.0,
+            10.0,
+            10.0,
+            10.0
+          ],
+          "nominal_time": null,
+          "lloq": null,
+          "max_doses": 1,
+          "dose_amount": [
+            100.0,
+            100.0,
+            100.0
+          ],
+          "dose_time": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "dose_duration": [
+            "NaN",
+            "NaN",
+            "NaN"
+          ],
+          "time_unit": "hr",
+          "unit": "mg/l",
+          "dose_unit": "mg",
+          "substance": "caffeine",
+          "substances": null,
+          "route": "oral",
+          "routes": null,
+          "tissue": null,
+          "coords": [
+            {
+              "name": "group",
+              "dims": [
+                "group"
+              ],
+              "values": {
+                "str": [
+                  "low",
+                  "mid",
+                  "high"
+                ]
+              }
+            }
+          ]
+        },
+        "options": {
+          "kind": "concentration",
+          "auc_method": "linear_log",
+          "terminal": {
+            "method": "best_fit",
+            "min_points": 3,
+            "exclude_cmax": true,
+            "n_points": null,
+            "points": null,
+            "min_adj_r2": null,
+            "tie_tolerance": 0.0001,
+            "relative_warning": 1e-08,
+            "keep_candidates": false,
+            "windows": null
+          },
+          "lloq": null,
+          "lloq_relative": null,
+          "blq": "nan",
+          "c0_method": "log_back_extrapolation",
+          "extrapolation_warning": 0.2,
+          "acceptance": {
+            "r2_adj_min": null,
+            "extrapolation_max": null,
+            "span_min": null,
+            "n_points_min": null,
+            "exclude": false
+          },
+          "partial_aucs": {},
+          "tau": null,
+          "tau_tolerance": 0.1,
+          "intervals": true,
+          "units": {},
+          "effect_threshold": null,
+          "n_workers": null,
+          "chunk_rows": 5000,
+          "uncertainty": "bootstrap",
+          "n_boot": 200,
+          "seed": 20261118,
+          "ci_level": 0.9,
+          "bootstrap_spread": "se",
+          "bootstrap_distribution": "normal",
+          "delta_step": 0.01
+        }
+      },
+      "expected": {
+        "n_rows": 3,
+        "columns": [
+          {
+            "name": "cmax",
+            "width": 1,
+            "bits": [
+              "0x40341bc32f52ab58",
+              "0x403372ffabbc7c49",
+              "0x4032cfc48957d6f5"
+            ]
+          },
+          {
+            "name": "tmax",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000",
+              "0x3ff0000000000000",
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "cmin",
+            "width": 1,
+            "bits": [
+              "0x3fdd4e15efb3ef3d",
+              "0x3fca55cf0c5fa8c9",
+              "0x3fb7aa94752f195a"
+            ]
+          },
+          {
+            "name": "tmin",
+            "width": 1,
+            "bits": [
+              "0x4038000000000000",
+              "0x4038000000000000",
+              "0x4038000000000000"
+            ]
+          },
+          {
+            "name": "clast",
+            "width": 1,
+            "bits": [
+              "0x3fdd4e15efb3ef3d",
+              "0x3fca55cf0c5fa8c9",
+              "0x3fb7aa94752f195a"
+            ]
+          },
+          {
+            "name": "clast_pred",
+            "width": 1,
+            "bits": [
+              "0x3fdd5167ae8fbea1",
+              "0x3fca58caadcc8e61",
+              "0x3fb7ad42b34e54e7"
+            ]
+          },
+          {
+            "name": "tlast",
+            "width": 1,
+            "bits": [
+              "0x4038000000000000",
+              "0x4038000000000000",
+              "0x4038000000000000"
+            ]
+          },
+          {
+            "name": "auc_last",
+            "width": 1,
+            "bits": [
+              "0x40615199c041bf82",
+              "0x405cd72efc068c4c",
+              "0x40588eadefeae2c1"
+            ]
+          },
+          {
+            "name": "auc_all",
+            "width": 1,
+            "bits": [
+              "0x40615199c041bf82",
+              "0x405cd72efc068c4c",
+              "0x40588eadefeae2c1"
+            ]
+          },
+          {
+            "name": "auc_inf_obs",
+            "width": 1,
+            "bits": [
+              "0x4061a98bfe055966",
+              "0x405d190a7d2350cc",
+              "0x4058a80aeae20fe1"
+            ]
+          },
+          {
+            "name": "auc_inf_pred",
+            "width": 1,
+            "bits": [
+              "0x4061a995f429708b",
+              "0x405d1911f2c759f0",
+              "0x4058a80dca544ff7"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3f93ead398280f52",
+              "0x3f821b435bda4d58",
+              "0x3f707569ed4bbb06"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3f93ed09e3bc78ca",
+              "0x3f821d4bbdd4617b",
+              "0x3f70774540c2ed3f"
+            ]
+          },
+          {
+            "name": "aumc_last",
+            "width": 1,
+            "bits": [
+              "0x408975f267b4b5eb",
+              "0x40828319335cdd5c",
+              "0x407bd4067bbb6c40"
+            ]
+          },
+          {
+            "name": "aumc_all",
+            "width": 1,
+            "bits": [
+              "0x408975f267b4b5eb",
+              "0x40828319335cdd5c",
+              "0x407bd4067bbb6c40"
+            ]
+          },
+          {
+            "name": "aumc_inf",
+            "width": 1,
+            "bits": [
+              "0x408c099731f4e5b3",
+              "0x408371d804d01ef9",
+              "0x407c8762e482796a"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred",
+            "width": 1,
+            "bits": [
+              "0x408c09e1e95ef864",
+              "0x408371f30f9d1280",
+              "0x407c8777355d7f7a"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3fb786f839cccb30",
+              "0x3fa88e6c7133f7c1",
+              "0x3f9925e40848f498"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3fb78963b6688405",
+              "0x3fa8911253a8a9ce",
+              "0x3f9928ab529fd64b"
+            ]
+          },
+          {
+            "name": "mrt",
+            "width": 1,
+            "bits": [
+              "0x40196611c075a184",
+              "0x40156254128411b9",
+              "0x4012834d10fc1539"
+            ]
+          },
+          {
+            "name": "mrt_last",
+            "width": 1,
+            "bits": [
+              "0x401785a1c052e73c",
+              "0x40148a4269dcba7e",
+              "0x4012218fae88ea9d"
+            ]
+          },
+          {
+            "name": "mrt_pred",
+            "width": 1,
+            "bits": [
+              "0x401966471c6c3f35",
+              "0x4015626c545cc430",
+              "0x4012835817b61e79"
+            ]
+          },
+          {
+            "name": "thalf_eff",
+            "width": 1,
+            "bits": [
+              "0x40119ae41abaed63",
+              "0x400da507d58d04e7",
+              "0x4009aa10f98f4605"
+            ]
+          },
+          {
+            "name": "lambda_z",
+            "width": 1,
+            "bits": [
+              "0x3fc5536586b9a503",
+              "0x3fc997a9cafde945",
+              "0x3fcddbee0f422d87"
+            ]
+          },
+          {
+            "name": "lambda_z_stderr",
+            "width": 1,
+            "bits": [
+              "0x3f0d9c8708f4a708",
+              "0x3f0d9c870910b648",
+              "0x3f0d9c870964e409"
+            ]
+          },
+          {
+            "name": "lambda_z_intercept",
+            "width": 1,
+            "bits": [
+              "0x4009be422de2e3b1",
+              "0x4009be422de2e3b0",
+              "0x4009be422de2e3af"
+            ]
+          },
+          {
+            "name": "lambda_z_r2",
+            "width": 1,
+            "bits": [
+              "0x3fefffff0936f4c9",
+              "0x3fefffff54a43bfc",
+              "0x3fefffff821d571d"
+            ]
+          },
+          {
+            "name": "lambda_z_r2_adj",
+            "width": 1,
+            "bits": [
+              "0x3feffffecb84b1fb",
+              "0x3fefffff29cd4afb",
+              "0x3fefffff62a4ace4"
+            ]
+          },
+          {
+            "name": "lambda_z_n_points",
+            "width": 1,
+            "bits": [
+              "0x4018000000000000",
+              "0x4018000000000000",
+              "0x4018000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_t_first",
+            "width": 1,
+            "bits": [
+              "0x4000000000000000",
+              "0x4000000000000000",
+              "0x4000000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_t_last",
+            "width": 1,
+            "bits": [
+              "0x4038000000000000",
+              "0x4038000000000000",
+              "0x4038000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_span",
+            "width": 1,
+            "bits": [
+              "0x401526eb02e39257",
+              "0x401962492ac52615",
+              "0x401d9da752a6b9d2"
+            ]
+          },
+          {
+            "name": "thalf",
+            "width": 1,
+            "bits": [
+              "0x4010a4350284bc60",
+              "0x400bbbece2440883",
+              "0x4007c564aedfe674"
+            ]
+          },
+          {
+            "name": "tlag",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000",
+              "0x0000000000000000",
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "cmax_half",
+            "width": 1,
+            "bits": [
+              "0x40294e15ebd5d4f9",
+              "0x402918536db7b8e1",
+              "0x4028e30325971779"
+            ]
+          },
+          {
+            "name": "tmax_half",
+            "width": 1,
+            "bits": [
+              "0x3fd0000000000000",
+              "0x3fd0000000000000",
+              "0x3fd0000000000000"
+            ]
+          },
+          {
+            "name": "cl_f",
+            "width": 1,
+            "bits": [
+              "0x3fe6a5a974254be9",
+              "0x3feb7e542fb5a1ed",
+              "0x3ff03913bf37eeb9"
+            ]
+          },
+          {
+            "name": "vz_f",
+            "width": 1,
+            "bits": [
+              "0x4010fdc9fc5d5360",
+              "0x40113041839d23d5",
+              "0x401162da59ca1b56"
+            ]
+          },
+          {
+            "name": "cl_f_pred",
+            "width": 1,
+            "bits": [
+              "0x3fe6a59cae4ea2ec",
+              "0x3feb7e4d235dbfe5",
+              "0x3ff03911db530fae"
+            ]
+          },
+          {
+            "name": "vz_f_pred",
+            "width": 1,
+            "bits": [
+              "0x4010fdc0671d9cc9",
+              "0x4011303d1b90df23",
+              "0x401162d853334248"
+            ]
+          },
+          {
+            "name": "auc_inf_dn",
+            "width": 1,
+            "bits": [
+              "0x3ff69b947858c45a",
+              "0x3ff29f62df72c312",
+              "0x3fef8f6a22690a16"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn",
+            "width": 1,
+            "bits": [
+              "0x3ff69ba13886f674",
+              "0x3ff29f67a59e4e0a",
+              "0x3fef8f6dcfc8146f"
+            ]
+          },
+          {
+            "name": "cmax_dn",
+            "width": 1,
+            "bits": [
+              "0x3fc9bd22cbeeefcd",
+              "0x3fc8e51e4c7661a5",
+              "0x3fc8142ec447798c"
+            ]
+          },
+          {
+            "name": "n",
+            "width": 1,
+            "bits": [
+              "0x4020000000000000",
+              "0x4022000000000000",
+              "0x4024000000000000"
+            ]
+          },
+          {
+            "name": "cmax_sd",
+            "width": 1,
+            "bits": [
+              "0x4005f53a7e27d24c",
+              "0x4006d9a5c365e928",
+              "0x3ffc74cf91f41230"
+            ]
+          },
+          {
+            "name": "cmax_se",
+            "width": 1,
+            "bits": [
+              "0x3fef0d9e18afde9d",
+              "0x3fee7787af328c35",
+              "0x3fe1ff51a3a806c3"
+            ]
+          },
+          {
+            "name": "cmax_ci_low",
+            "width": 1,
+            "bits": [
+              "0x4032abab9b7eb5a8",
+              "0x40320341e0a77d54",
+              "0x4031e9e70813c67c"
+            ]
+          },
+          {
+            "name": "cmax_ci_high",
+            "width": 1,
+            "bits": [
+              "0x4035c3811cf2de59",
+              "0x4035292cb857f710",
+              "0x4033c9dfcf7be1bb"
+            ]
+          },
+          {
+            "name": "cmax_geomean",
+            "width": 1,
+            "bits": [
+              "0x40341bbae8a1c7bf",
+              "0x403384d134346d29",
+              "0x4032cc92bac1f728"
+            ]
+          },
+          {
+            "name": "cmax_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fc1870e9a7df516",
+              "0x3fc2bb57223a6056",
+              "0x3fb83fdfe4dcd12d"
+            ]
+          },
+          {
+            "name": "cmin_sd",
+            "width": 1,
+            "bits": [
+              "0x3fb5eeb1877a8ece",
+              "0x3fa62a8d65d0a2e8",
+              "0x3f929c0ea4debf86"
+            ]
+          },
+          {
+            "name": "cmin_se",
+            "width": 1,
+            "bits": [
+              "0x3f9f04602b2c7c22",
+              "0x3f8d8e11dd162e8a",
+              "0x3f778a1bd18c5157"
+            ]
+          },
+          {
+            "name": "cmin_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3fda3017f134a390",
+              "0x3fc7630cfc69d34f",
+              "0x3fb52808b0d340c1"
+            ]
+          },
+          {
+            "name": "cmin_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3fe0526d9546101f",
+              "0x3fcd23e863367f2d",
+              "0x3fb9d48c728fead2"
+            ]
+          },
+          {
+            "name": "cmin_geomean",
+            "width": 1,
+            "bits": [
+              "0x3fdd32fef516fb97",
+              "0x3fca57e39e7cfd42",
+              "0x3fb7a3cebc1d324e"
+            ]
+          },
+          {
+            "name": "cmin_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fc84c6b4f3dbc1e",
+              "0x3fcba1844e569da8",
+              "0x3fc98f01ca554680"
+            ]
+          },
+          {
+            "name": "clast_sd",
+            "width": 1,
+            "bits": [
+              "0x3fb5eeb1877a8ece",
+              "0x3fa62a8d65d0a2e8",
+              "0x3f929c0ea4debf86"
+            ]
+          },
+          {
+            "name": "clast_se",
+            "width": 1,
+            "bits": [
+              "0x3f9f04602b2c7c22",
+              "0x3f8d8e11dd162e8a",
+              "0x3f778a1bd18c5157"
+            ]
+          },
+          {
+            "name": "clast_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3fda3017f134a390",
+              "0x3fc7630cfc69d34f",
+              "0x3fb52808b0d340c1"
+            ]
+          },
+          {
+            "name": "clast_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3fe0526d9546101f",
+              "0x3fcd23e863367f2d",
+              "0x3fb9d48c728fead2"
+            ]
+          },
+          {
+            "name": "clast_geomean",
+            "width": 1,
+            "bits": [
+              "0x3fdd32fef516fb97",
+              "0x3fca57e39e7cfd42",
+              "0x3fb7a3cebc1d324e"
+            ]
+          },
+          {
+            "name": "clast_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fc84c6b4f3dbc1e",
+              "0x3fcba1844e569da8",
+              "0x3fc98f01ca554680"
+            ]
+          },
+          {
+            "name": "clast_pred_sd",
+            "width": 1,
+            "bits": [
+              "0x3fb4ba7c6f9ae105",
+              "0x3fa597b49cb1d15d",
+              "0x3f9211e1e54b0761"
+            ]
+          },
+          {
+            "name": "clast_pred_se",
+            "width": 1,
+            "bits": [
+              "0x3f9d50812c277f46",
+              "0x3f8cca4626426c7c",
+              "0x3f76db5470136225"
+            ]
+          },
+          {
+            "name": "clast_pred_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3fda33481c3355f9",
+              "0x3fc718b4693d6716",
+              "0x3fb527d0f4231da0"
+            ]
+          },
+          {
+            "name": "clast_pred_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3fe027a2bafc7d3b",
+              "0x3fcd3333b3590145",
+              "0x3fb9bc7e0d5737c5"
+            ]
+          },
+          {
+            "name": "clast_pred_geomean",
+            "width": 1,
+            "bits": [
+              "0x3fdd24c992470fb3",
+              "0x3fca410a31ed46ba",
+              "0x3fb7a07e2c6b73d8"
+            ]
+          },
+          {
+            "name": "clast_pred_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fc6f3dbd34f41c5",
+              "0x3fcae670c43a5723",
+              "0x3fc8d2e464dfbc05"
+            ]
+          },
+          {
+            "name": "auc_last_sd",
+            "width": 1,
+            "bits": [
+              "0x4022920684f3a2bc",
+              "0x40230a9298a97e6a",
+              "0x401a85f3c0a830fe"
+            ]
+          },
+          {
+            "name": "auc_last_se",
+            "width": 1,
+            "bits": [
+              "0x400a433510f77b0e",
+              "0x4009636e20e1fde2",
+              "0x4000c657c20f3e10"
+            ]
+          },
+          {
+            "name": "auc_last_ci_low",
+            "width": 1,
+            "bits": [
+              "0x4060aa87ef3d1534",
+              "0x405b87c77ab6af95",
+              "0x4057a86b5c5b1eb6"
+            ]
+          },
+          {
+            "name": "auc_last_ci_high",
+            "width": 1,
+            "bits": [
+              "0x4061f56782bdc6eb",
+              "0x405df4c8a71a5391",
+              "0x4059628497448967"
+            ]
+          },
+          {
+            "name": "auc_last_geomean",
+            "width": 1,
+            "bits": [
+              "0x406155bd7635a5d5",
+              "0x405cc6d964c83a67",
+              "0x405882ffe40b9387"
+            ]
+          },
+          {
+            "name": "auc_last_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb13820eeaada15",
+              "0x3fb547f15d71c671",
+              "0x3fb157689c75e9f7"
+            ]
+          },
+          {
+            "name": "auc_all_sd",
+            "width": 1,
+            "bits": [
+              "0x4022920684f3a2bc",
+              "0x40230a9298a97e6a",
+              "0x401a85f3c0a830fe"
+            ]
+          },
+          {
+            "name": "auc_all_se",
+            "width": 1,
+            "bits": [
+              "0x400a433510f77b0e",
+              "0x4009636e20e1fde2",
+              "0x4000c657c20f3e10"
+            ]
+          },
+          {
+            "name": "auc_all_ci_low",
+            "width": 1,
+            "bits": [
+              "0x4060aa87ef3d1534",
+              "0x405b87c77ab6af95",
+              "0x4057a86b5c5b1eb6"
+            ]
+          },
+          {
+            "name": "auc_all_ci_high",
+            "width": 1,
+            "bits": [
+              "0x4061f56782bdc6eb",
+              "0x405df4c8a71a5391",
+              "0x4059628497448967"
+            ]
+          },
+          {
+            "name": "auc_all_geomean",
+            "width": 1,
+            "bits": [
+              "0x406155bd7635a5d5",
+              "0x405cc6d964c83a67",
+              "0x405882ffe40b9387"
+            ]
+          },
+          {
+            "name": "auc_all_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb13820eeaada15",
+              "0x3fb547f15d71c671",
+              "0x3fb157689c75e9f7"
+            ]
+          },
+          {
+            "name": "auc_inf_obs_sd",
+            "width": 1,
+            "bits": [
+              "0x4022bf24ff5548d2",
+              "0x40231378b0f9a6ec",
+              "0x401a863f1784015e"
+            ]
+          },
+          {
+            "name": "auc_inf_obs_se",
+            "width": 1,
+            "bits": [
+              "0x400a8303e8b39185",
+              "0x40096f4b96a233e5",
+              "0x4000c6876823d648"
+            ]
+          },
+          {
+            "name": "auc_inf_obs_ci_low",
+            "width": 1,
+            "bits": [
+              "0x406100d1a2c126bb",
+              "0x405bc244d7315a7b",
+              "0x4057c3b93599f690"
+            ]
+          },
+          {
+            "name": "auc_inf_obs_ci_high",
+            "width": 1,
+            "bits": [
+              "0x40624cfaf3f1f0a2",
+              "0x405e4195f4d752cf",
+              "0x40597af1dba597e3"
+            ]
+          },
+          {
+            "name": "auc_inf_obs_geomean",
+            "width": 1,
+            "bits": [
+              "0x4061ad7ea95133dc",
+              "0x405d08e7f10913d1",
+              "0x40589c66e6aece91"
+            ]
+          },
+          {
+            "name": "auc_inf_obs_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb10c1202b46e60",
+              "0x3fb5215ceeba2bbb",
+              "0x3fb145b3b8a07dd1"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_sd",
+            "width": 1,
+            "bits": [
+              "0x4022b398d3bcbf56",
+              "0x402317aa86a69b6d",
+              "0x401a8568a8a9226b"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_se",
+            "width": 1,
+            "bits": [
+              "0x400a72af40bbb72f",
+              "0x400974e35e3379e7",
+              "0x4000c5ffc995d54d"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_ci_low",
+            "width": 1,
+            "bits": [
+              "0x406100071b8d3b1e",
+              "0x405bc19da81cd2e9",
+              "0x4057c3d31628969d"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_ci_high",
+            "width": 1,
+            "bits": [
+              "0x40624ae6407b8c62",
+              "0x405e405479d1505f",
+              "0x40597aab7f8cc468"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_geomean",
+            "width": 1,
+            "bits": [
+              "0x4061ad5027eaa845",
+              "0x405d08aac7304c57",
+              "0x40589c62b4ae45fc"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb101eb79d15ad2",
+              "0x3fb52624d578c7df",
+              "0x3fb1452f8cb8e384"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_sd",
+            "width": 1,
+            "bits": [
+              "0x3f74b06662381e5c",
+              "0x3f647a8e68d1fe63",
+              "0x3f51591bdfd24095"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_se",
+            "width": 1,
+            "bits": [
+              "0x3f5d423d995f7709",
+              "0x3f4b4e13366d532f",
+              "0x3f35f19b966d6709"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3f90e081941f83fd",
+              "0x3f7e6eb66ea87d6b",
+              "0x3f6c60e1f286dfc3"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3f96f593189e327e",
+              "0x3f848a421dc4d7d4",
+              "0x3f729ccd910dde13"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_pred_sd",
+            "width": 1,
+            "bits": [
+              "0x3f7443d7218138cc",
+              "0x3f63f2a609c0bf4c",
+              "0x3f511718052efab3"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_pred_se",
+            "width": 1,
+            "bits": [
+              "0x3f5ca8b6d51ec6da",
+              "0x3f4a98dd62565465",
+              "0x3f359e1ac675abb8"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_pred_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3f91076a007c25f4",
+              "0x3f7e184d08aa473a",
+              "0x3f6c5bb4e6bf4fff"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_pred_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3f96e98c5798c3df",
+              "0x3f84a93bb1be0830",
+              "0x3f728dfe52c994d1"
+            ]
+          },
+          {
+            "name": "aumc_last_sd",
+            "width": 1,
+            "bits": [
+              "0x404feaa5c31bd4a9",
+              "0x404caff17042b7e8",
+              "0x403d0264242ad7bf"
+            ]
+          },
+          {
+            "name": "aumc_last_se",
+            "width": 1,
+            "bits": [
+              "0x403691852fbff7f9",
+              "0x40331ff64ad72545",
+              "0x402258dcb8040847"
+            ]
+          },
+          {
+            "name": "aumc_last_ci_low",
+            "width": 1,
+            "bits": [
+              "0x4088623081558a33",
+              "0x40818ce8c203198f",
+              "0x407ad0f4907e0187"
+            ]
+          },
+          {
+            "name": "aumc_last_ci_high",
+            "width": 1,
+            "bits": [
+              "0x408a93ee8a08321c",
+              "0x408375ffc2510a86",
+              "0x407cb14f01dfa3ea"
+            ]
+          },
+          {
+            "name": "aumc_last_geomean",
+            "width": 1,
+            "bits": [
+              "0x4089755bcc172260",
+              "0x40827b4f5d0a6a02",
+              "0x407bca67e45da903"
+            ]
+          },
+          {
+            "name": "aumc_last_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb42228770ee4f4",
+              "0x3fb8f6aed5e17997",
+              "0x3fb0c05cfdc572e1"
+            ]
+          },
+          {
+            "name": "aumc_all_sd",
+            "width": 1,
+            "bits": [
+              "0x404feaa5c31bd4a9",
+              "0x404caff17042b7e8",
+              "0x403d0264242ad7bf"
+            ]
+          },
+          {
+            "name": "aumc_all_se",
+            "width": 1,
+            "bits": [
+              "0x403691852fbff7f9",
+              "0x40331ff64ad72545",
+              "0x402258dcb8040847"
+            ]
+          },
+          {
+            "name": "aumc_all_ci_low",
+            "width": 1,
+            "bits": [
+              "0x4088623081558a33",
+              "0x40818ce8c203198f",
+              "0x407ad0f4907e0187"
+            ]
+          },
+          {
+            "name": "aumc_all_ci_high",
+            "width": 1,
+            "bits": [
+              "0x408a93ee8a08321c",
+              "0x408375ffc2510a86",
+              "0x407cb14f01dfa3ea"
+            ]
+          },
+          {
+            "name": "aumc_all_geomean",
+            "width": 1,
+            "bits": [
+              "0x4089755bcc172260",
+              "0x40827b4f5d0a6a02",
+              "0x407bca67e45da903"
+            ]
+          },
+          {
+            "name": "aumc_all_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb42228770ee4f4",
+              "0x3fb8f6aed5e17997",
+              "0x3fb0c05cfdc572e1"
+            ]
+          },
+          {
+            "name": "aumc_inf_sd",
+            "width": 1,
+            "bits": [
+              "0x4051f57a0f208123",
+              "0x404dab3088431a52",
+              "0x403d75f540a701e2"
+            ]
+          },
+          {
+            "name": "aumc_inf_se",
+            "width": 1,
+            "bits": [
+              "0x403965d0648505b4",
+              "0x4033c775b02cbc37",
+              "0x4022a1f3fc7109ac"
+            ]
+          },
+          {
+            "name": "aumc_inf_ci_low",
+            "width": 1,
+            "bits": [
+              "0x408aaa572b8298af",
+              "0x4082773fdc6e0b34",
+              "0x407b90e62d278226"
+            ]
+          },
+          {
+            "name": "aumc_inf_ci_high",
+            "width": 1,
+            "bits": [
+              "0x408d531823ceabb1",
+              "0x40846b3ce6a3e686",
+              "0x407d6ad1658801eb"
+            ]
+          },
+          {
+            "name": "aumc_inf_geomean",
+            "width": 1,
+            "bits": [
+              "0x408c0738d7e366d4",
+              "0x40836ab50dd5e801",
+              "0x407c7e056b0a3cd6"
+            ]
+          },
+          {
+            "name": "aumc_inf_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb491724fed6252",
+              "0x3fb894bac0811d8e",
+              "0x3fb09644fa4fec4e"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred_sd",
+            "width": 1,
+            "bits": [
+              "0x4051f5d79726d20b",
+              "0x404e22f17dee99f7",
+              "0x403d712cb4aa3ede"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred_se",
+            "width": 1,
+            "bits": [
+              "0x40396654aa7bea86",
+              "0x4034174ba949bbfa",
+              "0x40229eed83c271dd"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred_ci_low",
+            "width": 1,
+            "bits": [
+              "0x408aaf90d61849dd",
+              "0x40826a14cbd4c194",
+              "0x407b91bfb5ea151f"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred_ci_high",
+            "width": 1,
+            "bits": [
+              "0x408d4c20d0cbbb48",
+              "0x40846d5902285b5f",
+              "0x407d6ba31e391bff"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred_geomean",
+            "width": 1,
+            "bits": [
+              "0x408c05d097f9ddcb",
+              "0x408369c6c437cf0d",
+              "0x407c7de79a5b11f2"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb491e9869a749d",
+              "0x3fb8fa2792a7b57e",
+              "0x3fb09395d1e11c82"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_sd",
+            "width": 1,
+            "bits": [
+              "0x3f976c1547d61ca4",
+              "0x3f8b2634eb5d137f",
+              "0x3f7a0ee46170dd6d"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_se",
+            "width": 1,
+            "bits": [
+              "0x3f808fdefc79197f",
+              "0x3f7219789ce8b7aa",
+              "0x3f607b0ae9205bcf"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3fb42ae2eba98456",
+              "0x3fa4e59eb7472cea",
+              "0x3f95d370da65b756"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3fbaf737649452e8",
+              "0x3fac65bb10de773c",
+              "0x3f9c5c3b1ebb437a"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_pred_sd",
+            "width": 1,
+            "bits": [
+              "0x3f96bf7f34228c1f",
+              "0x3f898d6bd884db21",
+              "0x3f79a781a38f0554"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_pred_se",
+            "width": 1,
+            "bits": [
+              "0x3f8015d58a3d5676",
+              "0x3f7108f290589216",
+              "0x3f6039a7df99158e"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_pred_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3fb439162d745dc5",
+              "0x3fa4baa4389cccdc",
+              "0x3f95c06e282efc8c"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_pred_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3fbae5106e2960a0",
+              "0x3fab899dc60e4313",
+              "0x3f9c67f80e4b4c12"
+            ]
+          },
+          {
+            "name": "mrt_sd",
+            "width": 1,
+            "bits": [
+              "0x3fd457b1f06cfd49",
+              "0x3fd40894c41688ae",
+              "0x3fc6736199bb222b"
+            ]
+          },
+          {
+            "name": "mrt_se",
+            "width": 1,
+            "bits": [
+              "0x3fbcc4cb024816d5",
+              "0x3fbab61bb01e0b93",
+              "0x3fac65ed17300e3e"
+            ]
+          },
+          {
+            "name": "mrt_ci_low",
+            "width": 1,
+            "bits": [
+              "0x4018a1fe70300732",
+              "0x4014bdb5d8858140",
+              "0x4012269f130d5cb1"
+            ]
+          },
+          {
+            "name": "mrt_ci_high",
+            "width": 1,
+            "bits": [
+              "0x401a11eab43c9e13",
+              "0x401612bfc203fd70",
+              "0x4012e2ae9ad63e8d"
+            ]
+          },
+          {
+            "name": "mrt_geomean",
+            "width": 1,
+            "bits": [
+              "0x40195e40da529c31",
+              "0x40156658abc46b2e",
+              "0x401285f80f8e021a"
+            ]
+          },
+          {
+            "name": "mrt_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fa9a604a3ee1759",
+              "0x3fadff4bc54fd77e",
+              "0x3fa367404307127a"
+            ]
+          },
+          {
+            "name": "mrt_last_sd",
+            "width": 1,
+            "bits": [
+              "0x3fd0ecec8bc9f683",
+              "0x3fd2e1d682253aac",
+              "0x3fc5679a42cff650"
+            ]
+          },
+          {
+            "name": "mrt_last_se",
+            "width": 1,
+            "bits": [
+              "0x3fb7efae0db876d2",
+              "0x3fb92d1e02dc4e3a",
+              "0x3fab1335be2520e1"
+            ]
+          },
+          {
+            "name": "mrt_last_ci_low",
+            "width": 1,
+            "bits": [
+              "0x4016ee981942766b",
+              "0x4013e5a17e86db4d",
+              "0x4011c03792c8dc95"
+            ]
+          },
+          {
+            "name": "mrt_last_ci_high",
+            "width": 1,
+            "bits": [
+              "0x40181e59f05291f6",
+              "0x40152b9055b78dec",
+              "0x4012807ba2b715c7"
+            ]
+          },
+          {
+            "name": "mrt_last_geomean",
+            "width": 1,
+            "bits": [
+              "0x40177f78ce116876",
+              "0x40148d41f4eb127d",
+              "0x401223ebf035c90f"
+            ]
+          },
+          {
+            "name": "mrt_last_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fa707a9fe1d8e55",
+              "0x3fad713069436daf",
+              "0x3fa2e5bf8d54138e"
+            ]
+          },
+          {
+            "name": "mrt_pred_sd",
+            "width": 1,
+            "bits": [
+              "0x3fd4a7abba160189",
+              "0x3fd4921bb601120a",
+              "0x3fc67592781abc3a"
+            ]
+          },
+          {
+            "name": "mrt_pred_se",
+            "width": 1,
+            "bits": [
+              "0x3fbd35e55134129c",
+              "0x3fbb6d7a48016d63",
+              "0x3fac68b28a1ed895"
+            ]
+          },
+          {
+            "name": "mrt_pred_ci_low",
+            "width": 1,
+            "bits": [
+              "0x4018aa491ec6f8ad",
+              "0x4014bcc9e4796d2a",
+              "0x4012270865342962"
+            ]
+          },
+          {
+            "name": "mrt_pred_ci_high",
+            "width": 1,
+            "bits": [
+              "0x401a1c81768a2952",
+              "0x4016107e9939a88f",
+              "0x4012e253b66c6ad3"
+            ]
+          },
+          {
+            "name": "mrt_pred_geomean",
+            "width": 1,
+            "bits": [
+              "0x40195d3d8500d9a4",
+              "0x4015657f1ef42770",
+              "0x401285e7d5bf3c8c"
+            ]
+          },
+          {
+            "name": "mrt_pred_geocv",
+            "width": 1,
+            "bits": [
+              "0x3faa0be36d3a7b2f",
+              "0x3faed159c61f5ba8",
+              "0x3fa3692497c81c88"
+            ]
+          },
+          {
+            "name": "thalf_eff_sd",
+            "width": 1,
+            "bits": [
+              "0x3fcc3365f815620a",
+              "0x3fcbc5b91bf9eddc",
+              "0x3fbf1f8fedb4acac"
+            ]
+          },
+          {
+            "name": "thalf_eff_se",
+            "width": 1,
+            "bits": [
+              "0x3fb3f0e2b0828cf1",
+              "0x3fb283d0bd51493d",
+              "0x3fa3af20f9427852"
+            ]
+          },
+          {
+            "name": "thalf_eff_ci_low",
+            "width": 1,
+            "bits": [
+              "0x401112fb5d458327",
+              "0x400cc0d24d9c34d2",
+              "0x40092995c41a4ef2"
+            ]
+          },
+          {
+            "name": "thalf_eff_ci_high",
+            "width": 1,
+            "bits": [
+              "0x40121201b1fae9b0",
+              "0x400e9999ff2d214c",
+              "0x400a2e4adee9eacd"
+            ]
+          },
+          {
+            "name": "thalf_eff_geomean",
+            "width": 1,
+            "bits": [
+              "0x401195792fdae57b",
+              "0x400daa99c65118e8",
+              "0x4009adc3ce5fada0"
+            ]
+          },
+          {
+            "name": "thalf_eff_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fa9a604a3ee1754",
+              "0x3fadff4bc54fd77f",
+              "0x3fa3674043071275"
+            ]
+          },
+          {
+            "name": "lambda_z_sd",
+            "width": 1,
+            "bits": [
+              "0x3f8f2579d4c0a2ce",
+              "0x3f902af1bdb2333d",
+              "0x3f8fe39c53307b8e"
+            ]
+          },
+          {
+            "name": "lambda_z_se",
+            "width": 1,
+            "bits": [
+              "0x3f760619503908d8",
+              "0x3f758e97a7984451",
+              "0x3f742b1ee712cab5"
+            ]
+          },
+          {
+            "name": "lambda_z_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3fc44e1a0a6e174b",
+              "0x3fc8a6e967fdca56",
+              "0x3fccddd1680e1162"
+            ]
+          },
+          {
+            "name": "lambda_z_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3fc664c7fce61c38",
+              "0x3fcac6b3cd0e2a70",
+              "0x3fcf146d98c1b651"
+            ]
+          },
+          {
+            "name": "lambda_z_geomean",
+            "width": 1,
+            "bits": [
+              "0x3fc5631cc9680aa0",
+              "0x3fc9a37aa822aed8",
+              "0x3fcde23c2999a302"
+            ]
+          },
+          {
+            "name": "lambda_z_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb755e6e8e0d059",
+              "0x3fb42b36481da2bf",
+              "0x3fb10323158df120"
+            ]
+          },
+          {
+            "name": "thalf_sd",
+            "width": 1,
+            "bits": [
+              "0x3fd82d3b6d23e53b",
+              "0x3fd168525ce7e79d",
+              "0x3fc91fe76f8da457"
+            ]
+          },
+          {
+            "name": "thalf_se",
+            "width": 1,
+            "bits": [
+              "0x3fc11872b0f01a11",
+              "0x3fb735c3268a8a27",
+              "0x3fafc7c95e0219bc"
+            ]
+          },
+          {
+            "name": "thalf_ci_low",
+            "width": 1,
+            "bits": [
+              "0x400fb217e6c70aa8",
+              "0x400a820b91a159c2",
+              "0x4006d662687e855b"
+            ]
+          },
+          {
+            "name": "thalf_ci_high",
+            "width": 1,
+            "bits": [
+              "0x40117a5b40136c9f",
+              "0x400ccac6f4a810d8",
+              "0x400896a75a501a64"
+            ]
+          },
+          {
+            "name": "thalf_geomean",
+            "width": 1,
+            "bits": [
+              "0x401097fa7ea0ecde",
+              "0x400baf24cab81f97",
+              "0x4007c060bdf5c3a4"
+            ]
+          },
+          {
+            "name": "thalf_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb755e6e8e0d059",
+              "0x3fb42b36481da2bf",
+              "0x3fb10323158df11e"
+            ]
+          },
+          {
+            "name": "cmax_half_sd",
+            "width": 1,
+            "bits": [
+              "0x4001b62eb69f52c7",
+              "0x3ffe55a410483fe8",
+              "0x4005b29433182fe8"
+            ]
+          },
+          {
+            "name": "cmax_half_se",
+            "width": 1,
+            "bits": [
+              "0x3fe90c4d66c0d883",
+              "0x3fe439180adad545",
+              "0x3feb720c5e38d72c"
+            ]
+          },
+          {
+            "name": "cmax_half_ci_low",
+            "width": 1,
+            "bits": [
+              "0x40269ee866a46006",
+              "0x4026c54be6a3c110",
+              "0x4026410cb7f1f1e2"
+            ]
+          },
+          {
+            "name": "cmax_half_ci_high",
+            "width": 1,
+            "bits": [
+              "0x402c0fd280c7bb98",
+              "0x402adc8af8be04b7",
+              "0x402bc91d9e122470"
+            ]
+          },
+          {
+            "name": "cl_f_sd",
+            "width": 1,
+            "bits": [
+              "0x3fa82fc408ecdfb0",
+              "0x3fb23e8f0790e328",
+              "0x3fb18b9438296c76"
+            ]
+          },
+          {
+            "name": "cl_f_se",
+            "width": 1,
+            "bits": [
+              "0x3f911a3d539fd1da",
+              "0x3f9853695f6bd98a",
+              "0x3f963172acd01842"
+            ]
+          },
+          {
+            "name": "cl_f_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3fe5db6a0ac597ef",
+              "0x3fea70ddbade6ed0",
+              "0x3fef6598c8e12145"
+            ]
+          },
+          {
+            "name": "cl_f_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3fe78665747320e5",
+              "0x3fecd1d2e8dac6c8",
+              "0x3ff0d4f0bac4a93e"
+            ]
+          },
+          {
+            "name": "cl_f_geomean",
+            "width": 1,
+            "bits": [
+              "0x3fe6a09aac97243c",
+              "0x3feb8d9b76793399",
+              "0x3ff040c01a9532e7"
+            ]
+          },
+          {
+            "name": "cl_f_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb10c1202b46e66",
+              "0x3fb5215ceeba2bbc",
+              "0x3fb145b3b8a07dc8"
+            ]
+          },
+          {
+            "name": "vz_f_sd",
+            "width": 1,
+            "bits": [
+              "0x3fe044f00dfbe97c",
+              "0x3fe0fd5c51bec867",
+              "0x3fdb43cc1331dc7f"
+            ]
+          },
+          {
+            "name": "vz_f_se",
+            "width": 1,
+            "bits": [
+              "0x3fc7021c84c19c99",
+              "0x3fc6a725c253b5df",
+              "0x3fc13e694d022406"
+            ]
+          },
+          {
+            "name": "vz_f_ci_low",
+            "width": 1,
+            "bits": [
+              "0x400f94f9c48841e2",
+              "0x401024debc8417f1",
+              "0x401086ecdca7d594"
+            ]
+          },
+          {
+            "name": "vz_f_ci_high",
+            "width": 1,
+            "bits": [
+              "0x4012275bda4a6846",
+              "0x4012519712d58159",
+              "0x40124fa78143422c"
+            ]
+          },
+          {
+            "name": "vz_f_geomean",
+            "width": 1,
+            "bits": [
+              "0x4010ed8500adeb66",
+              "0x401131de77c50384",
+              "0x40116766be4ba49f"
+            ]
+          },
+          {
+            "name": "vz_f_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fbebf0fa716ebf8",
+              "0x3fbfad00a95cdfff",
+              "0x3fb92545450cdc37"
+            ]
+          },
+          {
+            "name": "cl_f_pred_sd",
+            "width": 1,
+            "bits": [
+              "0x3fa821e53fc1412e",
+              "0x3fb242cae5079c6e",
+              "0x3fb18b157a3bde6f"
+            ]
+          },
+          {
+            "name": "cl_f_pred_se",
+            "width": 1,
+            "bits": [
+              "0x3f91106e8abb8c39",
+              "0x3f98590e86b4d092",
+              "0x3f9630d25b9980fa"
+            ]
+          },
+          {
+            "name": "cl_f_pred_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3fe5dde6b30bb9a2",
+              "0x3fea71f702ea4a9f",
+              "0x3fef65ef7c929d6d"
+            ]
+          },
+          {
+            "name": "cl_f_pred_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3fe7877db9e07790",
+              "0x3fecd2807e42bc5b",
+              "0x3ff0d4de670dd8cf"
+            ]
+          },
+          {
+            "name": "cl_f_pred_geomean",
+            "width": 1,
+            "bits": [
+              "0x3fe6a0d63409ccb8",
+              "0x3feb8dd581c87994",
+              "0x3ff040c2dfd982fd"
+            ]
+          },
+          {
+            "name": "cl_f_pred_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb101eb79d15ad3",
+              "0x3fb52624d578c7da",
+              "0x3fb1452f8cb8e37f"
+            ]
+          },
+          {
+            "name": "vz_f_pred_sd",
+            "width": 1,
+            "bits": [
+              "0x3fe0428c2eb089bd",
+              "0x3fe1000d40085c29",
+              "0x3fdb43917ab38a8e"
+            ]
+          },
+          {
+            "name": "vz_f_pred_se",
+            "width": 1,
+            "bits": [
+              "0x3fc6febb33577a7c",
+              "0x3fc6aabc55607ae1",
+              "0x3fc13e443ddd0181"
+            ]
+          },
+          {
+            "name": "vz_f_pred_ci_low",
+            "width": 1,
+            "bits": [
+              "0x400f94789d5fd67e",
+              "0x401024438f461f26",
+              "0x401086df275387b7"
+            ]
+          },
+          {
+            "name": "vz_f_pred_ci_high",
+            "width": 1,
+            "bits": [
+              "0x401227442711af78",
+              "0x40124fb8af0f1903",
+              "0x40124fe64fbd9d44"
+            ]
+          },
+          {
+            "name": "vz_f_pred_geomean",
+            "width": 1,
+            "bits": [
+              "0x4010edb189802b0a",
+              "0x40113202b0dc0ad3",
+              "0x40116769b5ca526c"
+            ]
+          },
+          {
+            "name": "vz_f_pred_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fbeba572912acc5",
+              "0x3fbfb2036c47bd90",
+              "0x3fb9250791abb752"
+            ]
+          },
+          {
+            "name": "auc_inf_dn_sd",
+            "width": 1,
+            "bits": [
+              "0x3fb7fee7ad39f6cf",
+              "0x3fb86ad7ecc4acb3",
+              "0x3fb0f9c1fa91ec66"
+            ]
+          },
+          {
+            "name": "auc_inf_dn_se",
+            "width": 1,
+            "bits": [
+              "0x3fa0f7b094edcdc5",
+              "0x3fa0473a9dd87322",
+              "0x3f9578ff3d9e82ec"
+            ]
+          },
+          {
+            "name": "auc_inf_dn_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3ff5c39bb19b12db",
+              "0x3ff1c403191558a0",
+              "0x3fee6b2a820cc0b9"
+            ]
+          },
+          {
+            "name": "auc_inf_dn_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3ff76cc656f83e40",
+              "0x3ff35d2cc5a886eb",
+              "0x3ff04eaf44e4dc17"
+            ]
+          },
+          {
+            "name": "auc_inf_dn_geomean",
+            "width": 1,
+            "bits": [
+              "0x3ff6a0a22067f073",
+              "0x3ff2950f52952b65",
+              "0x3fef8083b6a25018"
+            ]
+          },
+          {
+            "name": "auc_inf_dn_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb10c1202b46e66",
+              "0x3fb5215ceeba2bbd",
+              "0x3fb145b3b8a07dca"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn_sd",
+            "width": 1,
+            "bits": [
+              "0x3fb7f01fc757ff28",
+              "0x3fb870366ee9bcb3",
+              "0x3fb0f938bddce2d3"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn_se",
+            "width": 1,
+            "bits": [
+              "0x3fa0ed3cf63ab2af",
+              "0x3fa04acef49bd322",
+              "0x3f957851a5de81a9"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3ff5c298752fa7d5",
+              "0x3ff1c39819ac0c1a",
+              "0x3fee6b4ba17ba211"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3ff76a1c7b7f6c02",
+              "0x3ff35c5f0648855c",
+              "0x3ff04e823d26e41a"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn_geomean",
+            "width": 1,
+            "bits": [
+              "0x3ff6a066997e4807",
+              "0x3ff294e82d8f8d04",
+              "0x3fef807e57e94f54"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb101eb79d15ad3",
+              "0x3fb52624d578c7da",
+              "0x3fb1452f8cb8e380"
+            ]
+          },
+          {
+            "name": "cmax_dn_sd",
+            "width": 1,
+            "bits": [
+              "0x3f9c1b2c26995f18",
+              "0x3f9d3f8c7f3ac408",
+              "0x3f92364767a6720b"
+            ]
+          },
+          {
+            "name": "cmax_dn_se",
+            "width": 1,
+            "bits": [
+              "0x3f83dfc1577acbe9",
+              "0x3f837fb2ff7c82b0",
+              "0x3f77095e421ec0fb"
+            ]
+          },
+          {
+            "name": "cmax_dn_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3fc7e5fa60a23032",
+              "0x3fc70e68cda32fc8",
+              "0x3fc6edf48538084d"
+            ]
+          },
+          {
+            "name": "cmax_dn_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3fcbdb868b744fcf",
+              "0x3fcb15fbcd3d6533",
+              "0x3fc95451ad6b5e60"
+            ]
+          },
+          {
+            "name": "cmax_dn_geomean",
+            "width": 1,
+            "bits": [
+              "0x3fc9bd183402475b",
+              "0x3fc8fbed0f9f440d",
+              "0x3fc81017f94a321d"
+            ]
+          },
+          {
+            "name": "cmax_dn_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fc1870e9a7df516",
+              "0x3fc2bb57223a6056",
+              "0x3fb83fdfe4dcd12d"
+            ]
+          },
+          {
+            "name": "flags",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000",
+              "0x0000000000000000",
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "accepted",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000",
+              "0x3ff0000000000000",
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "excluded",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000",
+              "0x0000000000000000",
+              "0x0000000000000000"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "delta_group",
+      "note": "the delta method, which draws nothing and differentiates numerically",
+      "exact": false,
+      "request": {
+        "contract": "analysis/1",
+        "batch": {
+          "contract": "batch/1",
+          "sample_dims": [
+            "group"
+          ],
+          "sample_shape": [
+            3
+          ],
+          "n_time": 9,
+          "times": [
+            0.25,
+            0.5,
+            1.0,
+            2.0,
+            4.0,
+            6.0,
+            9.0,
+            12.0,
+            24.0,
+            0.25,
+            0.5,
+            1.0,
+            2.0,
+            4.0,
+            6.0,
+            9.0,
+            12.0,
+            24.0,
+            0.25,
+            0.5,
+            1.0,
+            2.0,
+            4.0,
+            6.0,
+            9.0,
+            12.0,
+            24.0
+          ],
+          "values": [
+            12.65251099572423,
+            17.86886892623535,
+            20.10844703453344,
+            17.86888017570137,
+            12.83534911221967,
+            9.196985889216148,
+            5.578254003700262,
+            3.383382080915317,
+            0.45789097221835445,
+            12.547511509587311,
+            17.573522501032606,
+            19.449213727490392,
+            16.716462219061636,
+            11.23315508361624,
+            7.52985518312551,
+            4.132472205531897,
+            2.2679488322353123,
+            0.20574367622550074,
+            12.44338338345891,
+            17.283057722857443,
+            18.811592658944353,
+            15.638367170949296,
+            9.830957617852583,
+            6.164924004648495,
+            3.0614107063187936,
+            1.5202515656304496,
+            0.09244659291207338
+          ],
+          "sd": [
+            2.021225580592665,
+            3.9526138197806615,
+            3.0421055756807167,
+            3.0520535419940624,
+            2.5627786384568005,
+            1.3666210827164547,
+            1.1017785343907647,
+            0.6105061867977778,
+            0.08548789994908852,
+            1.8777388886605533,
+            3.6386269379072793,
+            3.1774569885846478,
+            3.665962225149587,
+            1.9370872211056864,
+            1.0259957696869568,
+            0.7311086191056932,
+            0.5503030570368841,
+            0.04631211688775262,
+            2.5057228176003945,
+            3.5181600673823583,
+            1.685596420957902,
+            2.6910243843132022,
+            2.4546401568388654,
+            0.8860973763024873,
+            0.5958399111212548,
+            0.16392711227436318,
+            0.018024510285887443
+          ],
+          "se": [
+            0.714611157172395,
+            1.397460017689284,
+            1.0755467408246202,
+            1.0790638780442114,
+            0.9060790769664154,
+            0.48317351745065334,
+            0.3895375365167427,
+            0.21584653232052486,
+            0.0302245368816988,
+            0.625912962886851,
+            1.212875645969093,
+            1.059152329528216,
+            1.2219874083831956,
+            0.6456957403685621,
+            0.3419985898956523,
+            0.24370287303523108,
+            0.18343435234562802,
+            0.01543737229591754,
+            0.7923791288671894,
+            1.112539898597971,
+            0.5330323906054949,
+            0.8509766293482006,
+            0.776225373172375,
+            0.2802085937815169,
+            0.18842112399754565,
+            0.05183830450411324,
+            0.005699850621253702
+          ],
+          "n": [
+            8.0,
+            8.0,
+            8.0,
+            8.0,
+            8.0,
+            8.0,
+            8.0,
+            8.0,
+            8.0,
+            9.0,
+            9.0,
+            9.0,
+            9.0,
+            9.0,
+            9.0,
+            9.0,
+            9.0,
+            9.0,
+            10.0,
+            10.0,
+            10.0,
+            10.0,
+            10.0,
+            10.0,
+            10.0,
+            10.0,
+            10.0
+          ],
+          "nominal_time": null,
+          "lloq": null,
+          "max_doses": 1,
+          "dose_amount": [
+            100.0,
+            100.0,
+            100.0
+          ],
+          "dose_time": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "dose_duration": [
+            "NaN",
+            "NaN",
+            "NaN"
+          ],
+          "time_unit": "hr",
+          "unit": "mg/l",
+          "dose_unit": "mg",
+          "substance": "caffeine",
+          "substances": null,
+          "route": "oral",
+          "routes": null,
+          "tissue": null,
+          "coords": [
+            {
+              "name": "group",
+              "dims": [
+                "group"
+              ],
+              "values": {
+                "str": [
+                  "low",
+                  "mid",
+                  "high"
+                ]
+              }
+            }
+          ]
+        },
+        "options": {
+          "kind": "concentration",
+          "auc_method": "linear_log",
+          "terminal": {
+            "method": "best_fit",
+            "min_points": 3,
+            "exclude_cmax": true,
+            "n_points": null,
+            "points": null,
+            "min_adj_r2": null,
+            "tie_tolerance": 0.0001,
+            "relative_warning": 1e-08,
+            "keep_candidates": false,
+            "windows": null
+          },
+          "lloq": null,
+          "lloq_relative": null,
+          "blq": "nan",
+          "c0_method": "log_back_extrapolation",
+          "extrapolation_warning": 0.2,
+          "acceptance": {
+            "r2_adj_min": null,
+            "extrapolation_max": null,
+            "span_min": null,
+            "n_points_min": null,
+            "exclude": false
+          },
+          "partial_aucs": {},
+          "tau": null,
+          "tau_tolerance": 0.1,
+          "intervals": true,
+          "units": {},
+          "effect_threshold": null,
+          "n_workers": null,
+          "chunk_rows": 5000,
+          "uncertainty": "delta",
+          "n_boot": 1000,
+          "seed": null,
+          "ci_level": 0.9,
+          "bootstrap_spread": "se",
+          "bootstrap_distribution": "normal",
+          "delta_step": 0.01
+        }
+      },
+      "expected": {
+        "n_rows": 3,
+        "columns": [
+          {
+            "name": "cmax",
+            "width": 1,
+            "bits": [
+              "0x40341bc32f52ab58",
+              "0x403372ffabbc7c49",
+              "0x4032cfc48957d6f5"
+            ]
+          },
+          {
+            "name": "tmax",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000",
+              "0x3ff0000000000000",
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "cmin",
+            "width": 1,
+            "bits": [
+              "0x3fdd4e15efb3ef3d",
+              "0x3fca55cf0c5fa8c9",
+              "0x3fb7aa94752f195a"
+            ]
+          },
+          {
+            "name": "tmin",
+            "width": 1,
+            "bits": [
+              "0x4038000000000000",
+              "0x4038000000000000",
+              "0x4038000000000000"
+            ]
+          },
+          {
+            "name": "clast",
+            "width": 1,
+            "bits": [
+              "0x3fdd4e15efb3ef3d",
+              "0x3fca55cf0c5fa8c9",
+              "0x3fb7aa94752f195a"
+            ]
+          },
+          {
+            "name": "clast_pred",
+            "width": 1,
+            "bits": [
+              "0x3fdd5167ae8fbea1",
+              "0x3fca58caadcc8e61",
+              "0x3fb7ad42b34e54e7"
+            ]
+          },
+          {
+            "name": "tlast",
+            "width": 1,
+            "bits": [
+              "0x4038000000000000",
+              "0x4038000000000000",
+              "0x4038000000000000"
+            ]
+          },
+          {
+            "name": "auc_last",
+            "width": 1,
+            "bits": [
+              "0x40615199c041bf82",
+              "0x405cd72efc068c4c",
+              "0x40588eadefeae2c1"
+            ]
+          },
+          {
+            "name": "auc_all",
+            "width": 1,
+            "bits": [
+              "0x40615199c041bf82",
+              "0x405cd72efc068c4c",
+              "0x40588eadefeae2c1"
+            ]
+          },
+          {
+            "name": "auc_inf_obs",
+            "width": 1,
+            "bits": [
+              "0x4061a98bfe055966",
+              "0x405d190a7d2350cc",
+              "0x4058a80aeae20fe1"
+            ]
+          },
+          {
+            "name": "auc_inf_pred",
+            "width": 1,
+            "bits": [
+              "0x4061a995f429708b",
+              "0x405d1911f2c759f0",
+              "0x4058a80dca544ff7"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3f93ead398280f52",
+              "0x3f821b435bda4d58",
+              "0x3f707569ed4bbb06"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3f93ed09e3bc78ca",
+              "0x3f821d4bbdd4617b",
+              "0x3f70774540c2ed3f"
+            ]
+          },
+          {
+            "name": "aumc_last",
+            "width": 1,
+            "bits": [
+              "0x408975f267b4b5eb",
+              "0x40828319335cdd5c",
+              "0x407bd4067bbb6c40"
+            ]
+          },
+          {
+            "name": "aumc_all",
+            "width": 1,
+            "bits": [
+              "0x408975f267b4b5eb",
+              "0x40828319335cdd5c",
+              "0x407bd4067bbb6c40"
+            ]
+          },
+          {
+            "name": "aumc_inf",
+            "width": 1,
+            "bits": [
+              "0x408c099731f4e5b3",
+              "0x408371d804d01ef9",
+              "0x407c8762e482796a"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred",
+            "width": 1,
+            "bits": [
+              "0x408c09e1e95ef864",
+              "0x408371f30f9d1280",
+              "0x407c8777355d7f7a"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3fb786f839cccb30",
+              "0x3fa88e6c7133f7c1",
+              "0x3f9925e40848f498"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3fb78963b6688405",
+              "0x3fa8911253a8a9ce",
+              "0x3f9928ab529fd64b"
+            ]
+          },
+          {
+            "name": "mrt",
+            "width": 1,
+            "bits": [
+              "0x40196611c075a184",
+              "0x40156254128411b9",
+              "0x4012834d10fc1539"
+            ]
+          },
+          {
+            "name": "mrt_last",
+            "width": 1,
+            "bits": [
+              "0x401785a1c052e73c",
+              "0x40148a4269dcba7e",
+              "0x4012218fae88ea9d"
+            ]
+          },
+          {
+            "name": "mrt_pred",
+            "width": 1,
+            "bits": [
+              "0x401966471c6c3f35",
+              "0x4015626c545cc430",
+              "0x4012835817b61e79"
+            ]
+          },
+          {
+            "name": "thalf_eff",
+            "width": 1,
+            "bits": [
+              "0x40119ae41abaed63",
+              "0x400da507d58d04e7",
+              "0x4009aa10f98f4605"
+            ]
+          },
+          {
+            "name": "lambda_z",
+            "width": 1,
+            "bits": [
+              "0x3fc5536586b9a503",
+              "0x3fc997a9cafde945",
+              "0x3fcddbee0f422d87"
+            ]
+          },
+          {
+            "name": "lambda_z_stderr",
+            "width": 1,
+            "bits": [
+              "0x3f0d9c8708f4a708",
+              "0x3f0d9c870910b648",
+              "0x3f0d9c870964e409"
+            ]
+          },
+          {
+            "name": "lambda_z_intercept",
+            "width": 1,
+            "bits": [
+              "0x4009be422de2e3b1",
+              "0x4009be422de2e3b0",
+              "0x4009be422de2e3af"
+            ]
+          },
+          {
+            "name": "lambda_z_r2",
+            "width": 1,
+            "bits": [
+              "0x3fefffff0936f4c9",
+              "0x3fefffff54a43bfc",
+              "0x3fefffff821d571d"
+            ]
+          },
+          {
+            "name": "lambda_z_r2_adj",
+            "width": 1,
+            "bits": [
+              "0x3feffffecb84b1fb",
+              "0x3fefffff29cd4afb",
+              "0x3fefffff62a4ace4"
+            ]
+          },
+          {
+            "name": "lambda_z_n_points",
+            "width": 1,
+            "bits": [
+              "0x4018000000000000",
+              "0x4018000000000000",
+              "0x4018000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_t_first",
+            "width": 1,
+            "bits": [
+              "0x4000000000000000",
+              "0x4000000000000000",
+              "0x4000000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_t_last",
+            "width": 1,
+            "bits": [
+              "0x4038000000000000",
+              "0x4038000000000000",
+              "0x4038000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_span",
+            "width": 1,
+            "bits": [
+              "0x401526eb02e39257",
+              "0x401962492ac52615",
+              "0x401d9da752a6b9d2"
+            ]
+          },
+          {
+            "name": "thalf",
+            "width": 1,
+            "bits": [
+              "0x4010a4350284bc60",
+              "0x400bbbece2440883",
+              "0x4007c564aedfe674"
+            ]
+          },
+          {
+            "name": "tlag",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000",
+              "0x0000000000000000",
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "cmax_half",
+            "width": 1,
+            "bits": [
+              "0x40294e15ebd5d4f9",
+              "0x402918536db7b8e1",
+              "0x4028e30325971779"
+            ]
+          },
+          {
+            "name": "tmax_half",
+            "width": 1,
+            "bits": [
+              "0x3fd0000000000000",
+              "0x3fd0000000000000",
+              "0x3fd0000000000000"
+            ]
+          },
+          {
+            "name": "cl_f",
+            "width": 1,
+            "bits": [
+              "0x3fe6a5a974254be9",
+              "0x3feb7e542fb5a1ed",
+              "0x3ff03913bf37eeb9"
+            ]
+          },
+          {
+            "name": "vz_f",
+            "width": 1,
+            "bits": [
+              "0x4010fdc9fc5d5360",
+              "0x40113041839d23d5",
+              "0x401162da59ca1b56"
+            ]
+          },
+          {
+            "name": "cl_f_pred",
+            "width": 1,
+            "bits": [
+              "0x3fe6a59cae4ea2ec",
+              "0x3feb7e4d235dbfe5",
+              "0x3ff03911db530fae"
+            ]
+          },
+          {
+            "name": "vz_f_pred",
+            "width": 1,
+            "bits": [
+              "0x4010fdc0671d9cc9",
+              "0x4011303d1b90df23",
+              "0x401162d853334248"
+            ]
+          },
+          {
+            "name": "auc_inf_dn",
+            "width": 1,
+            "bits": [
+              "0x3ff69b947858c45a",
+              "0x3ff29f62df72c312",
+              "0x3fef8f6a22690a16"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn",
+            "width": 1,
+            "bits": [
+              "0x3ff69ba13886f674",
+              "0x3ff29f67a59e4e0a",
+              "0x3fef8f6dcfc8146f"
+            ]
+          },
+          {
+            "name": "cmax_dn",
+            "width": 1,
+            "bits": [
+              "0x3fc9bd22cbeeefcd",
+              "0x3fc8e51e4c7661a5",
+              "0x3fc8142ec447798c"
+            ]
+          },
+          {
+            "name": "n",
+            "width": 1,
+            "bits": [
+              "0x4020000000000000",
+              "0x4022000000000000",
+              "0x4024000000000000"
+            ]
+          },
+          {
+            "name": "cmax_geomean",
+            "width": 1,
+            "bits": [
+              "0x40341bc32f52ab58",
+              "0x403372ffabbc7c49",
+              "0x4032cfc48957d6f5"
+            ]
+          },
+          {
+            "name": "cmax_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fc35d4e36a08a90",
+              "0x3fc4e95faf58023b",
+              "0x3fb6f04bde10718b"
+            ]
+          },
+          {
+            "name": "cmax_sd",
+            "width": 1,
+            "bits": [
+              "0x4008563b72b43933",
+              "0x40096b6e91d35777",
+              "0x3ffaf833f3e44d2a"
+            ]
+          },
+          {
+            "name": "cmax_se",
+            "width": 1,
+            "bits": [
+              "0x3ff135707fd293ff",
+              "0x3ff0f249b68ce4fa",
+              "0x3fe10e99f1ab7f5f"
+            ]
+          },
+          {
+            "name": "cmax_ci_low",
+            "width": 1,
+            "bits": [
+              "0x40326a382af89d8e",
+              "0x4031c866486c5c63",
+              "0x4031f477a164794f"
+            ]
+          },
+          {
+            "name": "cmax_ci_high",
+            "width": 1,
+            "bits": [
+              "0x4035f52d1e894c7b",
+              "0x40354592ec0b550a",
+              "0x4033b587f619540a"
+            ]
+          },
+          {
+            "name": "cmin_geomean",
+            "width": 1,
+            "bits": [
+              "0x3fdd4e15efb3ef3d",
+              "0x3fca55cf0c5fa8c9",
+              "0x3fb7aa94752f195a"
+            ]
+          },
+          {
+            "name": "cmin_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fc7e5c2cd184aff",
+              "0x3fcccff3ab73fc16",
+              "0x3fc8f4d8dfcf9966"
+            ]
+          },
+          {
+            "name": "cmin_sd",
+            "width": 1,
+            "bits": [
+              "0x3fb5e288f67c2c95",
+              "0x3fa7b638c6e202b2",
+              "0x3f92750468d13497"
+            ]
+          },
+          {
+            "name": "cmin_se",
+            "width": 1,
+            "bits": [
+              "0x3f9ef32e55c64a22",
+              "0x3f8f9da1092d58ed",
+              "0x3f7758ba002a79aa"
+            ]
+          },
+          {
+            "name": "cmin_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3fda4a3772489107",
+              "0x3fc7470d71bf5c64",
+              "0x3fb5624800408d6c"
+            ]
+          },
+          {
+            "name": "cmin_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3fe0553d36922810",
+              "0x3fcdcb62780889f8",
+              "0x3fba313e6b30b9af"
+            ]
+          },
+          {
+            "name": "clast_geomean",
+            "width": 1,
+            "bits": [
+              "0x3fdd4e15efb3ef3d",
+              "0x3fca55cf0c5fa8c9",
+              "0x3fb7aa94752f195a"
+            ]
+          },
+          {
+            "name": "clast_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fc7e5c2cd184aff",
+              "0x3fcccff3ab73fc16",
+              "0x3fc8f4d8dfcf9966"
+            ]
+          },
+          {
+            "name": "clast_sd",
+            "width": 1,
+            "bits": [
+              "0x3fb5e288f67c2c95",
+              "0x3fa7b638c6e202b2",
+              "0x3f92750468d13497"
+            ]
+          },
+          {
+            "name": "clast_se",
+            "width": 1,
+            "bits": [
+              "0x3f9ef32e55c64a22",
+              "0x3f8f9da1092d58ed",
+              "0x3f7758ba002a79aa"
+            ]
+          },
+          {
+            "name": "clast_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3fda4a3772489107",
+              "0x3fc7470d71bf5c64",
+              "0x3fb5624800408d6c"
+            ]
+          },
+          {
+            "name": "clast_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3fe0553d36922810",
+              "0x3fcdcb62780889f8",
+              "0x3fba313e6b30b9af"
+            ]
+          },
+          {
+            "name": "clast_pred_geomean",
+            "width": 1,
+            "bits": [
+              "0x3fdd5167ae8fbea1",
+              "0x3fca58caadcc8e61",
+              "0x3fb7ad42b34e54e7"
+            ]
+          },
+          {
+            "name": "clast_pred_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fc5b83db1f4af35",
+              "0x3fca4c8bf686f993",
+              "0x3fc5fa740738d8e4"
+            ]
+          },
+          {
+            "name": "clast_pred_sd",
+            "width": 1,
+            "bits": [
+              "0x3fb3e638a4f2271e",
+              "0x3fa5a72acb3d13d6",
+              "0x3f904303382dfbf1"
+            ]
+          },
+          {
+            "name": "clast_pred_se",
+            "width": 1,
+            "bits": [
+              "0x3f9c24511a27af04",
+              "0x3f8cdee3b9a6c51e",
+              "0x3f7491d735f7687c"
+            ]
+          },
+          {
+            "name": "clast_pred_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3fda90258090387b",
+              "0x3fc78a37a3b8d845",
+              "0x3fb5a762924d27ed"
+            ]
+          },
+          {
+            "name": "clast_pred_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3fe02de75b381612",
+              "0x3fcd7d0cc49a4d61",
+              "0x3fb9e38463bce3e6"
+            ]
+          },
+          {
+            "name": "auc_last_geomean",
+            "width": 1,
+            "bits": [
+              "0x40615199c041bf82",
+              "0x405cd72efc068c4c",
+              "0x40588eadefeae2c1"
+            ]
+          },
+          {
+            "name": "auc_last_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb12a6e11ff4fc2",
+              "0x3fb25baa80eb855b",
+              "0x3fb2a975a44ae6ac"
+            ]
+          },
+          {
+            "name": "auc_last_sd",
+            "width": 1,
+            "bits": [
+              "0x402294a0b45aa008",
+              "0x40208ba806bafcce",
+              "0x401ca49b4a9fb745"
+            ]
+          },
+          {
+            "name": "auc_last_se",
+            "width": 1,
+            "bits": [
+              "0x400a46e331c25cf5",
+              "0x40060f8ab3a3fbbe",
+              "0x40021d8c305f16a6"
+            ]
+          },
+          {
+            "name": "auc_last_ci_low",
+            "width": 1,
+            "bits": [
+              "0x4060a80a97e3a4e9",
+              "0x405bba85f39f28ca",
+              "0x4057a4c3b8437ba3"
+            ]
+          },
+          {
+            "name": "auc_last_ci_high",
+            "width": 1,
+            "bits": [
+              "0x406201e6fd835c4b",
+              "0x405dff4252cecd8b",
+              "0x405981a25c4a67cd"
+            ]
+          },
+          {
+            "name": "auc_all_geomean",
+            "width": 1,
+            "bits": [
+              "0x40615199c041bf82",
+              "0x405cd72efc068c4c",
+              "0x40588eadefeae2c1"
+            ]
+          },
+          {
+            "name": "auc_all_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb12a6e11ff4fc2",
+              "0x3fb25baa80eb855b",
+              "0x3fb2a975a44ae6ac"
+            ]
+          },
+          {
+            "name": "auc_all_sd",
+            "width": 1,
+            "bits": [
+              "0x402294a0b45aa008",
+              "0x40208ba806bafcce",
+              "0x401ca49b4a9fb745"
+            ]
+          },
+          {
+            "name": "auc_all_se",
+            "width": 1,
+            "bits": [
+              "0x400a46e331c25cf5",
+              "0x40060f8ab3a3fbbe",
+              "0x40021d8c305f16a6"
+            ]
+          },
+          {
+            "name": "auc_all_ci_low",
+            "width": 1,
+            "bits": [
+              "0x4060a80a97e3a4e9",
+              "0x405bba85f39f28ca",
+              "0x4057a4c3b8437ba3"
+            ]
+          },
+          {
+            "name": "auc_all_ci_high",
+            "width": 1,
+            "bits": [
+              "0x406201e6fd835c4b",
+              "0x405dff4252cecd8b",
+              "0x405981a25c4a67cd"
+            ]
+          },
+          {
+            "name": "auc_inf_obs_geomean",
+            "width": 1,
+            "bits": [
+              "0x4061a98bfe055966",
+              "0x405d190a7d2350cc",
+              "0x4058a80aeae20fe1"
+            ]
+          },
+          {
+            "name": "auc_inf_obs_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb0e5c4054ed06c",
+              "0x3fb235f47b8b0d74",
+              "0x3fb2934c59d0d644"
+            ]
+          },
+          {
+            "name": "auc_inf_obs_sd",
+            "width": 1,
+            "bits": [
+              "0x4022a72f0477ea14",
+              "0x40208f25af09cb70",
+              "0x401ca009d528b9f9"
+            ]
+          },
+          {
+            "name": "auc_inf_obs_se",
+            "width": 1,
+            "bits": [
+              "0x400a612126bffd99",
+              "0x400614323eb7b9ea",
+              "0x40021aa88ee867fb"
+            ]
+          },
+          {
+            "name": "auc_inf_obs_ci_low",
+            "width": 1,
+            "bits": [
+              "0x4060ff464ef67c67",
+              "0x405bfc19f75b95ae",
+              "0x4057be40c6c7f5b6"
+            ]
+          },
+          {
+            "name": "auc_inf_obs_ci_high",
+            "width": 1,
+            "bits": [
+              "0x40625a7b68a6c8e0",
+              "0x405e415040666654",
+              "0x40599ad317874736"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_geomean",
+            "width": 1,
+            "bits": [
+              "0x4061a995f429708b",
+              "0x405d1911f2c759f0",
+              "0x4058a80dca544ff7"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb0e5192aea812a",
+              "0x3fb232bbed64b099",
+              "0x3fb28d7995fdb5a6"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_sd",
+            "width": 1,
+            "bits": [
+              "0x4022a67ceeba578e",
+              "0x40208c3c26f998ac",
+              "0x401c9713db3224c7"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_se",
+            "width": 1,
+            "bits": [
+              "0x400a60254d1ee0e4",
+              "0x4006105033f7763a",
+              "0x400214fdb85c3aba"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_ci_low",
+            "width": 1,
+            "bits": [
+              "0x4060ff567de74f3f",
+              "0x405bfc528fd4f695",
+              "0x4057be8b765ada70"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_ci_high",
+            "width": 1,
+            "bits": [
+              "0x40625a7ea300856d",
+              "0x405e4122940df584",
+              "0x40599a888540348c"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_sd",
+            "width": 1,
+            "bits": [
+              "0x3f736c8822a0e2f5",
+              "0x3f64a14b7044d3b0",
+              "0x3f506001d1a16613"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_se",
+            "width": 1,
+            "bits": [
+              "0x3f5b7838cd2630d1",
+              "0x3f4b81b9eb066f95",
+              "0x3f34b684239125cd"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3f9117e3fbd4c0be",
+              "0x3f7e8eb33b301efb",
+              "0x3f6ca8983d4d404b"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3f96bdc3347b5de6",
+              "0x3f84ef2d1a1c8b33",
+              "0x3f729687bbf0d5e6"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_pred_sd",
+            "width": 1,
+            "bits": [
+              "0x3f72668b37aa99be",
+              "0x3f639fbc384b6f30",
+              "0x3f4f30c9f8562d06"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_pred_se",
+            "width": 1,
+            "bits": [
+              "0x3f5a05b707360d54",
+              "0x3f4a2a504b0f3eea",
+              "0x3f33ba0620fb0b61"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_pred_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3f914031274e5c70",
+              "0x3f7ed95fa0929ced",
+              "0x3f6ce038e6530b9c"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_pred_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3f9699e2a02a9524",
+              "0x3f84cde7ab5f747f",
+              "0x3f727e6e0e5c54b0"
+            ]
+          },
+          {
+            "name": "aumc_last_geomean",
+            "width": 1,
+            "bits": [
+              "0x408975f267b4b5eb",
+              "0x40828319335cdd5c",
+              "0x407bd4067bbb6c40"
+            ]
+          },
+          {
+            "name": "aumc_last_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb40243399e34aa",
+              "0x3fb5802f0c0233d6",
+              "0x3fb246e5c0a668a1"
+            ]
+          },
+          {
+            "name": "aumc_last_sd",
+            "width": 1,
+            "bits": [
+              "0x404fd708b985dc5b",
+              "0x4048e0604c03af98",
+              "0x403fc9d6813eb436"
+            ]
+          },
+          {
+            "name": "aumc_last_se",
+            "width": 1,
+            "bits": [
+              "0x403683a6c6e2bd8b",
+              "0x4030959588027510",
+              "0x40241ad21326dc88"
+            ]
+          },
+          {
+            "name": "aumc_last_ci_low",
+            "width": 1,
+            "bits": [
+              "0x40885451547be98c",
+              "0x4081add11209d32c",
+              "0x407ad052745f9f73"
+            ]
+          },
+          {
+            "name": "aumc_last_ci_high",
+            "width": 1,
+            "bits": [
+              "0x408aa50b5fc5cee7",
+              "0x4083626e64d5707c",
+              "0x407ce18ddaa3081c"
+            ]
+          },
+          {
+            "name": "aumc_all_geomean",
+            "width": 1,
+            "bits": [
+              "0x408975f267b4b5eb",
+              "0x40828319335cdd5c",
+              "0x407bd4067bbb6c40"
+            ]
+          },
+          {
+            "name": "aumc_all_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb40243399e34aa",
+              "0x3fb5802f0c0233d6",
+              "0x3fb246e5c0a668a1"
+            ]
+          },
+          {
+            "name": "aumc_all_sd",
+            "width": 1,
+            "bits": [
+              "0x404fd708b985dc5b",
+              "0x4048e0604c03af98",
+              "0x403fc9d6813eb436"
+            ]
+          },
+          {
+            "name": "aumc_all_se",
+            "width": 1,
+            "bits": [
+              "0x403683a6c6e2bd8b",
+              "0x4030959588027510",
+              "0x40241ad21326dc88"
+            ]
+          },
+          {
+            "name": "aumc_all_ci_low",
+            "width": 1,
+            "bits": [
+              "0x40885451547be98c",
+              "0x4081add11209d32c",
+              "0x407ad052745f9f73"
+            ]
+          },
+          {
+            "name": "aumc_all_ci_high",
+            "width": 1,
+            "bits": [
+              "0x408aa50b5fc5cee7",
+              "0x4083626e64d5707c",
+              "0x407ce18ddaa3081c"
+            ]
+          },
+          {
+            "name": "aumc_inf_geomean",
+            "width": 1,
+            "bits": [
+              "0x408c099731f4e5b3",
+              "0x408371d804d01ef9",
+              "0x407c8762e482796a"
+            ]
+          },
+          {
+            "name": "aumc_inf_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb4a435885aed50",
+              "0x3fb5987fbf155e6c",
+              "0x3fb20e1dc0de761e"
+            ]
+          },
+          {
+            "name": "aumc_inf_sd",
+            "width": 1,
+            "bits": [
+              "0x405215de8d73eee1",
+              "0x404a3ec04a5a82e6",
+              "0x404018bd6271a25e"
+            ]
+          },
+          {
+            "name": "aumc_inf_se",
+            "width": 1,
+            "bits": [
+              "0x4039939fbfd6e097",
+              "0x40317f2adc3c5744",
+              "0x40245c5e8d5681e6"
+            ]
+          },
+          {
+            "name": "aumc_inf_ci_low",
+            "width": 1,
+            "bits": [
+              "0x408ac0cceed8bcbb",
+              "0x408290d9b71f9007",
+              "0x407b80510ee9e13c"
+            ]
+          },
+          {
+            "name": "aumc_inf_ci_high",
+            "width": 1,
+            "bits": [
+              "0x408d622a37333449",
+              "0x40845d7cf2459a30",
+              "0x407d98492eceed0b"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred_geomean",
+            "width": 1,
+            "bits": [
+              "0x408c09e1e95ef864",
+              "0x408371f30f9d1280",
+              "0x407c8777355d7f7a"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb51d6817636f56",
+              "0x3fb5fbacb8b163b0",
+              "0x3fb20657926ccc77"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred_sd",
+            "width": 1,
+            "bits": [
+              "0x405280406a7e4208",
+              "0x404ab76c82ee011e",
+              "0x404011da8735c1b2"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred_se",
+            "width": 1,
+            "bits": [
+              "0x403a2a123f975ec9",
+              "0x4031cf9dac9eab69",
+              "0x402453a8b21023d4"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred_ci_low",
+            "width": 1,
+            "bits": [
+              "0x408ab9b78f58cdc6",
+              "0x40828d02636177f0",
+              "0x407b80d3da9de52f"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred_ci_high",
+            "width": 1,
+            "bits": [
+              "0x408d6a90b60813a4",
+              "0x408461ed23a72f6f",
+              "0x407d97e6964fefbc"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_sd",
+            "width": 1,
+            "bits": [
+              "0x3f94aadfa7735a65",
+              "0x3f8a34667bced0f4",
+              "0x3f77f17a93f5374d"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_se",
+            "width": 1,
+            "bits": [
+              "0x3f7d3a6cde8f5ebf",
+              "0x3f7178445289e0a3",
+              "0x3f5e493ede1b667b"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3fb485c050f61463",
+              "0x3fa4f6e542df63d8",
+              "0x3f9608d4c442f30f"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3fba883022a381fd",
+              "0x3fac25f39f888baa",
+              "0x3f9c42f34c4ef621"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_pred_sd",
+            "width": 1,
+            "bits": [
+              "0x3f92b363336af40d",
+              "0x3f87a07de9761206",
+              "0x3f762650aa5043db"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_pred_se",
+            "width": 1,
+            "bits": [
+              "0x3f7a726369f5270a",
+              "0x3f6f80a7e1f2c2b2",
+              "0x3f5c0471bdfc30b5"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_pred_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3fb4d15ef2948b00",
+              "0x3fa553ff79397e0a",
+              "0x3f96475162e33439"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_pred_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3fba41687a3c7d0a",
+              "0x3fabce252e17d592",
+              "0x3f9c0a05425c785d"
+            ]
+          },
+          {
+            "name": "mrt_geomean",
+            "width": 1,
+            "bits": [
+              "0x40196611c075a184",
+              "0x40156254128411b9",
+              "0x4012834d10fc1539"
+            ]
+          },
+          {
+            "name": "mrt_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fab7f929188c7a8",
+              "0x3fad4984f511c329",
+              "0x3fa3c58cb6be26c0"
+            ]
+          },
+          {
+            "name": "mrt_sd",
+            "width": 1,
+            "bits": [
+              "0x3fd5d360660b21ed",
+              "0x3fd3923d59f16c0e",
+              "0x3fc6e07ef9605e41"
+            ]
+          },
+          {
+            "name": "mrt_se",
+            "width": 1,
+            "bits": [
+              "0x3fbeddbe6374c391",
+              "0x3fba1851cd41e568",
+              "0x3faceff252ec61c3"
+            ]
+          },
+          {
+            "name": "mrt_ci_low",
+            "width": 1,
+            "bits": [
+              "0x40189e206919123f",
+              "0x4014b94d916d2f61",
+              "0x4012250e3648b6a6"
+            ]
+          },
+          {
+            "name": "mrt_ci_high",
+            "width": 1,
+            "bits": [
+              "0x401a345b02d98fa8",
+              "0x401610bd2988571f",
+              "0x4012e37570d4b9bc"
+            ]
+          },
+          {
+            "name": "mrt_last_geomean",
+            "width": 1,
+            "bits": [
+              "0x401785a1c052e73c",
+              "0x40148a4269dcba7e",
+              "0x4012218fae88ea9d"
+            ]
+          },
+          {
+            "name": "mrt_last_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fa797fd1f36545a",
+              "0x3fabafe0233f03fa",
+              "0x3fa2fc86b512aba0"
+            ]
+          },
+          {
+            "name": "mrt_last_sd",
+            "width": 1,
+            "bits": [
+              "0x3fd157c4e4f75a2a",
+              "0x3fd1c58c02f5bce3",
+              "0x3fc583eae19b1bbe"
+            ]
+          },
+          {
+            "name": "mrt_last_se",
+            "width": 1,
+            "bits": [
+              "0x3fb886c81d978b39",
+              "0x3fb7b21003f2512f",
+              "0x3fab37069a4e2074"
+            ]
+          },
+          {
+            "name": "mrt_last_ci_low",
+            "width": 1,
+            "bits": [
+              "0x4016e667a982d287",
+              "0x4013f0a5227c1906",
+              "0x4011c8e3d5994544"
+            ]
+          },
+          {
+            "name": "mrt_last_ci_high",
+            "width": 1,
+            "bits": [
+              "0x4018292ef76b347f",
+              "0x4015287f1c33de4d",
+              "0x40127bf5a09cbb18"
+            ]
+          },
+          {
+            "name": "mrt_pred_geomean",
+            "width": 1,
+            "bits": [
+              "0x401966471c6c3f35",
+              "0x4015626c545cc430",
+              "0x4012835817b61e79"
+            ]
+          },
+          {
+            "name": "mrt_pred_geocv",
+            "width": 1,
+            "bits": [
+              "0x3faca1bcd761d86a",
+              "0x3fae58acb25743b1",
+              "0x3fa41cd07c0af706"
+            ]
+          },
+          {
+            "name": "mrt_pred_sd",
+            "width": 1,
+            "bits": [
+              "0x3fd6b9deb27c567d",
+              "0x3fd44787a13307e3",
+              "0x3fc7458532ccf3ad"
+            ]
+          },
+          {
+            "name": "mrt_pred_se",
+            "width": 1,
+            "bits": [
+              "0x3fc011daf2b84c69",
+              "0x3fbb0a0a2c440a84",
+              "0x3fad6fbbbcd2fd3d"
+            ]
+          },
+          {
+            "name": "mrt_pred_ci_low",
+            "width": 1,
+            "bits": [
+              "0x401896385c2008c0",
+              "0x4014b3616a00c632",
+              "0x4012237d493967d3"
+            ]
+          },
+          {
+            "name": "mrt_pred_ci_high",
+            "width": 1,
+            "bits": [
+              "0x401a3d367b17af7a",
+              "0x4016173f625bbcad",
+              "0x4012e52d7309b682"
+            ]
+          },
+          {
+            "name": "thalf_eff_geomean",
+            "width": 1,
+            "bits": [
+              "0x40119ae41abaed63",
+              "0x400da507d58d04e7",
+              "0x4009aa10f98f4605"
+            ]
+          },
+          {
+            "name": "thalf_eff_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fab7f929188cc84",
+              "0x3fad4984f511c6b3",
+              "0x3fa3c58cb6be2e08"
+            ]
+          },
+          {
+            "name": "thalf_eff_sd",
+            "width": 1,
+            "bits": [
+              "0x3fce41bfa533490a",
+              "0x3fcb21aabf2f42c4",
+              "0x3fbfb6d3ce8eed50"
+            ]
+          },
+          {
+            "name": "thalf_eff_se",
+            "width": 1,
+            "bits": [
+              "0x3fb56512455962ab",
+              "0x3fb21671d4ca2c83",
+              "0x3fa40ecc1ad063d8"
+            ]
+          },
+          {
+            "name": "thalf_eff_ci_low",
+            "width": 1,
+            "bits": [
+              "0x4011104d2122ca72",
+              "0x400cbab62d99fc9e",
+              "0x4009276a0d82b23c"
+            ]
+          },
+          {
+            "name": "thalf_eff_ci_high",
+            "width": 1,
+            "bits": [
+              "0x401229e0b191dc5a",
+              "0x400e96d09da1fb99",
+              "0x400a2f5e840fa366"
+            ]
+          },
+          {
+            "name": "lambda_z_geomean",
+            "width": 1,
+            "bits": [
+              "0x3fc5536586b9a503",
+              "0x3fc997a9cafde945",
+              "0x3fcddbee0f422d87"
+            ]
+          },
+          {
+            "name": "lambda_z_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fafca64765c7bf9",
+              "0x3faf4715fa835f37",
+              "0x3fa7f83594fc06e1"
+            ]
+          },
+          {
+            "name": "lambda_z_sd",
+            "width": 1,
+            "bits": [
+              "0x3f852fabbee4b984",
+              "0x3f8903c69141ba16",
+              "0x3f865dad8f347244"
+            ]
+          },
+          {
+            "name": "lambda_z_se",
+            "width": 1,
+            "bits": [
+              "0x3f6df63a9a67cbd9",
+              "0x3f70ad2f0b8126b9",
+              "0x3f6c4a7931547391"
+            ]
+          },
+          {
+            "name": "lambda_z_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3fc491c82a297ff1",
+              "0x3fc8bfdaba8c799b",
+              "0x3fcd240a529e9d90"
+            ]
+          },
+          {
+            "name": "lambda_z_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3fc61c21547355dc",
+              "0x3fca76d2a800ee9c",
+              "0x3fce985a35fc8060"
+            ]
+          },
+          {
+            "name": "thalf_geomean",
+            "width": 1,
+            "bits": [
+              "0x4010a4350284bc60",
+              "0x400bbbece2440883",
+              "0x4007c564aedfe674"
+            ]
+          },
+          {
+            "name": "thalf_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fafcb3b92b69560",
+              "0x3faf47ed8ee69a01",
+              "0x3fa7f89a6a358ffa"
+            ]
+          },
+          {
+            "name": "thalf_sd",
+            "width": 1,
+            "bits": [
+              "0x3fd088c405c672a4",
+              "0x3fcb1c6454742256",
+              "0x3fc1ce8cded665d9"
+            ]
+          },
+          {
+            "name": "thalf_se",
+            "width": 1,
+            "bits": [
+              "0x3fb76208e0a5b428",
+              "0x3fb212ed8da2c18f",
+              "0x3fa6862922466aef"
+            ]
+          },
+          {
+            "name": "thalf_ci_low",
+            "width": 1,
+            "bits": [
+              "0x40100d1b0eeb77c6",
+              "0x400ad20864ee69e2",
+              "0x400732fcf05432bf"
+            ]
+          },
+          {
+            "name": "thalf_ci_high",
+            "width": 1,
+            "bits": [
+              "0x401140dd630007dc",
+              "0x400cadc9136f2184",
+              "0x40085b685c74a2f9"
+            ]
+          },
+          {
+            "name": "cmax_half_sd",
+            "width": 1,
+            "bits": [
+              "0x40002b785133df74",
+              "0x3ffe0b37eed39764",
+              "0x40040bb867937a33"
+            ]
+          },
+          {
+            "name": "cmax_half_se",
+            "width": 1,
+            "bits": [
+              "0x3fe6de1837ad305a",
+              "0x3fe4077a9f37ba43",
+              "0x3fe95b2b79908fc1"
+            ]
+          },
+          {
+            "name": "cmax_half_ci_low",
+            "width": 1,
+            "bits": [
+              "0x4026f443dc89d2af",
+              "0x40270934309e0da8",
+              "0x402647b2c25a9268"
+            ]
+          },
+          {
+            "name": "cmax_half_ci_high",
+            "width": 1,
+            "bits": [
+              "0x402ba7e7fb21d743",
+              "0x402b2772aad1641a",
+              "0x402b7e5388d39c8a"
+            ]
+          },
+          {
+            "name": "cl_f_geomean",
+            "width": 1,
+            "bits": [
+              "0x3fe6a5a974254be9",
+              "0x3feb7e542fb5a1ed",
+              "0x3ff03913bf37eeb9"
+            ]
+          },
+          {
+            "name": "cl_f_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb0e558ec571bb6",
+              "0x3fb235745e0546cc",
+              "0x3fb292b602272515"
+            ]
+          },
+          {
+            "name": "cl_f_sd",
+            "width": 1,
+            "bits": [
+              "0x3fa7ea4a5b1e6ff8",
+              "0x3faf49f921fbf971",
+              "0x3fb2d4f796bf3d40"
+            ]
+          },
+          {
+            "name": "cl_f_se",
+            "width": 1,
+            "bits": [
+              "0x3f90e91cf3d58a9b",
+              "0x3f94dbfb6bfd50f6",
+              "0x3f97d2183cf1497f"
+            ]
+          },
+          {
+            "name": "cl_f_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3fe5cb5ac42274cb",
+              "0x3fea7120ce516d8f",
+              "0x3fef3e8aef644956"
+            ]
+          },
+          {
+            "name": "cl_f_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3fe78882dc01cd63",
+              "0x3fec963c414162ab",
+              "0x3ff0d8cc4cd35f33"
+            ]
+          },
+          {
+            "name": "vz_f_geomean",
+            "width": 1,
+            "bits": [
+              "0x4010fdc9fc5d5360",
+              "0x40113041839d23d5",
+              "0x401162da59ca1b56"
+            ]
+          },
+          {
+            "name": "vz_f_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb9aa6c5cdd70cd",
+              "0x3fbafb3eaa5c418f",
+              "0x3fba5f1700963e12"
+            ]
+          },
+          {
+            "name": "vz_f_sd",
+            "width": 1,
+            "bits": [
+              "0x3fdb4187301d0bfd",
+              "0x3fdcfc52cba1bd5a",
+              "0x3fdca7f6c11aafb2"
+            ]
+          },
+          {
+            "name": "vz_f_se",
+            "width": 1,
+            "bits": [
+              "0x3fc345db7fdd44f2",
+              "0x3fc352e1dd167e3c",
+              "0x3fc21fabc2ce6a5d"
+            ]
+          },
+          {
+            "name": "vz_f_ci_low",
+            "width": 1,
+            "bits": [
+              "0x4010076e97eaf20d",
+              "0x4010392f747e0e4a",
+              "0x40107aa48e8d2b67"
+            ]
+          },
+          {
+            "name": "vz_f_ci_high",
+            "width": 1,
+            "bits": [
+              "0x401202efbe65d6d6",
+              "0x4012360648253cbd",
+              "0x401257d8445db802"
+            ]
+          },
+          {
+            "name": "cl_f_pred_geomean",
+            "width": 1,
+            "bits": [
+              "0x3fe6a59cae4ea2ec",
+              "0x3feb7e4d235dbfe5",
+              "0x3ff03911db530fae"
+            ]
+          },
+          {
+            "name": "cl_f_pred_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb0e4ae95da017d",
+              "0x3fb2323cae427280",
+              "0x3fb28ce3d45e07e9"
+            ]
+          },
+          {
+            "name": "cl_f_pred_sd",
+            "width": 1,
+            "bits": [
+              "0x3fa7e94bc42540be",
+              "0x3faf4469bde8f617",
+              "0x3fb2cf0e73fd6400"
+            ]
+          },
+          {
+            "name": "cl_f_pred_se",
+            "width": 1,
+            "bits": [
+              "0x3f90e868ee2b2353",
+              "0x3f94d8467e9b4eba",
+              "0x3f97ca9e41814ef4"
+            ]
+          },
+          {
+            "name": "cl_f_pred_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3fe5cb56e854f76d",
+              "0x3fea7148aca7093e",
+              "0x3fef3ee5e5dd8b6f"
+            ]
+          },
+          {
+            "name": "cl_f_pred_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3fe7886c7b13bc66",
+              "0x3fec96027f232977",
+              "0x3ff0d8975466dc62"
+            ]
+          },
+          {
+            "name": "vz_f_pred_geomean",
+            "width": 1,
+            "bits": [
+              "0x4010fdc0671d9cc9",
+              "0x4011303d1b90df23",
+              "0x401162d853334248"
+            ]
+          },
+          {
+            "name": "vz_f_pred_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb9ab98a399c8bc",
+              "0x3fbaf9887c63318c",
+              "0x3fba5b9b0a49b0f7"
+            ]
+          },
+          {
+            "name": "vz_f_pred_sd",
+            "width": 1,
+            "bits": [
+              "0x3fdb42b6b1cc8cd5",
+              "0x3fdcfa74a3703cc3",
+              "0x3fdca42a2e49ffb9"
+            ]
+          },
+          {
+            "name": "vz_f_pred_se",
+            "width": 1,
+            "bits": [
+              "0x3fc346b21c6cb781",
+              "0x3fc351a317a02882",
+              "0x3fc21d44a6c6fc4f"
+            ]
+          },
+          {
+            "name": "vz_f_pred_ci_low",
+            "width": 1,
+            "bits": [
+              "0x4010075a9e99f1f1",
+              "0x4010393a856a7ead",
+              "0x40107ac0809eb7dd"
+            ]
+          },
+          {
+            "name": "vz_f_pred_ci_high",
+            "width": 1,
+            "bits": [
+              "0x401202f1df156e38",
+              "0x401235f085e42ab2",
+              "0x401257b4e303acb1"
+            ]
+          },
+          {
+            "name": "auc_inf_dn_geomean",
+            "width": 1,
+            "bits": [
+              "0x3ff69b947858c45a",
+              "0x3ff29f62df72c312",
+              "0x3fef8f6a22690a16"
+            ]
+          },
+          {
+            "name": "auc_inf_dn_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb0e5c4054ec60c",
+              "0x3fb235f47b8b0dff",
+              "0x3fb2934c59d0d419"
+            ]
+          },
+          {
+            "name": "auc_inf_dn_sd",
+            "width": 1,
+            "bits": [
+              "0x3fb7e03c2eade9c3",
+              "0x3fb5321bc154383c",
+              "0x3fb251f1d01a0e7d"
+            ]
+          },
+          {
+            "name": "auc_inf_dn_se",
+            "width": 1,
+            "bits": [
+              "0x3fa0e200bca3cb23",
+              "0x3f9c42cfac704afb",
+              "0x3f972c5cdfe1ca14"
+            ]
+          },
+          {
+            "name": "auc_inf_dn_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3ff5c1a1acc09fc1",
+              "0x3ff1e90660de7441",
+              "0x3fee6429f433262a"
+            ]
+          },
+          {
+            "name": "auc_inf_dn_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3ff77e0e9a6f150d",
+              "0x3ff35d0029374bc1",
+              "0x3ff0631675754c3a"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn_geomean",
+            "width": 1,
+            "bits": [
+              "0x3ff69ba13886f674",
+              "0x3ff29f67a59e4e0a",
+              "0x3fef8f6dcfc8146f"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fb0e5192aea8df3",
+              "0x3fb232bbed64b699",
+              "0x3fb28d7995fdbac0"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn_sd",
+            "width": 1,
+            "bits": [
+              "0x3fb7df583bcfde4b",
+              "0x3fb52e6179916e3e",
+              "0x3fb24c35ab016440"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn_se",
+            "width": 1,
+            "bits": [
+              "0x3fa0e15f8d8473be",
+              "0x3f9c3dd74cc1e852",
+              "0x3f97251bcd42e0e5"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3ff5c1b663b76f0b",
+              "0x3ff1e92a997e0e39",
+              "0x3fee64898d411749"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3ff77e12bc29a13a",
+              "0x3ff35ce2ee1d6a2e",
+              "0x3ff062e6bbae3648"
+            ]
+          },
+          {
+            "name": "cmax_dn_geomean",
+            "width": 1,
+            "bits": [
+              "0x3fc9bd22cbeeefcd",
+              "0x3fc8e51e4c7661a5",
+              "0x3fc8142ec447798c"
+            ]
+          },
+          {
+            "name": "cmax_dn_geocv",
+            "width": 1,
+            "bits": [
+              "0x3fc35d4e36a08825",
+              "0x3fc4e95faf5804a4",
+              "0x3fb6f04bde106790"
+            ]
+          },
+          {
+            "name": "cmax_dn_sd",
+            "width": 1,
+            "bits": [
+              "0x3f9f26b27e574f91",
+              "0x3fa044c1a502255f",
+              "0x3f9142b09c17341e"
+            ]
+          },
+          {
+            "name": "cmax_dn_se",
+            "width": 1,
+            "bits": [
+              "0x3f8606f6662c3fce",
+              "0x3f85b102315831d4",
+              "0x3f75d53feda8479e"
+            ]
+          },
+          {
+            "name": "cmax_dn_ci_low",
+            "width": 1,
+            "bits": [
+              "0x3fc792336a33fd21",
+              "0x3fc6c3124838c7f1",
+              "0x3fc6fb7a682eb039"
+            ]
+          },
+          {
+            "name": "cmax_dn_ci_high",
+            "width": 1,
+            "bits": [
+              "0x3fcc1b1b085dd23a",
+              "0x3fcb3a55a904442b",
+              "0x3fc93a47a1681924"
+            ]
+          },
+          {
+            "name": "flags",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000",
+              "0x0000000000000000",
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "accepted",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000",
+              "0x3ff0000000000000",
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "excluded",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000",
+              "0x0000000000000000",
+              "0x0000000000000000"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "infusion",
+      "note": "an intravenous infusion, the route of cl and vss rather than cl_f",
+      "exact": true,
+      "request": {
+        "contract": "analysis/1",
+        "batch": {
+          "contract": "batch/1",
+          "sample_dims": [
+            "sample"
+          ],
+          "sample_shape": [
+            1
+          ],
+          "n_time": 8,
+          "times": [
+            0.0,
+            0.25,
+            0.5,
+            1.0,
+            2.0,
+            4.0,
+            8.0,
+            12.0
+          ],
+          "values": [
+            0.0,
+            6.0,
+            12.0,
+            10.589962831015146,
+            8.247471345491666,
+            5.0023442361421,
+            1.8402596021391417,
+            0.6769936740453282
+          ],
+          "sd": null,
+          "se": null,
+          "n": null,
+          "nominal_time": null,
+          "lloq": null,
+          "max_doses": 1,
+          "dose_amount": [
+            100.0
+          ],
+          "dose_time": [
+            0.0
+          ],
+          "dose_duration": [
+            0.5
+          ],
+          "time_unit": "hr",
+          "unit": "mg/l",
+          "dose_unit": "mg",
+          "substance": "caffeine",
+          "substances": null,
+          "route": "iv_infusion",
+          "routes": null,
+          "tissue": null,
+          "coords": [
+            {
+              "name": "sample",
+              "dims": [
+                "sample"
+              ],
+              "values": {
+                "str": [
+                  "s1"
+                ]
+              }
+            }
+          ]
+        },
+        "options": {
+          "kind": "concentration",
+          "auc_method": "linear_log",
+          "terminal": {
+            "method": "best_fit",
+            "min_points": 3,
+            "exclude_cmax": true,
+            "n_points": null,
+            "points": null,
+            "min_adj_r2": null,
+            "tie_tolerance": 0.0001,
+            "relative_warning": 1e-08,
+            "keep_candidates": false,
+            "windows": null
+          },
+          "lloq": null,
+          "lloq_relative": null,
+          "blq": "nan",
+          "c0_method": "log_back_extrapolation",
+          "extrapolation_warning": 0.2,
+          "acceptance": {
+            "r2_adj_min": null,
+            "extrapolation_max": null,
+            "span_min": null,
+            "n_points_min": null,
+            "exclude": false
+          },
+          "partial_aucs": {},
+          "tau": null,
+          "tau_tolerance": 0.1,
+          "intervals": true,
+          "units": {},
+          "effect_threshold": null,
+          "n_workers": null,
+          "chunk_rows": 5000,
+          "uncertainty": null,
+          "n_boot": 1000,
+          "seed": null,
+          "ci_level": 0.95,
+          "bootstrap_spread": "se",
+          "bootstrap_distribution": "normal",
+          "delta_step": 0.01
+        }
+      },
+      "expected": {
+        "n_rows": 1,
+        "columns": [
+          {
+            "name": "cmax",
+            "width": 1,
+            "bits": [
+              "0x4028000000000000"
+            ]
+          },
+          {
+            "name": "tmax",
+            "width": 1,
+            "bits": [
+              "0x3fe0000000000000"
+            ]
+          },
+          {
+            "name": "cmin",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "tmin",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "clast",
+            "width": 1,
+            "bits": [
+              "0x3fe5a9eea333f446"
+            ]
+          },
+          {
+            "name": "clast_pred",
+            "width": 1,
+            "bits": [
+              "0x3fe5a9eea333f446"
+            ]
+          },
+          {
+            "name": "tlast",
+            "width": 1,
+            "bits": [
+              "0x4028000000000000"
+            ]
+          },
+          {
+            "name": "auc_last",
+            "width": 1,
+            "bits": [
+              "0x4048256115ccc0be"
+            ]
+          },
+          {
+            "name": "auc_all",
+            "width": 1,
+            "bits": [
+              "0x4048256115ccc0be"
+            ]
+          },
+          {
+            "name": "auc_inf_obs",
+            "width": 1,
+            "bits": [
+              "0x4049800000000002"
+            ]
+          },
+          {
+            "name": "auc_inf_pred",
+            "width": 1,
+            "bits": [
+              "0x4049800000000002"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3fab2f99e5e6d826"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3fab2f99e5e6d826"
+            ]
+          },
+          {
+            "name": "aumc_last",
+            "width": 1,
+            "bits": [
+              "0x4065b984573302f0"
+            ]
+          },
+          {
+            "name": "aumc_all",
+            "width": 1,
+            "bits": [
+              "0x4065b984573302f0"
+            ]
+          },
+          {
+            "name": "aumc_inf",
+            "width": 1,
+            "bits": [
+              "0x406b240000000001"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred",
+            "width": 1,
+            "bits": [
+              "0x406b240000000001"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3fc98ae65edb8aff"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3fc98ae65edb8aff"
+            ]
+          },
+          {
+            "name": "mrt",
+            "width": 1,
+            "bits": [
+              "0x4010078787878787"
+            ]
+          },
+          {
+            "name": "mrt_last",
+            "width": 1,
+            "bits": [
+              "0x400aca83c7204423"
+            ]
+          },
+          {
+            "name": "mrt_pred",
+            "width": 1,
+            "bits": [
+              "0x4010078787878787"
+            ]
+          },
+          {
+            "name": "thalf_eff",
+            "width": 1,
+            "bits": [
+              "0x400638b31e814646"
+            ]
+          },
+          {
+            "name": "lambda_z",
+            "width": 1,
+            "bits": [
+              "0x3fd0000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_stderr",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_intercept",
+            "width": 1,
+            "bits": [
+              "0x4004e116bcd39e7d"
+            ]
+          },
+          {
+            "name": "lambda_z_r2",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_r2_adj",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_n_points",
+            "width": 1,
+            "bits": [
+              "0x4014000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_t_first",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_t_last",
+            "width": 1,
+            "bits": [
+              "0x4028000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_span",
+            "width": 1,
+            "bits": [
+              "0x400fbd422b1bd41e"
+            ]
+          },
+          {
+            "name": "thalf",
+            "width": 1,
+            "bits": [
+              "0x40062e42fefa39ef"
+            ]
+          },
+          {
+            "name": "cl",
+            "width": 1,
+            "bits": [
+              "0x3fff5f5f5f5f5f5d"
+            ]
+          },
+          {
+            "name": "vz",
+            "width": 1,
+            "bits": [
+              "0x401f5f5f5f5f5f5d"
+            ]
+          },
+          {
+            "name": "cl_pred",
+            "width": 1,
+            "bits": [
+              "0x3fff5f5f5f5f5f5d"
+            ]
+          },
+          {
+            "name": "vz_pred",
+            "width": 1,
+            "bits": [
+              "0x401f5f5f5f5f5f5d"
+            ]
+          },
+          {
+            "name": "vss",
+            "width": 1,
+            "bits": [
+              "0x401f6e22d78c40f2"
+            ]
+          },
+          {
+            "name": "vss_pred",
+            "width": 1,
+            "bits": [
+              "0x401f6e22d78c40f2"
+            ]
+          },
+          {
+            "name": "auc_inf_dn",
+            "width": 1,
+            "bits": [
+              "0x3fe051eb851eb853"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn",
+            "width": 1,
+            "bits": [
+              "0x3fe051eb851eb853"
+            ]
+          },
+          {
+            "name": "cmax_dn",
+            "width": 1,
+            "bits": [
+              "0x3fbeb851eb851eb8"
+            ]
+          },
+          {
+            "name": "n",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "flags",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "accepted",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "excluded",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "mixed_routes",
+      "note": "two routes in one batch, which is analysed per route and filled per column",
+      "exact": true,
+      "request": {
+        "contract": "analysis/1",
+        "batch": {
+          "contract": "batch/1",
+          "sample_dims": [
+            "subject"
+          ],
+          "sample_shape": [
+            2
+          ],
+          "n_time": 9,
+          "times": [
+            0.25,
+            0.5,
+            1.0,
+            2.0,
+            4.0,
+            6.0,
+            9.0,
+            12.0,
+            24.0,
+            0.25,
+            0.5,
+            1.0,
+            2.0,
+            4.0,
+            6.0,
+            9.0,
+            12.0,
+            24.0
+          ],
+          "values": [
+            23.78073561251785,
+            22.62093545089899,
+            20.468268826949547,
+            16.758001150890983,
+            11.23322410293054,
+            7.529855297805053,
+            4.132472205539664,
+            2.2679488322353127,
+            0.20574367622550074,
+            12.65251099572423,
+            17.86886892623535,
+            20.10844703453344,
+            17.86888017570137,
+            12.83534911221967,
+            9.196985889216148,
+            5.578254003700262,
+            3.383382080915317,
+            0.45789097221835445
+          ],
+          "sd": null,
+          "se": null,
+          "n": null,
+          "nominal_time": null,
+          "lloq": null,
+          "max_doses": 1,
+          "dose_amount": [
+            100.0,
+            100.0
+          ],
+          "dose_time": [
+            0.0,
+            0.0
+          ],
+          "dose_duration": [
+            "NaN",
+            "NaN"
+          ],
+          "time_unit": "hr",
+          "unit": "mg/l",
+          "dose_unit": "mg",
+          "substance": "caffeine",
+          "substances": null,
+          "route": null,
+          "routes": [
+            "iv_bolus",
+            "oral"
+          ],
+          "tissue": null,
+          "coords": [
+            {
+              "name": "subject",
+              "dims": [
+                "subject"
+              ],
+              "values": {
+                "str": [
+                  "iv",
+                  "po"
+                ]
+              }
+            },
+            {
+              "name": "route",
+              "dims": [
+                "subject"
+              ],
+              "values": {
+                "str": [
+                  "iv_bolus",
+                  "oral"
+                ]
+              }
+            }
+          ]
+        },
+        "options": {
+          "kind": "concentration",
+          "auc_method": "linear_log",
+          "terminal": {
+            "method": "best_fit",
+            "min_points": 3,
+            "exclude_cmax": true,
+            "n_points": null,
+            "points": null,
+            "min_adj_r2": null,
+            "tie_tolerance": 0.0001,
+            "relative_warning": 1e-08,
+            "keep_candidates": false,
+            "windows": null
+          },
+          "lloq": null,
+          "lloq_relative": null,
+          "blq": "nan",
+          "c0_method": "log_back_extrapolation",
+          "extrapolation_warning": 0.2,
+          "acceptance": {
+            "r2_adj_min": null,
+            "extrapolation_max": null,
+            "span_min": null,
+            "n_points_min": null,
+            "exclude": false
+          },
+          "partial_aucs": {},
+          "tau": null,
+          "tau_tolerance": 0.1,
+          "intervals": true,
+          "units": {},
+          "effect_threshold": null,
+          "n_workers": null,
+          "chunk_rows": 5000,
+          "uncertainty": null,
+          "n_boot": 1000,
+          "seed": null,
+          "ci_level": 0.95,
+          "bootstrap_spread": "se",
+          "bootstrap_distribution": "normal",
+          "delta_step": 0.01
+        }
+      },
+      "expected": {
+        "n_rows": 2,
+        "columns": [
+          {
+            "name": "cmax",
+            "width": 1,
+            "bits": [
+              "0x4037c7de4a029632",
+              "0x40341bc32f52ab58"
+            ]
+          },
+          {
+            "name": "tmax",
+            "width": 1,
+            "bits": [
+              "0x3fd0000000000000",
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "cmin",
+            "width": 1,
+            "bits": [
+              "0x3fca55cf0c5fa8c9",
+              "0x3fdd4e15efb3ef3d"
+            ]
+          },
+          {
+            "name": "tmin",
+            "width": 1,
+            "bits": [
+              "0x4038000000000000",
+              "0x4038000000000000"
+            ]
+          },
+          {
+            "name": "clast",
+            "width": 1,
+            "bits": [
+              "0x3fca55cf0c5fa8c9",
+              "0x3fdd4e15efb3ef3d"
+            ]
+          },
+          {
+            "name": "clast_pred",
+            "width": 1,
+            "bits": [
+              "0x3fca55cf0c5fa8be",
+              "0x3fdd5167ae8fbea1"
+            ]
+          },
+          {
+            "name": "tlast",
+            "width": 1,
+            "bits": [
+              "0x4038000000000000",
+              "0x4038000000000000"
+            ]
+          },
+          {
+            "name": "auc_last",
+            "width": 1,
+            "bits": [
+              "0x405efe297a6110d8",
+              "0x40615199c041bf82"
+            ]
+          },
+          {
+            "name": "auc_all",
+            "width": 1,
+            "bits": [
+              "0x405efe297a6110d8",
+              "0x40615199c041bf82"
+            ]
+          },
+          {
+            "name": "auc_inf_obs",
+            "width": 1,
+            "bits": [
+              "0x405f3ffffffffffe",
+              "0x4061a98bfe055966"
+            ]
+          },
+          {
+            "name": "auc_inf_pred",
+            "width": 1,
+            "bits": [
+              "0x405f3ffffffffffe",
+              "0x4061a995f429708b"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3f80dac1f3706c09",
+              "0x3f93ead398280f52"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3f80dac1f3706c09",
+              "0x3f93ed09e3bc78ca"
+            ]
+          },
+          {
+            "name": "aumc_last",
+            "width": 1,
+            "bits": [
+              "0x408299565b9fdd15",
+              "0x408975f267b4b5eb"
+            ]
+          },
+          {
+            "name": "aumc_all",
+            "width": 1,
+            "bits": [
+              "0x408299565b9fdd15",
+              "0x408975f267b4b5eb"
+            ]
+          },
+          {
+            "name": "aumc_inf",
+            "width": 1,
+            "bits": [
+              "0x408387ffffffffff",
+              "0x408c099731f4e5b3"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred",
+            "width": 1,
+            "bits": [
+              "0x408387fffffffffe",
+              "0x408c09e1e95ef864"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3fa8706607630314",
+              "0x3fb786f839cccb30"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3fa87066076302fb",
+              "0x3fb78963b6688405"
+            ]
+          },
+          {
+            "name": "mrt",
+            "width": 1,
+            "bits": [
+              "0x4014000000000000",
+              "0x40196611c075a184"
+            ]
+          },
+          {
+            "name": "mrt_last",
+            "width": 1,
+            "bits": [
+              "0x4013341142a239ea",
+              "0x401785a1c052e73c"
+            ]
+          },
+          {
+            "name": "mrt_pred",
+            "width": 1,
+            "bits": [
+              "0x4013ffffffffffff",
+              "0x401966471c6c3f35"
+            ]
+          },
+          {
+            "name": "thalf_eff",
+            "width": 1,
+            "bits": [
+              "0x400bb9d3beb8c86b",
+              "0x40119ae41abaed63"
+            ]
+          },
+          {
+            "name": "lambda_z",
+            "width": 1,
+            "bits": [
+              "0x3fc999999999999c",
+              "0x3fc5536586b9a503"
+            ]
+          },
+          {
+            "name": "lambda_z_stderr",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000",
+              "0x3f0d9c8708f4a708"
+            ]
+          },
+          {
+            "name": "lambda_z_intercept",
+            "width": 1,
+            "bits": [
+              "0x4009c041f7ed8d34",
+              "0x4009be422de2e3b1"
+            ]
+          },
+          {
+            "name": "lambda_z_r2",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000",
+              "0x3fefffff0936f4c9"
+            ]
+          },
+          {
+            "name": "lambda_z_r2_adj",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000",
+              "0x3feffffecb84b1fb"
+            ]
+          },
+          {
+            "name": "lambda_z_n_points",
+            "width": 1,
+            "bits": [
+              "0x4020000000000000",
+              "0x4018000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_t_first",
+            "width": 1,
+            "bits": [
+              "0x3fe0000000000000",
+              "0x4000000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_t_last",
+            "width": 1,
+            "bits": [
+              "0x4038000000000000",
+              "0x4038000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_span",
+            "width": 1,
+            "bits": [
+              "0x401b1f6716dfed21",
+              "0x401526eb02e39257"
+            ]
+          },
+          {
+            "name": "thalf",
+            "width": 1,
+            "bits": [
+              "0x400bb9d3beb8c868",
+              "0x4010a4350284bc60"
+            ]
+          },
+          {
+            "name": "c0",
+            "width": 1,
+            "bits": [
+              "0x4038ffffffffffff",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "c0_method",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000",
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "auc_back_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3fa8f874f58d959a",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "auc_back_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3fa8f874f58d959a",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "aumc_back_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3f53cf59d42ed59c",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "tlag",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000",
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "cmax_half",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000",
+              "0x40294e15ebd5d4f9"
+            ]
+          },
+          {
+            "name": "tmax_half",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000",
+              "0x3fd0000000000000"
+            ]
+          },
+          {
+            "name": "cl",
+            "width": 1,
+            "bits": [
+              "0x3fe999999999999b",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "cl_f",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000",
+              "0x3fe6a5a974254be9"
+            ]
+          },
+          {
+            "name": "vz",
+            "width": 1,
+            "bits": [
+              "0x400fffffffffffff",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "vz_f",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000",
+              "0x4010fdc9fc5d5360"
+            ]
+          },
+          {
+            "name": "cl_pred",
+            "width": 1,
+            "bits": [
+              "0x3fe999999999999b",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "cl_f_pred",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000",
+              "0x3fe6a59cae4ea2ec"
+            ]
+          },
+          {
+            "name": "vz_pred",
+            "width": 1,
+            "bits": [
+              "0x400fffffffffffff",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "vz_f_pred",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000",
+              "0x4010fdc0671d9cc9"
+            ]
+          },
+          {
+            "name": "vss",
+            "width": 1,
+            "bits": [
+              "0x4010000000000001",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "vss_pred",
+            "width": 1,
+            "bits": [
+              "0x4010000000000000",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "auc_inf_dn",
+            "width": 1,
+            "bits": [
+              "0x3ff3ffffffffffff",
+              "0x3ff69b947858c45a"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn",
+            "width": 1,
+            "bits": [
+              "0x3ff3ffffffffffff",
+              "0x3ff69ba13886f674"
+            ]
+          },
+          {
+            "name": "cmax_dn",
+            "width": 1,
+            "bits": [
+              "0x3fce7078b0a726a6",
+              "0x3fc9bd22cbeeefcd"
+            ]
+          },
+          {
+            "name": "n",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000",
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "flags",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000",
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "accepted",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000",
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "excluded",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000",
+              "0x0000000000000000"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "zero_dose",
+      "note": "a dose of 0, whose dose normalized columns are infinite",
+      "exact": true,
+      "request": {
+        "contract": "analysis/1",
+        "batch": {
+          "contract": "batch/1",
+          "sample_dims": [
+            "sample"
+          ],
+          "sample_shape": [
+            1
+          ],
+          "n_time": 4,
+          "times": [
+            0.0,
+            1.0,
+            2.0,
+            3.0
+          ],
+          "values": [
+            8.0,
+            4.0,
+            2.0,
+            1.0
+          ],
+          "sd": null,
+          "se": null,
+          "n": null,
+          "nominal_time": null,
+          "lloq": null,
+          "max_doses": 1,
+          "dose_amount": [
+            0.0
+          ],
+          "dose_time": [
+            0.0
+          ],
+          "dose_duration": [
+            "NaN"
+          ],
+          "time_unit": "hr",
+          "unit": "mg/l",
+          "dose_unit": "mg",
+          "substance": "caffeine",
+          "substances": null,
+          "route": "iv_bolus",
+          "routes": null,
+          "tissue": null,
+          "coords": [
+            {
+              "name": "sample",
+              "dims": [
+                "sample"
+              ],
+              "values": {
+                "str": [
+                  "s1"
+                ]
+              }
+            }
+          ]
+        },
+        "options": {
+          "kind": "concentration",
+          "auc_method": "linear_log",
+          "terminal": {
+            "method": "best_fit",
+            "min_points": 3,
+            "exclude_cmax": true,
+            "n_points": null,
+            "points": null,
+            "min_adj_r2": null,
+            "tie_tolerance": 0.0001,
+            "relative_warning": 1e-08,
+            "keep_candidates": false,
+            "windows": null
+          },
+          "lloq": null,
+          "lloq_relative": null,
+          "blq": "nan",
+          "c0_method": "log_back_extrapolation",
+          "extrapolation_warning": 0.2,
+          "acceptance": {
+            "r2_adj_min": null,
+            "extrapolation_max": null,
+            "span_min": null,
+            "n_points_min": null,
+            "exclude": false
+          },
+          "partial_aucs": {},
+          "tau": null,
+          "tau_tolerance": 0.1,
+          "intervals": true,
+          "units": {},
+          "effect_threshold": null,
+          "n_workers": null,
+          "chunk_rows": 5000,
+          "uncertainty": null,
+          "n_boot": 1000,
+          "seed": null,
+          "ci_level": 0.95,
+          "bootstrap_spread": "se",
+          "bootstrap_distribution": "normal",
+          "delta_step": 0.01
+        }
+      },
+      "expected": {
+        "n_rows": 1,
+        "columns": [
+          {
+            "name": "cmax",
+            "width": 1,
+            "bits": [
+              "0x4020000000000000"
+            ]
+          },
+          {
+            "name": "tmax",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "cmin",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "tmin",
+            "width": 1,
+            "bits": [
+              "0x4008000000000000"
+            ]
+          },
+          {
+            "name": "clast",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "clast_pred",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "tlast",
+            "width": 1,
+            "bits": [
+              "0x4008000000000000"
+            ]
+          },
+          {
+            "name": "auc_last",
+            "width": 1,
+            "bits": [
+              "0x4024329e7886129e"
+            ]
+          },
+          {
+            "name": "auc_all",
+            "width": 1,
+            "bits": [
+              "0x4024329e7886129e"
+            ]
+          },
+          {
+            "name": "auc_inf_obs",
+            "width": 1,
+            "bits": [
+              "0x40271547652b82fe"
+            ]
+          },
+          {
+            "name": "auc_inf_pred",
+            "width": 1,
+            "bits": [
+              "0x40271547652b82fe"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3fc0000000000001"
+            ]
+          },
+          {
+            "name": "auc_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3fc0000000000001"
+            ]
+          },
+          {
+            "name": "aumc_last",
+            "width": 1,
+            "bits": [
+              "0x40247ba597a4462e"
+            ]
+          },
+          {
+            "name": "aumc_all",
+            "width": 1,
+            "bits": [
+              "0x40247ba597a4462e"
+            ]
+          },
+          {
+            "name": "aumc_inf",
+            "width": 1,
+            "bits": [
+              "0x4030a6a4c7c29f9a"
+            ]
+          },
+          {
+            "name": "aumc_inf_pred",
+            "width": 1,
+            "bits": [
+              "0x4030a6a4c7c29f9a"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x3fd8a2b23f3bab74"
+            ]
+          },
+          {
+            "name": "aumc_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x3fd8a2b23f3bab74"
+            ]
+          },
+          {
+            "name": "mrt",
+            "width": 1,
+            "bits": [
+              "0x3ff71547652b82fe"
+            ]
+          },
+          {
+            "name": "mrt_last",
+            "width": 1,
+            "bits": [
+              "0x3ff039d9ae501547"
+            ]
+          },
+          {
+            "name": "mrt_pred",
+            "width": 1,
+            "bits": [
+              "0x3ff71547652b82fe"
+            ]
+          },
+          {
+            "name": "thalf_eff",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z",
+            "width": 1,
+            "bits": [
+              "0x3fe62e42fefa39f0"
+            ]
+          },
+          {
+            "name": "lambda_z_stderr",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_intercept",
+            "width": 1,
+            "bits": [
+              "0x4000a2b23f3bab74"
+            ]
+          },
+          {
+            "name": "lambda_z_r2",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_r2_adj",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_n_points",
+            "width": 1,
+            "bits": [
+              "0x4008000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_t_first",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_t_last",
+            "width": 1,
+            "bits": [
+              "0x4008000000000000"
+            ]
+          },
+          {
+            "name": "lambda_z_span",
+            "width": 1,
+            "bits": [
+              "0x4000000000000001"
+            ]
+          },
+          {
+            "name": "thalf",
+            "width": 1,
+            "bits": [
+              "0x3fefffffffffffff"
+            ]
+          },
+          {
+            "name": "c0",
+            "width": 1,
+            "bits": [
+              "0x401ffffffffffffe"
+            ]
+          },
+          {
+            "name": "c0_method",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "auc_back_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "auc_back_extrap_fraction_pred",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "aumc_back_extrap_fraction",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "cl",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "vz",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "cl_pred",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "vz_pred",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "vss",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "vss_pred",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "auc_inf_dn",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "auc_inf_pred_dn",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "cmax_dn",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "n",
+            "width": 1,
+            "bits": [
+              "0x7ff8000000000000"
+            ]
+          },
+          {
+            "name": "flags",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          },
+          {
+            "name": "accepted",
+            "width": 1,
+            "bits": [
+              "0x3ff0000000000000"
+            ]
+          },
+          {
+            "name": "excluded",
+            "width": 1,
+            "bits": [
+              "0x0000000000000000"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

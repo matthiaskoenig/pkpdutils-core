@@ -1,0 +1,30 @@
+[package]
+name = "pkpdutils-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The WebAssembly host of pkpdutils-core: the analysis of a batch of timecourses from JSON, with no imports"
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+# `cdylib` is the module a page loads and `rlib` is what `cargo test` builds. Every export of
+# this crate is a thin wrapper around a pure function, so the whole layer is tested natively and
+# the wasm build adds no untested code.
+[lib]
+name = "pkpdutils_wasm"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# `default-features = false` is how a wasm host builds the kernel: the `parallel` feature is
+# rayon, which compiles for both wasm targets but has no thread to run a shard on there
+pkpdutils-core = { path = "../core", version = "0.6.0", default-features = false }
+pkpdutils-abi = { path = "../abi", version = "0.6.0" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -51,6 +51,35 @@ jobs:
       # `parallel` feature is a dependency a wasm instance cannot use
       - run: cargo check --locked --workspace --exclude pkpdutils-python --no-default-features --target wasm32-unknown-unknown
       - run: cargo check --locked --workspace --exclude pkpdutils-python --no-default-features --target wasm32-wasip1
+  js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install the toolchain of rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2.9.3
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "24"
+      # the module the npm package carries, which is not committed: it is built from the
+      # crates of this repository here, by `npm run build` locally and by `prepack` before a
+      # publish, and `node js/build.mjs --check` of `npm test` refuses a module older than the
+      # crates, so the tests below cannot pass against yesterday's kernel
+      - run: cargo build -p pkpdutils-wasm --release --no-default-features --target wasm32-unknown-unknown --locked
+      # the tests of the crate are native, except the one which walks the sections of the built
+      # module and asserts that it imports nothing; that one needs the line above and skips
+      # with a printed reason when the module is not there, so it runs here and nowhere else
+      - run: cargo test -p pkpdutils-wasm --locked
+      - run: cargo clippy -p pkpdutils-wasm --all-targets --locked -- -D warnings
+      - run: node js/build.mjs
+      # `npm test` is the loader, the pool, the package and the same-bits fixture. There is no
+      # `npm ci`: the package has no dependency at all, and nothing of it is bundled
+      - run: npm test
+        working-directory: js
+      # what the tarball would carry, which is the one thing about a publish that cannot be
+      # taken back; `prepack` also refuses a version which is not the version of the crates
+      - run: npm pack --dry-run
+        working-directory: js
   python:
     runs-on: ubuntu-latest
     steps:

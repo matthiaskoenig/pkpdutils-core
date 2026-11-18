@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>pkpdutils-core in the browser</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --ink: #1a1a1a;
+        --paper: #ffffff;
+        --line: #d8d8d8;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --ink: #e8e8e8;
+          --paper: #141414;
+          --line: #333333;
+        }
+      }
+      body {
+        margin: 0 auto;
+        padding: 2rem 1rem;
+        max-width: 70rem;
+        background: var(--paper);
+        color: var(--ink);
+        font: 15px/1.6 system-ui, sans-serif;
+      }
+      h1 {
+        font-size: 1.4rem;
+        margin: 0 0 0.25rem;
+      }
+      p {
+        margin: 0.4rem 0;
+      }
+      table {
+        border-collapse: collapse;
+        margin-top: 1.2rem;
+        width: 100%;
+        font-variant-numeric: tabular-nums;
+      }
+      th,
+      td {
+        border-bottom: 1px solid var(--line);
+        padding: 0.4rem 0.6rem;
+        text-align: right;
+      }
+      th:first-child,
+      td:first-child,
+      th:nth-child(2),
+      td:nth-child(2) {
+        text-align: left;
+      }
+      pre {
+        margin-top: 1.2rem;
+        padding: 0.8rem;
+        border: 1px solid var(--line);
+        overflow-x: auto;
+        font-size: 13px;
+      }
+      #status {
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>pkpdutils-core in the browser</h1>
+    <p id="about">loading the module...</p>
+    <p id="status">running</p>
+    <table id="table" hidden>
+      <thead>
+        <tr>
+          <th>shape</th>
+          <th>size</th>
+          <th>points</th>
+          <th>request</th>
+          <th>encode ms</th>
+          <th>call ms</th>
+          <th>whole ms</th>
+          <th>pool ms</th>
+          <th>pool speedup</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <pre id="markdown" hidden></pre>
+    <script type="module">
+      // The three shapes of `js/bench.mjs` with the same protocol, in a browser: serve the
+      // repository (`python -m http.server`) and open /js/bench.html. The table is printed into
+      // the page and as the markdown of `bench/RESULTS.md` below it.
+      //
+      // `?shapes=small,scan` runs some of them, which is how a machine whose browser cannot hold
+      // the largest request still reports the others, and every run yields to the event loop
+      // afterwards: a page which never yields is a page a tool cannot read the result out of and
+      // a tab which looks hung.
+      import { createRuntime } from "./loader.mjs";
+      import { createPool, defaultWorkers } from "./pool.mjs";
+
+      const SHAPES = {
+        small: { rows: 1, points: 12 },
+        large: { rows: 100000, points: 12 },
+        scan: { rows: 10000, points: 200 },
+      };
+      const RUNS = 20;
+      const WARMUP = 3;
+      const ROUNDS = 3;
+
+      const cases = await (await fetch("./test/fixtures/cases.json")).json();
+      const options = cases.cases[0].request.options;
+
+      function requestOf({ rows, points }) {
+        const time = Array.from({ length: points }, (_, at) => (24 * (at + 1)) / points);
+        const times = new Array(rows * points);
+        const values = new Array(rows * points);
+        for (let row = 0; row < rows; row += 1) {
+          const clearance = 0.08 + 0.04 * (row % 7);
+          for (let at = 0; at < points; at += 1) {
+            times[row * points + at] = time[at];
+            values[row * points + at] = 20 * Math.exp(-clearance * time[at]);
+          }
+        }
+        return {
+          contract: "analysis/1",
+          batch: {
+            contract: "batch/1",
+            sample_dims: ["subject"],
+            sample_shape: [rows],
+            n_time: points,
+            times,
+            values,
+            sd: null,
+            se: null,
+            n: null,
+            nominal_time: null,
+            lloq: null,
+            max_doses: 1,
+            dose_amount: new Array(rows).fill(100),
+            dose_time: new Array(rows).fill(0),
+            dose_duration: new Array(rows).fill("NaN"),
+            time_unit: "hr",
+            unit: "mg/l",
+            dose_unit: "mg",
+            substance: "substance",
+            substances: null,
+            route: "iv_bolus",
+            routes: null,
+            tissue: null,
+            coords: [],
+          },
+          options,
+        };
+      }
+
+      const median = (numbers) => {
+        const sorted = [...numbers].sort((a, b) => a - b);
+        const middle = Math.floor(sorted.length / 2);
+        return sorted.length % 2 === 0
+          ? (sorted[middle - 1] + sorted[middle]) / 2
+          : sorted[middle];
+      };
+
+      const yieldToPage = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+      async function time(call) {
+        const rounds = [];
+        for (let round = 0; round < ROUNDS; round += 1) {
+          for (let run = 0; run < WARMUP; run += 1) {
+            await call();
+            await yieldToPage();
+          }
+          const runs = [];
+          for (let run = 0; run < RUNS; run += 1) {
+            const started = performance.now();
+            await call();
+            runs.push(performance.now() - started);
+            await yieldToPage();
+          }
+          rounds.push(median(runs));
+        }
+        return Math.min(...rounds);
+      }
+
+      const thousands = (value) => value.toLocaleString("en-US").replace(/,/g, " ");
+
+      const bytes = await (await fetch("./runtime/pkpdutils-core.wasm")).arrayBuffer();
+      const compiled = await WebAssembly.compile(bytes);
+      const runtime = await createRuntime({ module: compiled });
+      const workers = defaultWorkers();
+      const pool = await createPool({ module: compiled, workers });
+      document.getElementById("about").textContent =
+        `pkpdutils-core ${runtime.about.version}, output format ${runtime.about.output_format}, ` +
+        `${(bytes.byteLength / 1e6).toFixed(2)} MB module, ${workers} workers of ` +
+        `${navigator.hardwareConcurrency} cores, the median of ${RUNS} calls of ${ROUNDS} rounds`;
+
+      const table = document.getElementById("table");
+      const body = table.querySelector("tbody");
+      const lines = [
+        "| shape | size | points | request | encode ms | call ms | whole ms | pool ms | pool speedup |",
+        "|---|---|---|---|---|---|---|---|---|",
+      ];
+      const asked = (new URLSearchParams(location.search).get("shapes") ?? Object.keys(SHAPES).join(","))
+        .split(",")
+        .filter((name) => name in SHAPES);
+      for (const name of asked) {
+        const shape = SHAPES[name];
+        document.getElementById("status").textContent = `running ${name}`;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const request = requestOf(shape);
+        const text = JSON.stringify(request);
+        const measured = {
+          encode: await time(() => JSON.stringify(request)),
+          call: await time(() => runtime.analyze(text)),
+          whole: await time(() => runtime.analyze(request)),
+          pool: await time(() => pool.analyze(request)),
+        };
+        const points = shape.rows * shape.points;
+        const size = `${thousands(shape.rows)} curve${shape.rows === 1 ? "" : "s"} x ${shape.points} points`;
+        const cells = [
+          name,
+          size,
+          thousands(points),
+          `${(text.length / 1e6).toFixed(1)} MB`,
+          measured.encode.toFixed(2),
+          measured.call.toFixed(2),
+          measured.whole.toFixed(2),
+          measured.pool.toFixed(2),
+          `${(measured.whole / measured.pool).toFixed(2)}x`,
+        ];
+        const row = document.createElement("tr");
+        for (const cell of cells) {
+          const td = document.createElement("td");
+          td.textContent = cell;
+          row.append(td);
+        }
+        body.append(row);
+        table.hidden = false;
+        lines.push(`| ${cells.join(" | ")} |`);
+      }
+      pool.close();
+      document.getElementById("status").textContent = "done";
+      const markdown = document.getElementById("markdown");
+      markdown.textContent = lines.join("\n");
+      markdown.hidden = false;
+      globalThis.benchTable = lines.join("\n");
+    </script>
+  </body>
+</html>
