@@ -32,7 +32,7 @@ The tag then builds the five wheels and the sdist, uploads them to PyPI with tru
 
 `js/` is the JavaScript host of the WebAssembly build of this kernel and is published as [`pkpdutils-core`](https://www.npmjs.com/package/pkpdutils-core) on npm, from the `npm` job of `.github/workflows/release.yml`, with the same version as the crates and the wheels.
 
-npm trusted publishing is configured **per package** and a package has to exist before it can be configured, so the first publish is one manual step of the maintainer, once:
+npm trusted publishing is configured **per package** and a package has to exist before it can be configured, so the first publish is one manual step of the maintainer, once. It happens **before the tag of the release which first carries the package**, from the release branch after its pull request is green: the `github_release` job needs the `npm` job, which would fail on a package that does not exist yet and take the GitHub release of that tag with it. The job then finds the version on npm and skips its publish with a notice, which is what makes the order work.
 
 ```bash
 cd js
@@ -40,5 +40,7 @@ npm login
 node prepack.mjs
 npm publish --access public
 ```
+
+A tag which was pushed before that publish is not lost: publish by hand as above and re-run the failed workflow run, after which the `npm` job skips and the release of the tag is created.
 
 Then set the trusted publisher on npmjs.com (Settings of the package, Trusted publisher: repository `matthiaskoenig/pkpdutils-core`, workflow `release.yml`), after which every release goes through the job and no token is held anywhere. The job itself refuses to publish unless the tag names the version of `js/package.json`, and it skips the publish with a notice when npm already carries that version.
