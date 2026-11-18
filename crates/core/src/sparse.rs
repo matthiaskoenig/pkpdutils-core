@@ -412,6 +412,9 @@ pub fn nca_sparse(request: &SparseRequest) -> Result<SparseAnswer, KernelError> 
         values: n.iter().map(|&c| c as f64).collect(),
     });
     result.flags = vec![flags.bits()];
+    // A result the host cannot read is worth a named error rather than a surprise, as in the
+    // other analyses.
+    result.validate().map_err(KernelError::Internal)?;
     Ok(SparseAnswer {
         result,
         n_batches,

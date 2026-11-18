@@ -371,11 +371,13 @@ fn nca_urine<'py>(py: Python<'py>, request: &Bound<'py, PyDict>) -> PyResult<Bou
         area_unit: field(py, request, "area_unit", URINE_REQUEST)?,
         options: options_from_python(&options)?,
     };
-    let checked = request
-        .checked()
-        .map_err(|reason| kernel_error(kernel::KernelError::Urine(reason)))?;
     let answer = py
-        .detach(|| guarded(|| kernel::nca_urine(&checked)))?
+        .detach(|| {
+            guarded(|| {
+                let checked = request.checked().map_err(kernel::KernelError::Urine)?;
+                kernel::nca_urine(&checked)
+            })
+        })?
         .map_err(kernel_error)?;
     result_into_python(py, answer)
 }
