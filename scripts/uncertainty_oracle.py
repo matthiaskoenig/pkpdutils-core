@@ -150,13 +150,26 @@ def window_batch() -> Timecourses:
     )
 
 
-def uncertainty_of(result: Any) -> dict[str, list[Any]]:
-    """Every uncertainty variable of a result, by name."""
-    out = {}
-    for name in sorted(result.ds.data_vars):
+def uncertainty_names(result: Any) -> list[str]:
+    """The uncertainty variables of a result in the order the host writes them.
+
+    The order is part of the answer: it is the column order of
+    `NCAResult.to_dataframe` and of every table rendered from the result, so the
+    kernel has to write its columns in it and not merely carry the same names.
+    """
+    names = []
+    for name in result.ds.data_vars:
         base = base_name(name)
         if base is None or base in DISCRETE_PARAMETERS:
             continue
+        names.append(str(name))
+    return names
+
+
+def uncertainty_of(result: Any) -> dict[str, list[Any]]:
+    """Every uncertainty variable of a result, by name."""
+    out = {}
+    for name in sorted(uncertainty_names(result)):
         values = np.asarray(result.ds[name].values, dtype=np.float64).ravel()
         out[name] = encode(values)
     return out
@@ -185,6 +198,7 @@ def case(name: str, timecourses: Timecourses, options: NCAOptions) -> dict[str, 
         "batch": encode(batch),
         "options": encode(kernel_options),
         "flags": encode(np.asarray(result.ds["flags"].values, dtype=np.float64).ravel()),
+        "order": uncertainty_names(result),
         "expected": answer,
     }
 

@@ -35,6 +35,7 @@ struct Case {
     batch: Batch,
     options: NcaOptions,
     flags: Values,
+    order: Vec<String>,
     expected: BTreeMap<String, Values>,
 }
 
@@ -104,6 +105,18 @@ fn the_uncertainty_matches_the_python_oracle() {
                 compared += 1;
             }
         }
+        // The order of the columns is python's as well and not only their names: it is the
+        // column order of `NCAResult.to_dataframe` and of every table rendered from a result,
+        // and the host adopts the kernel's answer as it comes.
+        let written: Vec<&str> = result
+            .parameters
+            .iter()
+            .map(|column| column.name.as_str())
+            .filter(|name| case.order.iter().any(|wanted| wanted == name))
+            .collect();
+        let wanted: Vec<&str> = case.order.iter().map(String::as_str).collect();
+        assert_eq!(written, wanted, "{}: the column order differs", case.name);
+
         // the flags of the row are python's, which for the delta method includes
         // `DELTA_WINDOW_CHANGE` where a perturbation moved the terminal window
         let flags: Vec<f64> = result.flags.iter().map(|bits| f64::from(*bits)).collect();

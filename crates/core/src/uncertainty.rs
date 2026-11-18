@@ -952,10 +952,10 @@ where
                 high[row] = estimate + z * standard_error;
             }
         }
-        out.push(crate::uncertainty::column(name, "_sd", unit, x_sd));
-        out.push(crate::uncertainty::column(name, "_se", unit, x_se));
-        out.push(crate::uncertainty::column(name, "_ci_low", unit, low));
-        out.push(crate::uncertainty::column(name, "_ci_high", unit, high));
+        // the order is python's and not an arrangement of its own: a log-normal parameter
+        // carries its geometric statistics in front of the four variables every parameter has
+        // (`delta` of `uncertainty.py`), and the order of the columns of a result is the column
+        // order of every table rendered from it
         if lognormal {
             out.push(crate::uncertainty::column(name, "_geomean", unit, geomean));
             out.push(crate::uncertainty::column(
@@ -965,6 +965,10 @@ where
                 geocv,
             ));
         }
+        out.push(crate::uncertainty::column(name, "_sd", unit, x_sd));
+        out.push(crate::uncertainty::column(name, "_se", unit, x_se));
+        out.push(crate::uncertainty::column(name, "_ci_low", unit, low));
+        out.push(crate::uncertainty::column(name, "_ci_high", unit, high));
     }
     Ok(DeltaAnswer {
         columns: out,
