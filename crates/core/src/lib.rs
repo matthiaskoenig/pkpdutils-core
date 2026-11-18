@@ -56,6 +56,7 @@ use crate::parameters::{RowInput, Scratch, compute_row};
 use crate::shard::rows_of;
 use crate::steady_state::compute_steady_state;
 use crate::terminal::Candidate;
+use crate::uncertainty::bootstrap;
 
 /// Why a batch could not be analysed.
 ///
@@ -286,7 +287,24 @@ fn analyze_checked(
         })
     };
 
-    let result = result_of(batch, options, &rows, &candidates, None, None)?;
+    let mut result = result_of(batch, options, &rows, &candidates, None, None)?;
+    // the uncertainty of a group curve is the analysis of `n_boot` replicates of every row,
+    // which is why it runs here and not in an entry point of its own: a host gets it in the
+    // call it already makes, a browser without a second round trip, and the engine gate of the
+    // python host compares the columns without a line of gate code of its own
+    if resolved_uncertainty(batch, options) == UncertaintyMethod::Bootstrap {
+        let n_subjects = subject_counts(&result);
+        let uncertainty = bootstrap(
+            batch,
+            options,
+            &result.parameters,
+            n_subjects.as_deref(),
+            automatic_shards(n_samples * options.n_boot as usize, batch.n_time),
+            None,
+            |row, values, scratch| rows_of_batch.row_of(row, values, scratch, None).parameters,
+        )?;
+        result.parameters.extend(uncertainty);
+    }
     // unreachable after `batch.validate`, which is what every length here comes from, and kept
     // because a result the host cannot read is worth a named error rather than a surprise. The
     // batch validated, so the error names this build and not the input.
@@ -323,6 +341,23 @@ impl Rows<'_> {
         scratch: &mut Scratch,
         candidates: Option<&mut Vec<Candidate>>,
     ) -> RowResult {
+        let values = row_slice(&self.batch.values, row, self.batch.n_time);
+        self.row_of(row, values, scratch, candidates)
+    }
+
+    /// The analysis of one row with `values` in place of its own observations.
+    ///
+    /// Everything but the values belongs to the row: its times, its protocol, its route, its
+    /// limit of quantification and its terminal window. This is what the bootstrap analyses a
+    /// replicate curve with, so a replicate goes through exactly the code the original row goes
+    /// through rather than through a second copy of it.
+    fn row_of(
+        &self,
+        row: usize,
+        values: &[f64],
+        scratch: &mut Scratch,
+        candidates: Option<&mut Vec<Candidate>>,
+    ) -> RowResult {
         let batch = self.batch;
         let route = batch.route_of_row(row);
         // a row of a protocol of several doses, or of an explicit `tau`, is analysed over its
@@ -331,7 +366,7 @@ impl Rows<'_> {
         let single_dose = single_dose_of_row(batch, self.options, row);
         let input = RowInput {
             times: row_slice(&batch.times, row, batch.n_time),
-            values: row_slice(&batch.values, row, batch.n_time),
+            values,
             dose: row_dose(batch, row, !single_dose),
             route,
             has_dose: self.has_dose,
@@ -374,6 +409,25 @@ impl Rows<'_> {
     }
 }
 
+/// The subjects behind every row, the `n` column of the result, `None` for a batch without one.
+///
+/// `Timecourses.n_subjects` of the host is the largest count over the time points of a sample,
+/// and `crate::assemble` has already written exactly that onto the result as the column `n`, so
+/// the uncertainty reads it back rather than computing a second answer for the same question. A
+/// batch which counts no subjects has an all `NaN` column, which is `None` here: the conversion
+/// between the two spread scales is then unknown rather than an identity.
+fn subject_counts(result: &AnalysisResult) -> Option<Vec<f64>> {
+    let column = result
+        .parameters
+        .iter()
+        .find(|parameter| parameter.name == "n")?;
+    column
+        .values
+        .iter()
+        .any(|count| count.is_finite())
+        .then(|| column.values.clone())
+}
+
 /// Why this build refuses a batch under these options, `None` when nothing here refuses it.
 ///
 /// This is the one statement of the refusals which can be read off a batch and its options,
@@ -407,9 +461,19 @@ pub fn unsupported_reason(batch: &Batch, options: &NcaOptions) -> Option<String>
         return reason("the named partial areas (NcaOptions::partial_aucs)");
     }
     // a batch which carries a spread resolves to the bootstrap on its own, so the refusal is of
-    // what the options resolve to and not of what they say (`resolve_uncertainty` of `options.py`)
-    if resolved_uncertainty(batch, options) != UncertaintyMethod::None {
-        return reason("the propagation of the uncertainty of a group curve");
+    // what the options resolve to and not of what they say (`resolve_uncertainty` of `options.py`);
+    // the bootstrap itself is carried, the delta method is not yet
+    if resolved_uncertainty(batch, options) == UncertaintyMethod::Delta {
+        return reason("the delta method (UncertaintyMethod::Delta)");
+    }
+    // the kernel reads no entropy - it has none in a wasm instance, and a kernel which reached
+    // for the operating system would not build there - so a seed is the host's to draw. A host
+    // which leaves it open is refused rather than answered with a seed of the kernel's choosing,
+    // which would turn "a different bootstrap every run" into "the same one every run"
+    if resolved_uncertainty(batch, options) == UncertaintyMethod::Bootstrap
+        && options.seed.is_none()
+    {
+        return reason("a bootstrap whose seed the options leave open (NcaOptions::seed)");
     }
     if !options.units.is_empty() {
         return reason("the unit conversion of a result (NcaOptions::units)");
@@ -1230,8 +1294,8 @@ mod tests {
             ("acceptance", Some("acceptance criteria")),
             ("partial", Some("partial areas")),
             ("units", Some("unit conversion")),
-            ("bootstrap", Some("uncertainty of a group curve")),
-            ("delta", Some("uncertainty of a group curve")),
+            ("bootstrap", Some("seed the options leave open")),
+            ("delta", Some("delta method")),
             ("uncertainty off", None),
             ("effect and units", Some("effect curve")),
             ("units and partial", Some("partial areas")),
@@ -1248,13 +1312,44 @@ mod tests {
                 }
             }
         }
-        // a group curve is refused by what the options resolve to, in both directions
+        // a group curve is refused by what the options resolve to, in both directions: the
+        // automatic choice of a batch with a spread is the bootstrap, which this build runs as
+        // soon as the options name the seed it cannot draw itself
         let automatic = unsupported_reason(&spread, &base).expect("the automatic choice");
         assert!(
-            automatic.contains("uncertainty of a group curve"),
+            automatic.contains("seed the options leave open"),
             "{automatic}"
         );
         assert_eq!(unsupported_reason(&spread, &variants[8].1), None);
+        let seeded = NcaOptions {
+            seed: Some(11),
+            n_boot: 8,
+            ..base.clone()
+        };
+        // the two spread batches carry `sd` alone, so `se` draws need the subject count to
+        // convert it, exactly as `resolve_spread` of `uncertainty.py` needs it
+        let counted = |batch: &Batch| Batch {
+            n: Some(vec![8.0; batch.values.len()]),
+            ..batch.clone()
+        };
+        for batch in [counted(&spread), counted(&spread_multiple)] {
+            assert_eq!(unsupported_reason(&batch, &seeded), None);
+            let result = analyze_batch(&batch, &seeded).expect("the bootstrap of a group curve");
+            assert!(
+                result
+                    .parameters
+                    .iter()
+                    .any(|column| column.name.ends_with("_ci_high")),
+                "the uncertainty joins the parameters"
+            );
+        }
+        // and a batch whose spread the options cannot resample with is an error of the batch and
+        // no refusal of this build: python raises `ValueError` for the same input
+        assert_eq!(unsupported_reason(&spread, &seeded), None);
+        assert!(matches!(
+            analyze_batch(&spread, &seeded),
+            Err(KernelError::Batch(_))
+        ));
 
         // the protocols which used to be refused are accepted, in every combination of options
         // which refuses nothing else

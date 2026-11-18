@@ -2276,10 +2276,10 @@ pub(crate) mod tests {
             ),
             (
                 NcaOptions {
-                    uncertainty: Some(pkpdutils_abi::UncertaintyMethod::Bootstrap),
+                    uncertainty: Some(pkpdutils_abi::UncertaintyMethod::Delta),
                     ..linear()
                 },
-                "uncertainty",
+                "delta method",
             ),
             (
                 NcaOptions {
@@ -2297,15 +2297,28 @@ pub(crate) mod tests {
             );
         }
 
-        // a batch which carries a spread resolves to the bootstrap on its own
+        // a batch which carries a spread resolves to the bootstrap on its own, which this build
+        // carries; what it cannot do is draw the seed of one, since it reads no entropy
         let group = Batch {
             se: Some(vec![0.1; 7]),
             ..oral_curve()
         };
         let error = analyze_batch(&group, &linear()).unwrap_err();
         assert!(
-            matches!(&error, KernelError::Unsupported { what } if what.contains("uncertainty")),
+            matches!(&error, KernelError::Unsupported { what } if what.contains("seed")),
             "{error}"
+        );
+        let seeded = NcaOptions {
+            seed: Some(7),
+            ..linear()
+        };
+        let result = analyze_batch(&group, &seeded).expect("the bootstrap of a seeded batch");
+        assert!(
+            result
+                .parameters
+                .iter()
+                .any(|column| column.name == "auc_inf_obs_se"),
+            "the uncertainty joins the parameters"
         );
     }
 

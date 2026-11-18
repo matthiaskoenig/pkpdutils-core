@@ -23,13 +23,15 @@
 //! (`scripts/reduce_oracle.py`), so a set which changes upstream fails `cargo test` here without
 //! a `pkpdutils` anywhere near it.
 
-// the bootstrap of `analyze_batch` is the only caller of this module and arrives with the next
-// commit of this branch; until it does, every item here is reached by the tests alone
-#![allow(dead_code)]
+use pkpdutils_abi::{
+    Batch, BootstrapDistribution, BootstrapSpread, Kind, NcaOptions, ParameterColumn,
+};
 
-use pkpdutils_abi::{BootstrapSpread, ParameterColumn};
-
+use crate::KernelError;
+use crate::parameters::{PARAMETERS, RowParameters, Scratch};
 use crate::percentile::nan_percentile_rows;
+use crate::random::Draws;
+use crate::shard::rows_of;
 use crate::stats::normal_isf;
 use crate::summarize::{mean_of, variance_of};
 
@@ -383,8 +385,760 @@ pub(crate) fn reduce_replicates(
     out
 }
 
+/// The draws one block of the bootstrap holds at once, 1 Mi values and so 8 MB.
+///
+/// The replicates of a whole batch are `n_rows * n_boot * n_time` values - 96 MB for a thousand
+/// group curves of twelve points at a thousand replicates - so the rows are cut into blocks and
+/// only the draws, the replicate rows and the parameters of one block exist at once, as python
+/// does it (`bootstrap` of `uncertainty.py`). A block is a number of rows and never a part of a
+/// row, so the draws of a block are the draws of those rows in an unblocked run: every draw is
+/// asked for by its index in the whole batch ([`Draws`]), which is what makes the blocking
+/// invisible in the answer rather than merely harmless.
+const BLOCK_DRAWS: usize = 1 << 20;
+
+/// How many rows one block holds, at least one however large a row is.
+fn block_rows_of(n_boot: usize, n_time: usize) -> usize {
+    let per_row = n_boot.saturating_mul(n_time).max(1);
+    (BLOCK_DRAWS / per_row).max(1)
+}
+
+/// `numpy.logaddexp(0, l)`, the stable `ln(1 + exp(l))`.
+///
+/// The log-normal shaping needs `ln(1 + (s / mean)^2)` and computes it from the logarithms,
+/// because `(s / mean)^2` overflows for a spread which is some `1e154` times its mean while the
+/// logarithm of that square, and the draws which come out of it, are perfectly finite. The
+/// branch is numpy's: the larger of the two arguments is factored out, so the exponential is
+/// always of a non-positive number and cannot overflow.
+fn log_add_exp_zero(l: f64) -> f64 {
+    if l > 0.0 {
+        l + (-l).exp().ln_1p()
+    } else {
+        l.exp().ln_1p()
+    }
+}
+
+/// The spread every point of the batch is resampled with, `n_rows * n_time`.
+///
+/// The port of `resolve_spread` of `uncertainty.py`: the requested one where the batch carries
+/// it, the other one converted with the subject count of the point, and an error naming what is
+/// missing when neither is possible. `spread` overrides the option, which is what the delta
+/// method needs: it always propagates `se`, whatever the bootstrap would resample with.
+///
+/// # Errors
+///
+/// [`KernelError::Batch`] when the requested spread is neither carried nor derivable.
+fn resolve_spread(
+    batch: &Batch,
+    options: &NcaOptions,
+    spread: Option<BootstrapSpread>,
+) -> Result<Vec<f64>, KernelError> {
+    let kind = spread.unwrap_or(options.bootstrap_spread);
+    let n_rows = batch.n_samples();
+    let n_time = batch.n_time;
+    // one count per row or one per point: both convert the spread of a point, the second one
+    // with the count of that point (`resolve_spread` reshapes `n` to `(n_rows, -1)`)
+    let root_n = batch.n.as_ref().map(|n| {
+        let per_point = n.len() == n_rows * n_time;
+        move |row: usize, time: usize| {
+            let count = if per_point {
+                n[row * n_time + time]
+            } else {
+                n.get(row).copied().unwrap_or(f64::NAN)
+            };
+            if count > 0.0 { count.sqrt() } else { f64::NAN }
+        }
+    });
+    let convert = |from: &[f64], to_se: bool| -> Vec<f64> {
+        let root = root_n.as_ref().expect("checked below");
+        (0..n_rows)
+            .flat_map(|row| {
+                (0..n_time).map(move |time| {
+                    let value = from[row * n_time + time];
+                    let r = root(row, time);
+                    if to_se { value / r } else { value * r }
+                })
+            })
+            .collect()
+    };
+    match kind {
+        BootstrapSpread::Se => {
+            if let Some(se) = batch.se.as_ref() {
+                return Ok(se.clone());
+            }
+            match (batch.sd.as_ref(), root_n.is_some()) {
+                (Some(sd), true) => Ok(convert(sd, true)),
+                _ => Err(KernelError::Batch(
+                    "The batch has no 'se' and it cannot be derived ('sd' and 'n' needed)"
+                        .to_owned(),
+                )),
+            }
+        }
+        BootstrapSpread::Sd => {
+            if let Some(sd) = batch.sd.as_ref() {
+                return Ok(sd.clone());
+            }
+            match (batch.se.as_ref(), root_n.is_some()) {
+                (Some(se), true) => Ok(convert(se, false)),
+                _ => Err(KernelError::Batch(
+                    "The batch has no 'sd' and it cannot be derived ('se' and 'n' needed)"
+                        .to_owned(),
+                )),
+            }
+        }
+    }
+}
+
+/// What one call of [`resample_values`] draws and where in the stream it starts.
+///
+/// The fields are the batch's and not the block's, `first_index` apart: a block of rows draws
+/// the numbers the whole batch would, and the index is what says which rows it holds.
+struct Resampling {
+    /// The points of a row.
+    n_time: usize,
+    /// The replicates of a row.
+    n_boot: usize,
+    /// The seed of the whole batch.
+    seed: u64,
+    /// The distribution the points are drawn from.
+    distribution: BootstrapDistribution,
+    /// Whether a normal draw below zero is held at zero.
+    clip_at_zero: bool,
+    /// The flat draw index of the first point of the first row of the block, in the C order of
+    /// `(n_rows, n_boot, n_time)` of the whole batch.
+    first_index: u64,
+}
+
+/// The replicates of every point of a block of rows, `(rows, n_boot, n_time)` row major.
+///
+/// The port of `resample_values` of `uncertainty.py`. Every point is drawn around its own mean
+/// with its own spread, and a point whose spread is not usable - missing, zero, negative, or a
+/// mean which is not finite - is its mean in every replicate. It **still consumes its draw**:
+/// the draws are a function of the index and not of the data, so a point which is masked here
+/// cannot shift the draws of the points after it.
+///
+/// `clip_at_zero` holds normal draws at zero, which is right for a concentration and wrong for
+/// an effect; the log-normal shaping needs no clip, since it draws a positive value by
+/// construction, and leaves a point whose mean is not positive at its mean.
+///
+/// # Arguments
+///
+/// * `values` - the means, `rows * n_time`
+/// * `spread` - the spread of every mean, same layout
+/// * `spec` - the shape of the draws and where in the stream they start
+fn resample_values(values: &[f64], spread: &[f64], spec: &Resampling) -> Vec<f64> {
+    let &Resampling {
+        n_time,
+        n_boot,
+        seed,
+        distribution,
+        clip_at_zero,
+        first_index,
+    } = spec;
+    let rows = values.len().checked_div(n_time).unwrap_or(0);
+    let draws = Draws::new(seed);
+    let mut out = vec![0.0f64; rows * n_boot * n_time];
+    if out.is_empty() {
+        return out;
+    }
+    let mut z = vec![0.0f64; n_boot * n_time];
+    for row in 0..rows {
+        let start = first_index + (row as u64) * (n_boot as u64) * (n_time as u64);
+        draws.normals_into(start, &mut z);
+        for time in 0..n_time {
+            let mean = values[row * n_time + time];
+            let s = spread[row * n_time + time];
+            let usable = s.is_finite() && s > 0.0 && mean.is_finite();
+            // the log-normal moments of the point, which are the same for all its replicates
+            let (mu, sigma) = if usable && distribution == BootstrapDistribution::Lognormal {
+                let log_mean = mean.ln();
+                let sigma2 = log_add_exp_zero(2.0 * (s.ln() - log_mean));
+                (log_mean - sigma2 / 2.0, sigma2.sqrt())
+            } else {
+                (f64::NAN, f64::NAN)
+            };
+            for replicate in 0..n_boot {
+                let value = if !usable {
+                    mean
+                } else if distribution == BootstrapDistribution::Lognormal {
+                    if mean > 0.0 {
+                        (mu + sigma * z[replicate * n_time + time]).exp()
+                    } else {
+                        mean
+                    }
+                } else {
+                    let normal = mean + s * z[replicate * n_time + time];
+                    if clip_at_zero {
+                        normal.max(0.0)
+                    } else {
+                        normal
+                    }
+                };
+                out[(row * n_boot + replicate) * n_time + time] = value;
+            }
+        }
+    }
+    out
+}
+
+/// One parameter whose replicates are reduced: its column of the result and its field reader.
+type Reducible<'a> = (&'a ParameterColumn, fn(&RowParameters) -> f64);
+
+/// The parameters of a result which carry an uncertainty, with the reader of every one.
+///
+/// A parameter of the result which is discrete, is itself a derived variable or has no entry in
+/// [`PARAMETERS`] is left out here rather than inside the reduction, so the replicates of a
+/// parameter nothing will reduce are never collected.
+fn reducible(point: &[ParameterColumn]) -> Vec<Reducible<'_>> {
+    point
+        .iter()
+        .filter(|column| !is_discrete(&column.name) && !is_derived(&column.name))
+        .filter_map(|column| {
+            PARAMETERS
+                .iter()
+                .find(|parameter| parameter.name == column.name)
+                .map(|parameter| (column, parameter.read))
+        })
+        .collect()
+}
+
+/// The uncertainty of the parameters of a batch from the parametric bootstrap.
+///
+/// Every point of every row is resampled around its own value with its own spread
+/// ([`resample_values`]), the replicate curves run through the same analysis as the original
+/// ones, and their parameters are reduced to the uncertainty variables
+/// ([`reduce_replicates`]). The answer joins the parameters of the result.
+///
+/// The rows are cut into blocks of [`block_rows_of`] rows, or of `block_rows` where a caller
+/// names one, and the replicate rows of a block are sharded like the rows of an analysis. The
+/// block size changes no number, which `the_block_size_changes_no_number` asserts.
+///
+/// # Arguments
+///
+/// * `batch` - the batch, which carries the spread the points are resampled with
+/// * `options` - `n_boot`, `seed`, `ci_level`, `bootstrap_spread` and `bootstrap_distribution`
+/// * `point` - the parameters of the original curves, the estimates of the intervals
+/// * `n_subjects` - the subjects of every row, the `n` column of the result
+/// * `shards` - the shard plan of the replicate rows
+/// * `block_rows` - the rows of one block, `None` for [`block_rows_of`]
+/// * `analyse` - the analysis of one row with the values of a replicate in place of its own
+///
+/// # Errors
+///
+/// [`KernelError::Options`] for log-normal draws of an effect curve, which is python's own
+/// refusal, and for a seed the host left open, which the kernel cannot draw: it reads no
+/// entropy, having none in a wasm instance. [`KernelError::Batch`] when the batch carries no
+/// spread the options can resample with.
+pub(crate) fn bootstrap<F>(
+    batch: &Batch,
+    options: &NcaOptions,
+    point: &[ParameterColumn],
+    n_subjects: Option<&[f64]>,
+    shards: usize,
+    block_rows: Option<usize>,
+    analyse: F,
+) -> Result<Vec<ParameterColumn>, KernelError>
+where
+    F: Fn(usize, &[f64], &mut Scratch) -> RowParameters + Send + Sync,
+{
+    // python raises this from `bootstrap` and not from the options, so it is raised here as
+    // well; `unsupported_reason` refuses an effect curve outright today, so the analysis cannot
+    // reach it yet and `the_effect_kind_refuses_lognormal_draws` calls this function directly
+    if options.kind == Kind::Effect
+        && options.bootstrap_distribution == BootstrapDistribution::Lognormal
+    {
+        return Err(KernelError::Options(
+            "log-normal draws need positive values, effect timecourses use NORMAL".to_owned(),
+        ));
+    }
+    let seed = options.seed.ok_or_else(|| {
+        KernelError::Options(
+            "the bootstrap needs a seed: the kernel reads no entropy, so a host which leaves \
+             `seed` open draws one itself and passes it"
+                .to_owned(),
+        )
+    })?;
+    let n_rows = batch.n_samples();
+    let n_time = batch.n_time;
+    let n_boot = options.n_boot as usize;
+    let spread = resolve_spread(batch, options, None)?;
+    let usable_rows: Vec<bool> = (0..n_rows)
+        .map(|row| {
+            spread[row * n_time..(row + 1) * n_time]
+                .iter()
+                .any(|s| s.is_finite() && *s > 0.0)
+        })
+        .collect();
+    let columns = reducible(point);
+    let block = block_rows
+        .unwrap_or_else(|| block_rows_of(n_boot, n_time))
+        .max(1);
+    let mut parts: Vec<Vec<ParameterColumn>> = Vec::new();
+    let mut start = 0usize;
+    while start < n_rows {
+        let stop = (start + block).min(n_rows);
+        let rows = stop - start;
+        let draws = resample_values(
+            &batch.values[start * n_time..stop * n_time],
+            &spread[start * n_time..stop * n_time],
+            &Resampling {
+                n_time,
+                n_boot,
+                seed,
+                distribution: options.bootstrap_distribution,
+                clip_at_zero: options.kind == Kind::Concentration,
+                first_index: (start as u64) * (n_boot as u64) * (n_time as u64),
+            },
+        );
+        let analysed = rows_of(rows * n_boot, n_time, shards, |index, scratch| {
+            let row = start + index / n_boot.max(1);
+            let values = &draws[index * n_time..(index + 1) * n_time];
+            crate::assemble::RowResult {
+                route: None,
+                dose_amount: f64::NAN,
+                parameters: analyse(row, values, scratch),
+                intervals: Vec::new(),
+            }
+        });
+        let replicates: Vec<Replicates> = columns
+            .iter()
+            .map(|(column, read)| Replicates {
+                name: column.name.clone(),
+                values: analysed
+                    .iter()
+                    .map(|replicate| read(&replicate.parameters))
+                    .collect(),
+            })
+            .collect();
+        let block_point: Vec<ParameterColumn> = columns
+            .iter()
+            .map(|(column, _)| ParameterColumn {
+                name: column.name.clone(),
+                unit: column.unit.clone(),
+                values: column.values[start..stop].to_vec(),
+            })
+            .collect();
+        parts.push(reduce_replicates(
+            &replicates,
+            &block_point,
+            options.bootstrap_spread,
+            n_subjects.map(|values| &values[start..stop]),
+            options.ci_level,
+            &usable_rows[start..stop],
+        ));
+        start = stop;
+    }
+    Ok(join_blocks(parts, n_rows))
+}
+
+/// The columns of the blocks as one column per variable, in the order the first block has them.
+///
+/// Every block reduces the same variables, since the estimates and the classification are the
+/// same for all of them, so this is a concatenation; a variable a later block does not carry
+/// would be `NaN` in those rows rather than shifting the column, which cannot happen and is
+/// written out because a silent shift is the one failure a concatenation can have.
+fn join_blocks(parts: Vec<Vec<ParameterColumn>>, n_rows: usize) -> Vec<ParameterColumn> {
+    let Some(first) = parts.first() else {
+        return Vec::new();
+    };
+    let mut out: Vec<ParameterColumn> = first
+        .iter()
+        .map(|column| ParameterColumn {
+            name: column.name.clone(),
+            unit: column.unit.clone(),
+            values: Vec::with_capacity(n_rows),
+        })
+        .collect();
+    for part in &parts {
+        for column in &mut out {
+            match part.iter().find(|other| other.name == column.name) {
+                Some(found) => column.values.extend_from_slice(&found.values),
+                None => column.values.push(f64::NAN),
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// A batch of `rows` group curves with a spread, a subject count and one oral dose.
+    fn group_batch(rows: usize) -> Batch {
+        let times: Vec<f64> = vec![0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 12.0, 24.0];
+        let n_time = times.len();
+        let mut all_times = Vec::new();
+        let mut values = Vec::new();
+        let mut se = Vec::new();
+        for row in 0..rows {
+            let clearance = 0.2 + 0.05 * row as f64;
+            all_times.extend_from_slice(&times);
+            for &t in &times {
+                let value = 20.0 * (-clearance * t).exp() * (1.0 - (-2.0 * t).exp());
+                values.push(value);
+                se.push(0.12 * value);
+            }
+        }
+        Batch {
+            sample_dims: vec!["subject".to_owned()],
+            sample_shape: vec![rows],
+            n_time,
+            times: all_times,
+            values,
+            se: Some(se),
+            n: Some(vec![9.0; rows * n_time]),
+            max_doses: 1,
+            dose_amount: vec![100.0; rows],
+            dose_time: vec![0.0; rows],
+            dose_duration: vec![f64::NAN; rows],
+            route: Some(pkpdutils_abi::Route::Oral),
+            // the coordinates of the one row batch this is built from would be the wrong length
+            coords: Vec::new(),
+            ..crate::parameters::tests::oral_curve()
+        }
+    }
+
+    /// The options of a bootstrap of `n_boot` replicates under `seed`.
+    fn boot_options(n_boot: u32, seed: u64) -> NcaOptions {
+        NcaOptions {
+            n_boot,
+            seed: Some(seed),
+            ci_level: 0.90,
+            ..crate::parameters::tests::linear()
+        }
+    }
+
+    /// The point parameters of a batch, the estimates the uncertainty is built on.
+    fn point_of(batch: &Batch, options: &NcaOptions) -> Vec<ParameterColumn> {
+        let mut without = options.clone();
+        without.uncertainty = Some(pkpdutils_abi::UncertaintyMethod::None);
+        crate::analyze_batch(batch, &without)
+            .expect("the point analysis")
+            .parameters
+    }
+
+    /// The bootstrap of a batch at a chosen block size, through the analysis of the crate.
+    fn bootstrap_at(
+        batch: &Batch,
+        options: &NcaOptions,
+        block_rows: Option<usize>,
+    ) -> Vec<ParameterColumn> {
+        let point = point_of(batch, options);
+        let n_subjects: Vec<f64> = (0..batch.n_samples()).map(|_| 9.0).collect();
+        let rows = crate::Rows {
+            batch,
+            options,
+            manual: None,
+            windows: None,
+            has_dose: batch.max_doses > 0,
+        };
+        bootstrap(
+            batch,
+            options,
+            &point,
+            Some(&n_subjects),
+            1,
+            block_rows,
+            |row, values, scratch| rows.row_of(row, values, scratch, None).parameters,
+        )
+        .expect("the bootstrap")
+    }
+
+    #[test]
+    fn the_block_size_changes_no_number() {
+        // the draws are asked for by their index in the whole batch, so a run which materializes
+        // one row at a time and a run which materializes all five give the same bits; a
+        // generator which was advanced instead would give the same numbers only by luck of the
+        // block boundaries falling where they did
+        let batch = group_batch(5);
+        let options = boot_options(16, 99);
+        let whole = bootstrap_at(&batch, &options, Some(5));
+        assert!(!whole.is_empty(), "the bootstrap reported nothing");
+        for block in [1usize, 2, 3, 4, 5, 6, 50] {
+            let cut = bootstrap_at(&batch, &options, Some(block));
+            assert_eq!(cut.len(), whole.len(), "block {block}");
+            for (a, b) in whole.iter().zip(&cut) {
+                assert_eq!(a.name, b.name, "block {block}");
+                assert_eq!(a.values.len(), 5, "{}", a.name);
+                for (row, (x, y)) in a.values.iter().zip(&b.values).enumerate() {
+                    assert_eq!(
+                        x.to_bits(),
+                        y.to_bits(),
+                        "block {block}, {} row {row}: {x} against {y}",
+                        a.name
+                    );
+                }
+            }
+        }
+        // and the automatic size is a size of its own, which the same batch has to agree with
+        let automatic = bootstrap_at(&batch, &options, None);
+        for (a, b) in whole.iter().zip(&automatic) {
+            assert_eq!(
+                a.values.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                b.values.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                "{}",
+                a.name
+            );
+        }
+        // the test is not comparing columns of NaN
+        let finite = whole
+            .iter()
+            .flat_map(|column| column.values.iter())
+            .filter(|value| value.is_finite())
+            .count();
+        assert!(finite > 100, "only {finite} finite values");
+    }
+
+    #[test]
+    fn a_bootstrap_below_two_replicates_is_refused_by_the_options() {
+        // python refuses it in the options as well (`n_boot: int = Field(default=1000, ge=2)`),
+        // so the kernel never sees a bootstrap which cannot have a spread
+        for n_boot in [0u32, 1] {
+            let error = boot_options(n_boot, 1).validate().expect_err("refused");
+            assert!(error.contains("n_boot"), "{error}");
+        }
+        // two is the smallest bootstrap there is, and it carries a spread
+        let batch = group_batch(2);
+        let options = boot_options(2, 3);
+        let answer = bootstrap_at(&batch, &options, None);
+        let sd = answer
+            .iter()
+            .find(|column| column.name == "auc_inf_obs_se")
+            .expect("the standard error");
+        assert!(sd.values.iter().all(|value| value.is_finite()), "{sd:?}");
+
+        // a caller of the crate which asks for no replicate at all gets NaN and no panic: the
+        // reduction sees no finite value and `count > 1` is its guard
+        let point = point_of(&batch, &options);
+        let empty = reduce_replicates(
+            &[Replicates {
+                name: "auc_inf_obs".to_owned(),
+                values: Vec::new(),
+            }],
+            &point,
+            BootstrapSpread::Se,
+            None,
+            0.90,
+            &[true, true],
+        );
+        assert!(!empty.is_empty(), "the variables are reported");
+        for column in &empty {
+            assert!(
+                column.values.iter().all(|value| value.is_nan()),
+                "{}",
+                column.name
+            );
+        }
+    }
+
+    #[test]
+    fn a_row_without_a_usable_spread_is_nan_and_the_rows_before_it_are_untouched() {
+        let mut batch = group_batch(3);
+        let n_time = batch.n_time;
+        // the last row carries no usable spread at all
+        if let Some(se) = batch.se.as_mut() {
+            for value in se[2 * n_time..3 * n_time].iter_mut() {
+                *value = f64::NAN;
+            }
+        }
+        let options = boot_options(16, 7);
+        let three = bootstrap_at(&batch, &options, None);
+
+        let two = Batch {
+            sample_shape: vec![2],
+            times: batch.times[..2 * n_time].to_vec(),
+            values: batch.values[..2 * n_time].to_vec(),
+            se: batch.se.as_ref().map(|se| se[..2 * n_time].to_vec()),
+            n: batch.n.as_ref().map(|n| n[..2 * n_time].to_vec()),
+            dose_amount: batch.dose_amount[..2].to_vec(),
+            dose_time: batch.dose_time[..2].to_vec(),
+            dose_duration: batch.dose_duration[..2].to_vec(),
+            ..batch.clone()
+        };
+        let pair = bootstrap_at(&two, &options, None);
+        for (column, same) in three.iter().zip(&pair) {
+            assert_eq!(column.name, same.name);
+            assert!(
+                column.values[2].is_nan(),
+                "{}: the row has no spread",
+                column.name
+            );
+            // the rows before it are the same bits as in a batch which does not carry it: a row
+            // draws from its own window of the stream, which its position in the batch fixes
+            for row in 0..2 {
+                assert_eq!(
+                    column.values[row].to_bits(),
+                    same.values[row].to_bits(),
+                    "{} row {row}",
+                    column.name
+                );
+            }
+        }
+        let finite = pair
+            .iter()
+            .flat_map(|column| column.values.iter())
+            .filter(|value| value.is_finite())
+            .count();
+        assert!(finite > 40, "only {finite} finite values");
+    }
+
+    #[test]
+    fn a_lognormal_point_without_a_positive_mean_is_copied() {
+        // the log-normal shaping needs a positive mean: a zero and a negative point are their
+        // mean in every replicate rather than NaN, which is what `np.where(positive, ...)` of
+        // `resample_values` does with them
+        let values = [5.0, 0.0, -2.0, 7.0];
+        let spread = [0.5, 0.5, 0.5, 0.5];
+        let draws = resample_values(
+            &values,
+            &spread,
+            &Resampling {
+                n_time: 4,
+                n_boot: 8,
+                seed: 11,
+                distribution: BootstrapDistribution::Lognormal,
+                clip_at_zero: true,
+                first_index: 0,
+            },
+        );
+        for replicate in 0..8 {
+            assert_eq!(draws[replicate * 4 + 1], 0.0, "the zero point");
+            assert_eq!(draws[replicate * 4 + 2], -2.0, "the negative point");
+            assert!(draws[replicate * 4] > 0.0, "a log-normal draw is positive");
+            assert_ne!(draws[replicate * 4], 5.0, "and is not the mean");
+        }
+        // a normal draw of the same points is shaped around them, negative mean and all
+        let normal = resample_values(
+            &values,
+            &spread,
+            &Resampling {
+                n_time: 4,
+                n_boot: 8,
+                seed: 11,
+                distribution: BootstrapDistribution::Normal,
+                clip_at_zero: false,
+                first_index: 0,
+            },
+        );
+        assert!(normal.iter().any(|value| *value < 0.0), "{normal:?}");
+        // and a concentration clips at zero instead
+        let clipped = resample_values(
+            &values,
+            &spread,
+            &Resampling {
+                n_time: 4,
+                n_boot: 8,
+                seed: 11,
+                distribution: BootstrapDistribution::Normal,
+                clip_at_zero: true,
+                first_index: 0,
+            },
+        );
+        assert!(clipped.iter().all(|value| *value >= -2.0));
+        assert!(
+            clipped
+                .iter()
+                .enumerate()
+                .all(|(i, value)| i % 4 == 2 || *value >= 0.0),
+            "only the copied mean is negative"
+        );
+    }
+
+    #[test]
+    fn a_spread_which_overflows_the_square_still_draws() {
+        // `(s / mean)^2` is `inf` here while its logarithm is about 1017, which is why the
+        // shaping works on the log scale: a draw of such a point is enormous and finite
+        let mean: f64 = 1e-10;
+        let s: f64 = 1e211;
+        assert!(
+            (s / mean).powi(2).is_infinite(),
+            "the square has to overflow"
+        );
+        let draws = resample_values(
+            &[mean],
+            &[s],
+            &Resampling {
+                n_time: 1,
+                n_boot: 16,
+                seed: 5,
+                distribution: BootstrapDistribution::Lognormal,
+                clip_at_zero: true,
+                first_index: 0,
+            },
+        );
+        assert!(
+            draws.iter().all(|value| value.is_finite() && *value > 0.0),
+            "{draws:?}"
+        );
+        // the logarithm of the relative spread is what the shaping uses, and `ln(1 + x)` of an
+        // enormous `x` is that logarithm
+        let sigma2 = log_add_exp_zero(2.0 * (s.ln() - mean.ln()));
+        assert!(
+            (sigma2 - 2.0 * (s.ln() - mean.ln())).abs() < 1e-9,
+            "{sigma2}"
+        );
+        // and the other end of the branch is the stable one, where the square is tiny
+        let small = log_add_exp_zero(-1500.0);
+        assert_eq!(small, 0.0, "exp(-1500) is below the resolution of 1");
+        assert!((log_add_exp_zero(0.0) - std::f64::consts::LN_2).abs() < 1e-15);
+    }
+
+    #[test]
+    fn the_effect_kind_refuses_lognormal_draws() {
+        // python raises `ValueError` from `bootstrap` for this pair, so the kernel answers with
+        // the class which is a `ValueError` on the host and with python's own sentence.
+        // `unsupported_reason` refuses an effect curve outright today, so the analysis cannot
+        // reach this and the driver is called directly
+        let batch = group_batch(2);
+        let options = NcaOptions {
+            kind: Kind::Effect,
+            bootstrap_distribution: BootstrapDistribution::Lognormal,
+            ..boot_options(8, 1)
+        };
+        let point = point_of(&batch, &boot_options(8, 1));
+        let error = bootstrap(&batch, &options, &point, None, 1, None, |_, _, _| {
+            RowParameters::EMPTY
+        })
+        .expect_err("the pair is refused");
+        assert!(
+            matches!(&error, KernelError::Options(what)
+                if what == "log-normal draws need positive values, effect timecourses use NORMAL"),
+            "{error}"
+        );
+        assert_eq!(error.class(), crate::ErrorClass::Malformed);
+        // the normal distribution of an effect curve is no error of the uncertainty
+        let normal = NcaOptions {
+            bootstrap_distribution: BootstrapDistribution::Normal,
+            ..options
+        };
+        assert!(
+            bootstrap(&batch, &normal, &point, None, 1, None, |_, _, _| {
+                RowParameters::EMPTY
+            })
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_bootstrap_without_a_seed_is_refused_rather_than_seeded_here() {
+        // the kernel reads no entropy, so a seed is the host's to draw; `unsupported_reason`
+        // names the same refusal, which is what keeps `is_supported` and the analysis in step
+        let batch = group_batch(2);
+        let options = NcaOptions {
+            seed: None,
+            ..boot_options(8, 1)
+        };
+        let point = point_of(&batch, &boot_options(8, 1));
+        let error = bootstrap(&batch, &options, &point, None, 1, None, |_, _, _| {
+            RowParameters::EMPTY
+        })
+        .expect_err("a seedless bootstrap is refused");
+        assert!(matches!(&error, KernelError::Options(what) if what.contains("reads no entropy")));
+        assert!(
+            crate::unsupported_reason(&batch, &options)
+                .is_some_and(|reason| reason.contains("seed")),
+            "the predicate refuses it as well"
+        );
+    }
     use std::collections::BTreeMap;
 
     use serde::Deserialize;
