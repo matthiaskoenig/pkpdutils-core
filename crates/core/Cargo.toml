@@ -14,8 +14,8 @@ categories.workspace = true
 [dependencies]
 # the version is what a published `pkpdutils-core` resolves against; the path is
 # what the workspace builds
-pkpdutils-abi = { path = "../abi", version = "0.4.1" }
-pkpdutils-units = { path = "../units", version = "0.4.1" }
+pkpdutils-abi = { path = "../abi", version = "0.5.0" }
+pkpdutils-units = { path = "../units", version = "0.5.0" }
 thiserror.workspace = true
 rayon = { workspace = true, optional = true }
 
