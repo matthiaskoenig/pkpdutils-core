@@ -60,6 +60,72 @@ export function request() {
   };
 }
 
+/**
+ * A batch of `rows` oral curves of nine points, each with its own clearance.
+ *
+ * @param {number} rows how many samples
+ * @returns {object} an `analysis/1` request
+ */
+export function batchRequest(rows) {
+  const time = [0.25, 0.5, 1, 2, 4, 6, 9, 12, 24];
+  const times = [];
+  const values = [];
+  const labels = [];
+  for (let row = 0; row < rows; row += 1) {
+    const clearance = 2 + 0.4 * row;
+    times.push(...time);
+    values.push(
+      ...time.map((t) => 25 * Math.exp((-clearance * t) / 12) * (1 - Math.exp(-3 * t))),
+    );
+    labels.push(`s${row + 1}`);
+  }
+  const one = request();
+  return {
+    ...one,
+    batch: {
+      ...one.batch,
+      sample_dims: ["subject"],
+      sample_shape: [rows],
+      n_time: time.length,
+      times,
+      values,
+      dose_amount: new Array(rows).fill(100),
+      dose_time: new Array(rows).fill(0),
+      dose_duration: new Array(rows).fill("NaN"),
+      coords: [{ name: "subject", dims: ["subject"], values: { str: labels } }],
+    },
+  };
+}
+
+/**
+ * A batch of one intravenous and one extravascular curve, the two routes in one request.
+ *
+ * The intravenous row reports `cl`, `vz` and `c0` and the extravascular one `cl_f` and `vz_f`, so
+ * a shard of one row reports columns the other does not: this is the batch the merge of the pool
+ * is about.
+ *
+ * @returns {object} an `analysis/1` request
+ */
+export function mixedRouteRequest() {
+  const one = request();
+  return {
+    ...one,
+    batch: {
+      ...one.batch,
+      sample_dims: ["subject"],
+      sample_shape: [2],
+      times: [0, 1, 2, 3, 0, 1, 2, 3],
+      values: [8, 4, 2, 1, 6, 3, 1.5, 0.75],
+      dose_amount: [10, 10],
+      dose_time: [0, 0],
+      dose_duration: ["NaN", "NaN"],
+      route: null,
+      routes: ["iv_bolus", "oral"],
+      coords: [{ name: "subject", dims: ["subject"], values: { str: ["iv", "po"] } }],
+    },
+  };
+}
+
 /** The default options of the kernel, as the wire carries them. */
 export function options(changed = {}) {
   return {

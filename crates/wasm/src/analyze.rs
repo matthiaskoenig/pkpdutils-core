@@ -26,6 +26,27 @@ pub(crate) fn analyze(request: &[u8]) -> Option<Aligned> {
     }
 }
 
+/// What a row which does not report a column contributes to it, for a host which merges.
+///
+/// A host which analyses the rows of one batch in several calls - the worker pool of the npm
+/// package cuts a batch into one shard per worker - gets back one answer per shard, and two
+/// shards need not report the same columns: a batch of an intravenous and an extravascular row
+/// reports `cl` for the one and `cl_f` for the other. The merge has to fill the columns a shard
+/// does not report exactly as the kernel fills them for a mixed batch, or the answer of a pool
+/// would differ from the answer of one instance. So every column says what that value is rather
+/// than leaving a host to keep a list of its own: `pkpdutils_core::parameter_fill` is where it
+/// comes from, a `NaN` travels as the string of the wire encoding, and a column the lookup does
+/// not know (an uncertainty companion of a parameter) is a number which is missing and therefore
+/// a `NaN` as well.
+fn fill_of(name: &str) -> Value {
+    let fill = pkpdutils_core::parameter_fill(name).unwrap_or(f64::NAN);
+    if fill.is_nan() {
+        json!("NaN")
+    } else {
+        json!(fill)
+    }
+}
+
 /// The columns of a result, in the order the payload carries them.
 ///
 /// Every numeric variable of a result travels as `f64`: the parameters as they are, the flag
@@ -39,16 +60,20 @@ fn columns(result: &AnalysisResult) -> (Vec<Value>, Vec<Vec<f64>>) {
     let mut owned = Vec::new();
     for column in &result.parameters {
         described.push(json!({
-            "name": column.name, "unit": column.unit, "kind": "parameter", "width": 1,
+            "name": column.name,
+            "unit": column.unit,
+            "kind": "parameter",
+            "width": 1,
+            "fill": fill_of(&column.name),
         }));
     }
     described.push(json!({
-        "name": "flags", "unit": "dimensionless", "kind": "flags", "width": 1,
+        "name": "flags", "unit": "dimensionless", "kind": "flags", "width": 1, "fill": 0.0,
     }));
     owned.push(result.flags.iter().map(|bits| f64::from(*bits)).collect());
     for column in &result.boolean_variables {
         described.push(json!({
-            "name": column.name, "unit": column.unit, "kind": "boolean", "width": 1,
+            "name": column.name, "unit": column.unit, "kind": "boolean", "width": 1, "fill": 0.0,
         }));
         owned.push(
             column
@@ -65,6 +90,7 @@ fn columns(result: &AnalysisResult) -> (Vec<Value>, Vec<Vec<f64>>) {
             "kind": "point",
             "dim": variable.dim,
             "width": variable.size,
+            "fill": "NaN",
         }));
     }
     (described, owned)
@@ -215,6 +241,23 @@ mod tests {
             .collect();
         assert!(names.contains(&"auc_last"), "{names:?}");
         assert!(names.contains(&"cmax") && names.contains(&"flags"));
+        // every column says what a row which does not report it contributes, which is what a
+        // host merging the shards of one batch fills with
+        let described = header["columns"].as_array().unwrap();
+        let fill = |name: &str| {
+            described
+                .iter()
+                .find(|column| column["name"] == name)
+                .unwrap()["fill"]
+                .clone()
+        };
+        assert_eq!(fill("cmax"), json!("NaN"));
+        assert_eq!(fill("flags"), json!(0.0));
+        assert_eq!(fill("accepted"), json!(0.0));
+        // `c0_method` is a column an extravascular row does not report at all, and the one
+        // whose fill is a code rather than a missing number
+        assert_eq!(fill_of("c0_method"), json!(0.0));
+        assert_eq!(fill_of("cl"), json!("NaN"));
         assert_eq!(column(&out, "cmax"), vec![8.0]);
         assert_eq!(column(&out, "tmax"), vec![0.0]);
         // the peak of this oral curve is its first point, which is `NcaFlag::NO_ABSORPTION`

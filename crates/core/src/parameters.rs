@@ -711,6 +711,30 @@ impl Parameter {
     }
 }
 
+/// The value a row which does not report `name` contributes to its column, `None` for a
+/// variable which is no parameter of the analysis.
+///
+/// A batch whose rows have different routes reports the union of their parameters, and a row
+/// which does not report one of them contributes this value: `NaN` for a parameter, which is
+/// what a missing number is, and 0 for a variable which carries an integer code, since a code
+/// of 0 is what `c0_method` means by "no rule was applied". A host which analyses the rows of
+/// one batch in several calls - the worker pool of the npm package cuts a batch into one shard
+/// per worker - has to fill the columns a shard does not report the same way, or its answer
+/// would depend on the number of workers. This is the lookup it reads rather than a list of its
+/// own.
+///
+/// ```
+/// assert!(pkpdutils_core::parameter_fill("cl").is_some_and(f64::is_nan));
+/// assert_eq!(pkpdutils_core::parameter_fill("c0_method"), Some(0.0));
+/// assert_eq!(pkpdutils_core::parameter_fill("flags"), None);
+/// ```
+pub fn parameter_fill(name: &str) -> Option<f64> {
+    PARAMETERS
+        .iter()
+        .find(|parameter| parameter.name == name)
+        .map(Parameter::missing)
+}
+
 /// The row buffers of the analysis, long enough for the widest row of a batch.
 ///
 /// One set per worker, reused by every row: the kernel allocates per batch and not per row.
@@ -1244,6 +1268,26 @@ fn dose_parameters(out: &mut RowParameters, amount: f64) {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// The fill of a parameter is a NaN and the fill of an integer code is 0.
+    #[test]
+    fn the_fill_of_a_parameter_is_what_a_row_which_does_not_report_it_contributes() {
+        assert!(parameter_fill("cl").is_some_and(f64::is_nan));
+        assert!(parameter_fill("cl_f").is_some_and(f64::is_nan));
+        assert!(parameter_fill("auc_last").is_some_and(f64::is_nan));
+        assert_eq!(parameter_fill("c0_method"), Some(0.0));
+        assert_eq!(parameter_fill("flags"), None);
+        assert_eq!(parameter_fill("not_a_parameter"), None);
+        // every parameter of the table has one, and no third value
+        for parameter in PARAMETERS {
+            let fill = parameter_fill(parameter.name).expect(parameter.name);
+            assert!(
+                fill.is_nan() || fill == 0.0,
+                "{} fills {fill}",
+                parameter.name
+            );
+        }
+    }
 
     use pkpdutils_abi::{
         AnalysisResult, AucMethod, BATCH_CONTRACT, Batch, Coordinate, Kind, SampleCoordinate,

@@ -47,6 +47,7 @@ use pkpdutils_abi::{
 /// one dependency and cannot hold a version of them which disagrees with this build's.
 pub use pkpdutils_abi;
 
+pub use crate::parameters::parameter_fill;
 pub use crate::random::Draws;
 pub use crate::shard::{SHARD_WORK_THRESHOLD, automatic_shards};
 
