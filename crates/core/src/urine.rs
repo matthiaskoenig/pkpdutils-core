@@ -93,8 +93,13 @@ fn recovery_factor(unit: &str, dose_unit: &str) -> Result<f64, KernelError> {
 /// # Errors
 ///
 /// [`KernelError::Urine`] when the recovered amount cannot be compared with the dose, whatever
-/// the dose amount, or when the dose amount and its unit do not come together;
-/// [`KernelError::Unsupported`] for a unit the registry of this build does not read.
+/// the dose amount; [`KernelError::Unsupported`] for a unit the registry of this build does not read.
+///
+/// # Contract
+///
+/// Unlike [`crate::nca_sparse`] and [`crate::time_to_steady_state`] this function validates
+/// nothing itself: the request has to come from [`pkpdutils_abi::UrineRequest::checked`], which
+/// validates it and puts the collections in order, and a [`CheckedUrine`] is the proof of both.
 pub fn nca_urine(urine: &CheckedUrine) -> Result<AnalysisResult, KernelError> {
     let request = urine.request();
     let midpoint: Vec<f64> = request
@@ -117,15 +122,8 @@ pub fn nca_urine(urine: &CheckedUrine) -> Result<AnalysisResult, KernelError> {
         extrapolation_warning: request.options.extrapolation_warning,
         ..NcaOptions::default()
     };
-    let dose = match (request.dose_amount, request.dose_unit.as_deref()) {
-        (Some(amount), Some(unit)) => Some((amount, unit)),
-        (None, None) => None,
-        _ => {
-            return Err(KernelError::Urine(
-                "'dose_amount' and 'dose_unit' come together".to_string(),
-            ));
-        }
-    };
+    // the two come together, which `UrineRequest::validate` checks
+    let dose = request.dose_amount.zip(request.dose_unit.as_deref());
     // python passes no dose to the analysis of the rate curve, and the route of the dose only
     // when there is one
     let input = RowInput {
@@ -191,11 +189,8 @@ pub fn nca_urine(urine: &CheckedUrine) -> Result<AnalysisResult, KernelError> {
     }
     let total = nansum(&request.amount);
     write("amount_recovered", total, "{amount}")?;
-    let total_volume = if request.volume.iter().all(|v| v.is_nan()) {
-        f64::NAN
-    } else {
-        nansum(&request.volume)
-    };
+    // no volumes at all is `NaN`; volumes which are all `NaN` sum to 0, as `np.nansum` does
+    let total_volume = request.volume.as_deref().map_or(f64::NAN, nansum);
     write("vol_ur", total_volume, "{volume}")?;
 
     let mut percent = f64::NAN;
@@ -256,7 +251,7 @@ mod tests {
             start: vec![0.0, 2.0, 4.0],
             end: vec![2.0, 4.0, 8.0],
             amount: vec![300.0, 200.0, 100.0],
-            volume: vec![120.0, 140.0, 260.0],
+            volume: Some(vec![120.0, 140.0, 260.0]),
             unit: "mg".to_string(),
             time_unit: "hr".to_string(),
             volume_unit: "ml".to_string(),
@@ -291,7 +286,7 @@ mod tests {
             start: vec![0.0, 2.0],
             end: vec![2.0, 4.0],
             amount: vec![300.0, 200.0],
-            volume: vec![f64::NAN; 2],
+            volume: Some(vec![f64::NAN; 2]),
             unit: unit.to_string(),
             dose_amount: Some(dose_amount),
             dose_unit: Some(dose_unit.to_string()),
@@ -365,7 +360,7 @@ mod tests {
     #[test]
     fn an_excretion_without_volumes_has_a_nan_volume_and_resolves_its_unit() {
         let mut q = request();
-        q.volume = vec![f64::NAN; 3];
+        q.volume = None;
         let r = run(&q).unwrap();
         assert!(value(&r, "vol_ur").is_nan());
         assert_eq!(param(&r, "vol_ur").unit, "liter");
@@ -443,7 +438,7 @@ mod tests {
         q.start = vec![4.0, 0.0, 2.0];
         q.end = vec![8.0, 2.0, 4.0];
         q.amount = vec![100.0, 300.0, 200.0];
-        q.volume = vec![260.0, 120.0, 140.0];
+        q.volume = Some(vec![260.0, 120.0, 140.0]);
         let shuffled = run(&q).unwrap();
         assert_eq!(ordered.parameters.len(), shuffled.parameters.len());
         for (a, b) in ordered.parameters.iter().zip(&shuffled.parameters) {
@@ -460,5 +455,33 @@ mod tests {
             assert_eq!(bits(a), bits(b));
         }
         assert_eq!(ordered.flags, shuffled.flags);
+    }
+
+    #[test]
+    fn volumes_which_are_all_nan_sum_to_zero_unlike_no_volumes() {
+        // python accepts `concentration` and `volume` all NaN: `vol_ur` is 0.0
+        let mut q = request();
+        q.volume = Some(vec![f64::NAN; 3]);
+        let r = run(&q).unwrap();
+        assert_eq!(value(&r, "vol_ur"), 0.0);
+        assert_eq!(param(&r, "vol_ur").unit, "liter");
+        q.volume = None;
+        assert!(value(&run(&q).unwrap(), "vol_ur").is_nan());
+    }
+
+    #[test]
+    fn an_excretion_without_a_dose_starts_its_area_at_the_first_midpoint() {
+        // values of python: Excretion(start=[0,2,4], end=[2,4,8], amount=[300,200,100],
+        // unit="mg", time_unit="hr") without a dose
+        let mut q = request();
+        q.dose_amount = None;
+        q.dose_unit = None;
+        let r = run(&q).unwrap();
+        assert_eq!(value(&r, "aurc_last").to_bits(), 4645901651077848170);
+        assert_eq!(value(&r, "aurc_all").to_bits(), 4645901651077848170);
+        assert_eq!(value(&r, "max_rate"), 150.0);
+        assert_eq!(value(&r, "amount_recovered"), 600.0);
+        assert!(value(&r, "percent_recovered").is_nan());
+        assert_eq!(param(&r, "aurc_last").unit, "milligram");
     }
 }

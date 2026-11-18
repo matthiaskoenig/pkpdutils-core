@@ -21,9 +21,12 @@ pub struct UrineRequest {
     /// The amount excreted in every collection.
     #[serde(with = "nonfinite::vec")]
     pub amount: Vec<f64>,
-    /// The volume of every collection, every entry `NaN` when the excretion carries no volumes.
-    #[serde(with = "nonfinite::vec")]
-    pub volume: Vec<f64>,
+    /// The volume of every collection, `None` when the excretion carries no volumes at all.
+    ///
+    /// `Some` of entries which are all `NaN` is a different excretion: the volumes were given
+    /// (python derives `amount = concentration * volume` from them) and their sum is `0`.
+    #[serde(with = "nonfinite::option_vec")]
+    pub volume: Option<Vec<f64>>,
     /// The unit of the amounts.
     pub unit: String,
     /// The unit of the times.
@@ -74,7 +77,7 @@ impl UrineRequest {
             start: permute(&self.start),
             end: permute(&self.end),
             amount: permute(&self.amount),
-            volume: permute(&self.volume),
+            volume: self.volume.as_ref().map(permute),
             ..self.clone()
         }
     }
@@ -94,11 +97,11 @@ impl UrineRequest {
     /// comparisons and is rejected like python's `np.all`.
     pub fn validate(&self) -> Result<(), String> {
         let n = self.start.len();
-        for (name, len) in [
-            ("end", self.end.len()),
-            ("amount", self.amount.len()),
-            ("volume", self.volume.len()),
-        ] {
+        let mut lengths = vec![("end", self.end.len()), ("amount", self.amount.len())];
+        if let Some(volume) = &self.volume {
+            lengths.push(("volume", volume.len()));
+        }
+        for (name, len) in lengths {
             if len != n {
                 return Err(format!(
                     "'start' has {n} entries, '{name}' has {len}; every collection needs one each"
@@ -122,6 +125,9 @@ impl UrineRequest {
         }
         if self.area.is_some() != self.area_unit.is_some() {
             return Err("'area' and 'area_unit' come together".to_string());
+        }
+        if self.dose_amount.is_some() != self.dose_unit.is_some() {
+            return Err("'dose_amount' and 'dose_unit' come together".to_string());
         }
         Ok(())
     }
@@ -150,7 +156,7 @@ mod tests {
             start: vec![0.0, 2.0, 6.0],
             end: vec![2.0, 6.0, 12.0],
             amount: vec![1.0, 2.0, 1.5],
-            volume: vec![f64::NAN; 3],
+            volume: Some(vec![f64::NAN; 3]),
             unit: "mg".to_string(),
             time_unit: "h".to_string(),
             volume_unit: "ml".to_string(),
@@ -168,7 +174,7 @@ mod tests {
         let r = request();
         assert_eq!(r.validate(), Ok(()));
         let back: UrineRequest = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
-        assert!(back.volume[0].is_nan());
+        assert!(back.volume.unwrap()[0].is_nan());
         assert_eq!(back.amount, r.amount);
     }
 
@@ -179,7 +185,7 @@ mod tests {
             match name {
                 "end" => r.end.pop(),
                 "amount" => r.amount.pop(),
-                _ => r.volume.pop(),
+                _ => r.volume.as_mut().and_then(Vec::pop),
             };
             assert!(
                 r.validate()
@@ -195,7 +201,7 @@ mod tests {
         r.start.clear();
         r.end.clear();
         r.amount.clear();
-        r.volume.clear();
+        r.volume = Some(Vec::new());
         assert!(r.validate().unwrap_err().contains("at least one"));
     }
 
@@ -225,23 +231,23 @@ mod tests {
         r.start = vec![6.0, 0.0, 2.0];
         r.end = vec![12.0, 2.0, 6.0];
         r.amount = vec![1.5, 1.0, 2.0];
-        r.volume = vec![3.0, 1.0, 2.0];
+        r.volume = Some(vec![3.0, 1.0, 2.0]);
         assert_eq!(r.validate(), Ok(()));
         let s = r.sorted();
         assert_eq!(s.start, vec![0.0, 2.0, 6.0]);
         assert_eq!(s.end, vec![2.0, 6.0, 12.0]);
         assert_eq!(s.amount, vec![1.0, 2.0, 1.5]);
-        assert_eq!(s.volume, vec![1.0, 2.0, 3.0]);
+        assert_eq!(s.volume, Some(vec![1.0, 2.0, 3.0]));
         // a tie on start (a zero-length-free case needs an invalid request, so check the
         // permutation alone): the stable sort keeps the input order
         let mut t = request();
         t.start = vec![1.0, 0.0, 1.0, 0.0];
         t.end = vec![2.0; 4];
         t.amount = vec![10.0, 20.0, 30.0, 40.0];
-        t.volume = vec![1.0, 2.0, 3.0, 4.0];
+        t.volume = Some(vec![1.0, 2.0, 3.0, 4.0]);
         let s = t.sorted();
         assert_eq!(s.amount, vec![20.0, 40.0, 10.0, 30.0]);
-        assert_eq!(s.volume, vec![2.0, 4.0, 1.0, 3.0]);
+        assert_eq!(s.volume, Some(vec![2.0, 4.0, 1.0, 3.0]));
     }
 
     #[test]
@@ -263,7 +269,7 @@ mod tests {
         r.start = vec![0.0, -0.0];
         r.end = vec![1.0; 2];
         r.amount = vec![1.0, 2.0];
-        r.volume = vec![f64::NAN; 2];
+        r.volume = Some(vec![f64::NAN; 2]);
         assert_eq!(r.sorted().amount, vec![1.0, 2.0]);
     }
 
@@ -285,7 +291,7 @@ mod tests {
         r.start.truncate(1);
         r.end.truncate(1);
         r.amount.truncate(1);
-        r.volume.truncate(1);
+        r.volume.as_mut().unwrap().truncate(1);
         assert_eq!(r.validate(), Ok(()));
     }
 
@@ -305,5 +311,35 @@ mod tests {
         let mut v = serde_json::to_value(request()).unwrap();
         v["extra"] = serde_json::json!(1);
         assert!(serde_json::from_value::<UrineRequest>(v).is_err());
+    }
+
+    #[test]
+    fn no_volumes_and_volumes_which_are_all_nan_stay_apart_on_the_wire() {
+        let mut r = request();
+        r.volume = None;
+        let back: UrineRequest = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert_eq!(back.volume, None);
+        assert_eq!(back.validate(), Ok(()));
+        r.volume = Some(vec![f64::NAN; 3]);
+        let back: UrineRequest = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert!(back.volume.unwrap().iter().all(|v| v.is_nan()));
+        // a sorted request keeps the distinction
+        r.volume = None;
+        assert_eq!(r.sorted().volume, None);
+    }
+
+    #[test]
+    fn a_dose_amount_without_its_unit_is_rejected() {
+        let mut r = request();
+        r.dose_unit = None;
+        assert!(
+            r.validate()
+                .unwrap_err()
+                .contains("'dose_amount' and 'dose_unit'")
+        );
+        r.dose_amount = None;
+        assert_eq!(r.validate(), Ok(()));
+        r.dose_unit = Some("mg".to_string());
+        assert!(r.validate().is_err());
     }
 }
