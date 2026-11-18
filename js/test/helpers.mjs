@@ -5,6 +5,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { manifest } from "../version.mjs";
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /** The module `npm run build` writes, as bytes. */
@@ -14,7 +16,7 @@ export function wasmBytes() {
 
 /** The version of the npm package, which is the version of the kernel. */
 export function packageVersion() {
-  return JSON.parse(readFileSync(path.join(HERE, "..", "package.json"), "utf8")).version;
+  return manifest().version;
 }
 
 /** The cases of `scripts/wasm_fixtures.py`, with the bits the native build answers. */

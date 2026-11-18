@@ -75,7 +75,9 @@ def encode(value: Any) -> Any:
 
 def bits(values: Any) -> list[str]:
     """The bits of every value of a column, as the hex strings the test compares."""
-    return [f"0x{struct.unpack('<Q', struct.pack('<d', float(x)))[0]:016x}" for x in values]
+    return [
+        f"0x{struct.unpack('<Q', struct.pack('<d', float(x)))[0]:016x}" for x in values
+    ]
 
 
 def columns_of(answer: dict[str, Any]) -> list[dict[str, Any]]:
@@ -89,7 +91,9 @@ def columns_of(answer: dict[str, Any]) -> list[dict[str, Any]]:
         {"name": name, "width": 1, "bits": bits(np.atleast_1d(values))}
         for name, values in answer["parameters"].items()
     ]
-    columns.append({"name": "flags", "width": 1, "bits": bits(np.atleast_1d(answer["flags"]))})
+    columns.append(
+        {"name": "flags", "width": 1, "bits": bits(np.atleast_1d(answer["flags"]))}
+    )
     columns += [
         {"name": name, "width": 1, "bits": bits(np.atleast_1d(values).astype(float))}
         for name, values in answer["booleans"].items()
@@ -101,7 +105,9 @@ def columns_of(answer: dict[str, Any]) -> list[dict[str, Any]]:
             {
                 "name": name,
                 "width": int(variable["size"]),
-                "bits": bits(np.asarray(variable["values"], dtype=float).ravel(order="C")),
+                "bits": bits(
+                    np.asarray(variable["values"], dtype=float).ravel(order="C")
+                ),
             }
         )
     return columns
@@ -135,7 +141,9 @@ def case(
             "options": wire_options,
         },
         "expected": {
-            "n_rows": int(np.prod(wire_batch["sample_shape"])) if wire_batch["sample_shape"] else 1,
+            "n_rows": int(np.prod(wire_batch["sample_shape"]))
+            if wire_batch["sample_shape"]
+            else 1,
             "columns": columns_of(answer),
         },
     }
@@ -178,14 +186,26 @@ def two_subjects() -> Timecourses:
 
 def multiple_dose() -> Timecourses:
     """One curve over three doses of twelve hours, the steady state path with intervals."""
-    dosing = Dosing.regimen(dose=Dose(amount=50, unit="mg", route=Route.ORAL), interval=12.0, n_doses=3)
-    time = np.concatenate([step + np.array([0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 11.5]) for step in (0.0, 12.0, 24.0)])
+    dosing = Dosing.regimen(
+        dose=Dose(amount=50, unit="mg", route=Route.ORAL), interval=12.0, n_doses=3
+    )
+    time = np.concatenate(
+        [
+            step + np.array([0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 11.5])
+            for step in (0.0, 12.0, 24.0)
+        ]
+    )
     value = np.zeros(time.size)
     for amount, start in zip(dosing.amounts, dosing.times, strict=True):
         after = np.clip(time - start, 0.0, None)
         value += (amount / 10.0) * (1.0 - np.exp(-1.5 * after)) * np.exp(-0.12 * after)
     curve = Timecourse(
-        time=time, value=value, time_unit="hr", unit="mg/l", dosing=dosing, substance="caffeine"
+        time=time,
+        value=value,
+        time_unit="hr",
+        unit="mg/l",
+        dosing=dosing,
+        substance="caffeine",
     )
     return curve.to_batch("sample", "s1")
 
@@ -195,9 +215,13 @@ def group_batch() -> Timecourses:
     rng = np.random.default_rng(4711)
     values, spread, counts = [], [], []
     for row in range(3):
-        row_values = 25.0 * np.exp(-(2.0 + 0.4 * row) * T / 12.0) * (1.0 - np.exp(-3.0 * T))
+        row_values = (
+            25.0 * np.exp(-(2.0 + 0.4 * row) * T / 12.0) * (1.0 - np.exp(-3.0 * T))
+        )
         values.append(row_values)
-        spread.append(np.abs(0.18 * row_values * (1.0 + 0.2 * rng.standard_normal(T.size))))
+        spread.append(
+            np.abs(0.18 * row_values * (1.0 + 0.2 * rng.standard_normal(T.size)))
+        )
         counts.append(np.full(T.size, 8.0 + row))
     return Timecourses.from_arrays(
         np.vstack([T] * 3),
@@ -217,7 +241,11 @@ def group_batch() -> Timecourses:
 def infusion() -> Timecourses:
     """One intravenous infusion, the route whose clearance is `cl` and not `cl_f`."""
     time = np.array([0.0, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 12.0])
-    value = 12.0 * np.exp(-0.25 * np.clip(time - 0.5, 0.0, None)) * np.minimum(time / 0.5, 1.0)
+    value = (
+        12.0
+        * np.exp(-0.25 * np.clip(time - 0.5, 0.0, None))
+        * np.minimum(time / 0.5, 1.0)
+    )
     curve = Timecourse(
         time=time,
         value=value,
@@ -281,7 +309,10 @@ def fixture() -> dict[str, Any]:
                 "bootstrap_group",
                 group_batch(),
                 NCAOptions(
-                    uncertainty=UncertaintyMethod.BOOTSTRAP, n_boot=200, seed=20261118, ci_level=0.90
+                    uncertainty=UncertaintyMethod.BOOTSTRAP,
+                    n_boot=200,
+                    seed=20261118,
+                    ci_level=0.90,
                 ),
                 "a seeded bootstrap, which pins the draws of the generator in wasm",
                 exact=False,

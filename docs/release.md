@@ -12,7 +12,7 @@ Write what a reader of the release needs: what changed, what it is worth where t
 
 1. branch off `develop`: `git switch -c release/x.y.z develop`
 2. write `release-notes/x.y.z.md`
-3. set `version` of `[workspace.package]` in `Cargo.toml`, set the same version in the `version` of every path dependency on a crate of this workspace (`pkpdutils-abi` and `pkpdutils-units` in `crates/core/Cargo.toml`, `pkpdutils-abi` and `pkpdutils-core` in `crates/python/Cargo.toml`), and refresh `Cargo.lock` (`cargo metadata --format-version 1 > /dev/null`). Those pins are what a consumer of the published crates resolves against, so `cargo metadata` fails until they match the new version.
+3. set `version` of `[workspace.package]` in `Cargo.toml`, set the same version in the `version` of every path dependency on a crate of this workspace (`pkpdutils-abi` and `pkpdutils-units` in `crates/core/Cargo.toml`, `pkpdutils-abi` and `pkpdutils-core` in `crates/python/Cargo.toml`), set the same version in `js/package.json`, and refresh `Cargo.lock` (`cargo metadata --format-version 1 > /dev/null`). Those pins are what a consumer of the published crates resolves against, so `cargo metadata` fails until they match the new version; `js/prepack.mjs` refuses to pack a package whose version is not the version of the crates, and `js/test/package.test.mjs` compares both against what the module reports.
 4. make sure everything passes: see [Checks](../README.md#checks)
 5. push the branch, open the pull request against `develop` and merge it once the checks are green
 6. tag the merged commit on `develop` and push the tag:
@@ -26,4 +26,19 @@ Write what a reader of the release needs: what changed, what it is worth where t
 
     Check the version before pushing: the tag publishes to PyPI, and a version of the index cannot be taken back.
 
-The tag then builds the five wheels and the sdist, uploads them to PyPI with trusted publishing and PEP 740 attestations, and creates the release `pkpdutils-core x.y.z` from `release-notes/x.y.z.md`. The release is made only once the upload succeeded, so a release of this repository never announces a version the index does not carry. A run repeated on a tag whose release exists already says so and changes nothing.
+The tag then builds the five wheels and the sdist, uploads them to PyPI with trusted publishing and PEP 740 attestations, publishes the npm package of `js/` with trusted publishing and a provenance attestation, and creates the release `pkpdutils-core x.y.z` from `release-notes/x.y.z.md`. The release is made only once both uploads succeeded, so a release of this repository never announces a version an index does not carry. A run repeated on a tag whose release exists already says so and changes nothing, and the npm job skips a version npm already has, so a re-run of a failed release is harmless.
+
+## The npm package, and its first publish
+
+`js/` is the JavaScript host of the WebAssembly build of this kernel and is published as [`pkpdutils-core`](https://www.npmjs.com/package/pkpdutils-core) on npm, from the `npm` job of `.github/workflows/release.yml`, with the same version as the crates and the wheels.
+
+npm trusted publishing is configured **per package** and a package has to exist before it can be configured, so the first publish is one manual step of the maintainer, once:
+
+```bash
+cd js
+npm login
+node prepack.mjs
+npm publish --access public
+```
+
+Then set the trusted publisher on npmjs.com (Settings of the package, Trusted publisher: repository `matthiaskoenig/pkpdutils-core`, workflow `release.yml`), after which every release goes through the job and no token is held anywhere. The job itself refuses to publish unless the tag names the version of `js/package.json`, and it skips the publish with a notice when npm already carries that version.
