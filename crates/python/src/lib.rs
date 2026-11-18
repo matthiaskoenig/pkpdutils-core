@@ -39,7 +39,7 @@ use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::convert::{at_key, batch_from_python, field, required};
+use crate::convert::{at_key, batch_from_python, field, required, route_named};
 use crate::options::{options_from_python, unsupported_reason};
 use crate::result::result_into_python;
 
@@ -55,6 +55,9 @@ pub(crate) const TSS_REQUEST: &str = "a `time_to_steady_state` request";
 
 /// How an error of [`nca_sparse`] names the dict it was given, as [`SUMMARY_REQUEST`] does.
 pub(crate) const SPARSE_REQUEST: &str = "a `nca_sparse` request";
+
+/// How an error of [`nca_urine`] names the dict it was given, as [`SUMMARY_REQUEST`] does.
+pub(crate) const URINE_REQUEST: &str = "a `nca_urine` request";
 
 create_exception!(
     pkpdutils_core,
@@ -321,6 +324,67 @@ fn nca_sparse<'py>(py: Python<'py>, request: &Bound<'py, PyDict>) -> PyResult<Bo
     Ok(out)
 }
 
+/// The urine analysis of the host, `nca_urine` of `pkpdutils.nca.urine`.
+///
+/// `request` is a dict of the fields of the kernel's `UrineRequest`: `start`, `end` and `amount`
+/// (float arrays of one entry per collection), `volume` (a float array of the same length, or
+/// `None` when the excretion carries no volumes at all; an array of `NaN` is a different
+/// excretion from `None`, since `vol_ur` is then `0` and not `NaN`), `unit`, `time_unit` and
+/// `volume_unit` (strings), `route` (`"iv_bolus"`, `"iv_infusion"` or `"oral"`), `dose_amount`
+/// (a float or `None`), `dose_unit` (a string or `None`), `area` (a float or `None`),
+/// `area_unit` (a string or `None`) and `options`, the options dict of [`analyze_batch`]. The
+/// answer is the dict of an analysis result (see [`analyze_batch`]), whose point variables
+/// `rate` and `midpoint` run over the dimension `collection`.
+///
+/// # Errors
+///
+/// A `KeyError` for a missing field and a `TypeError` for a field of the wrong type. A request
+/// whose arrays differ in length, which has no collection, whose intervals do not end after
+/// they start or overlap, whose `route` is unknown or whose dose or area comes without its unit
+/// is a plain `ValueError`, never an `UnsupportedError`, so that the fallback of a host cannot
+/// hide a bug in the request. The collections need not be sorted.
+#[pyfunction]
+fn nca_urine<'py>(py: Python<'py>, request: &Bound<'py, PyDict>) -> PyResult<Bound<'py, PyDict>> {
+    let floats = |key: &str| -> PyResult<Vec<f64>> {
+        let array: PyReadonlyArray1<'_, f64> = required(request, key, URINE_REQUEST)?
+            .extract()
+            .map_err(|err| at_key(py, key, err))?;
+        Ok(array.as_array().iter().copied().collect())
+    };
+    let volume = match required(request, "volume", URINE_REQUEST)? {
+        value if value.is_none() => None,
+        value => {
+            let array: PyReadonlyArray1<'_, f64> =
+                value.extract().map_err(|err| at_key(py, "volume", err))?;
+            Some(array.as_array().iter().copied().collect())
+        }
+    };
+    let route: String = field(py, request, "route", URINE_REQUEST)?;
+    let options = required(request, "options", URINE_REQUEST)?
+        .cast_into::<PyDict>()
+        .map_err(|err| PyTypeError::new_err(format!("options: {err}")))?;
+    let request = kernel::pkpdutils_abi::UrineRequest {
+        start: floats("start")?,
+        end: floats("end")?,
+        amount: floats("amount")?,
+        volume,
+        unit: field(py, request, "unit", URINE_REQUEST)?,
+        time_unit: field(py, request, "time_unit", URINE_REQUEST)?,
+        volume_unit: field(py, request, "volume_unit", URINE_REQUEST)?,
+        route: route_named("route", &route)?,
+        dose_amount: field(py, request, "dose_amount", URINE_REQUEST)?,
+        dose_unit: field(py, request, "dose_unit", URINE_REQUEST)?,
+        area: field(py, request, "area", URINE_REQUEST)?,
+        area_unit: field(py, request, "area_unit", URINE_REQUEST)?,
+        options: options_from_python(&options)?,
+    };
+    let checked = request.checked().map_err(PyValueError::new_err)?;
+    let answer = py
+        .detach(|| guarded(|| kernel::nca_urine(&checked)))?
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    result_into_python(py, answer)
+}
+
 /// The exception of an analysis this build does not carry.
 ///
 /// The sentence is the kernel's own error, so that the text of a refusal the predicate gives
@@ -490,6 +554,7 @@ fn pkpdutils_core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(summarize, module)?)?;
     module.add_function(wrap_pyfunction!(time_to_steady_state, module)?)?;
     module.add_function(wrap_pyfunction!(nca_sparse, module)?)?;
+    module.add_function(wrap_pyfunction!(nca_urine, module)?)?;
     module.add_function(wrap_pyfunction!(normal_isf, module)?)?;
     module.add_function(wrap_pyfunction!(student_t_isf, module)?)?;
     module.add_function(wrap_pyfunction!(student_t_sf, module)?)?;
@@ -1368,6 +1433,118 @@ mod tests {
             let message = err.value(py).to_string();
             assert!(message.contains(TSS_REQUEST), "{message}");
             assert!(!message.contains(contract), "{message}");
+        });
+    }
+
+    /// A request of three collections of a plasma-free oral excretion.
+    fn urine_request<'py>(py: Python<'py>) -> Bound<'py, PyDict> {
+        let request = PyDict::new(py);
+        let arr = |v: &[f64]| PyArray1::from_slice(py, v);
+        request.set_item("start", arr(&[0.0, 2.0, 4.0])).unwrap();
+        request.set_item("end", arr(&[2.0, 4.0, 8.0])).unwrap();
+        request.set_item("amount", arr(&[1.0, 2.0, 1.5])).unwrap();
+        request
+            .set_item("volume", arr(&[100.0, 80.0, 120.0]))
+            .unwrap();
+        request.set_item("unit", "mg").unwrap();
+        request.set_item("time_unit", "h").unwrap();
+        request.set_item("volume_unit", "ml").unwrap();
+        request.set_item("route", "oral").unwrap();
+        request.set_item("dose_amount", py.None()).unwrap();
+        request.set_item("dose_unit", py.None()).unwrap();
+        request.set_item("area", py.None()).unwrap();
+        request.set_item("area_unit", py.None()).unwrap();
+        request.set_item("options", options_dict(py)).unwrap();
+        request
+    }
+
+    /// The first value of the parameter `name` of an answer.
+    fn urine_parameter(answer: &Bound<'_, PyDict>, name: &str) -> f64 {
+        sparse_parameters(answer)
+            .into_iter()
+            .find(|(n, _)| n == name)
+            .unwrap_or_else(|| panic!("no parameter {name}"))
+            .1[0]
+    }
+
+    #[test]
+    fn a_urine_request_answers_the_rate_over_the_collections() {
+        Python::attach(|py| {
+            let answer = nca_urine(py, &urine_request(py)).unwrap();
+            let points = answer.get_item("point_variables").unwrap().unwrap();
+            let rate = points
+                .cast::<PyDict>()
+                .unwrap()
+                .get_item("rate")
+                .unwrap()
+                .unwrap();
+            let rate = rate.cast::<PyDict>().unwrap();
+            let dim: String = rate.get_item("dim").unwrap().unwrap().extract().unwrap();
+            let size: usize = rate.get_item("size").unwrap().unwrap().extract().unwrap();
+            assert_eq!((dim.as_str(), size), ("collection", 3));
+            assert_eq!(urine_parameter(&answer, "vol_ur"), 300.0);
+        });
+    }
+
+    #[test]
+    fn a_urine_request_without_volumes_has_no_urine_volume() {
+        Python::attach(|py| {
+            let request = urine_request(py);
+            request.set_item("volume", py.None()).unwrap();
+            let answer = nca_urine(py, &request).unwrap();
+            assert!(urine_parameter(&answer, "vol_ur").is_nan());
+        });
+    }
+
+    #[test]
+    fn a_urine_request_with_nan_volumes_has_a_zero_urine_volume() {
+        Python::attach(|py| {
+            let request = urine_request(py);
+            let nan = PyArray1::from_slice(py, &[f64::NAN; 3]);
+            request.set_item("volume", nan).unwrap();
+            let answer = nca_urine(py, &request).unwrap();
+            assert_eq!(urine_parameter(&answer, "vol_ur"), 0.0);
+        });
+    }
+
+    #[test]
+    fn a_urine_request_without_an_amount_is_a_value_error() {
+        Python::attach(|py| {
+            let request = urine_request(py);
+            request
+                .set_item("amount", PyArray1::from_slice(py, &[] as &[f64]))
+                .unwrap();
+            let err = nca_urine(py, &request).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py));
+            let absent = urine_request(py);
+            absent.del_item("amount").unwrap();
+            let err = nca_urine(py, &absent).unwrap_err();
+            assert!(err.is_instance_of::<PyKeyError>(py), "{err}");
+        });
+    }
+
+    #[test]
+    fn a_urine_request_with_overlapping_collections_is_a_value_error() {
+        Python::attach(|py| {
+            let request = urine_request(py);
+            request
+                .set_item("end", PyArray1::from_slice(py, &[3.0, 4.0, 8.0]))
+                .unwrap();
+            let err = nca_urine(py, &request).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py));
+        });
+    }
+
+    #[test]
+    fn a_urine_request_whose_route_is_unknown_is_a_value_error() {
+        Python::attach(|py| {
+            let request = urine_request(py);
+            request.set_item("route", "bogus").unwrap();
+            let err = nca_urine(py, &request).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py));
         });
     }
 }
