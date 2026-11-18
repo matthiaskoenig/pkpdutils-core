@@ -39,7 +39,17 @@ Write what a reader of the release needs: what changed, what it is worth where t
 
     Check the version before pushing: the tag publishes to PyPI, and a version of the index cannot be taken back.
 
-The tag then builds the five wheels and the sdist, uploads them to PyPI with trusted publishing and PEP 740 attestations, publishes the npm package of `js/` with trusted publishing and a provenance attestation, and creates the release `pkpdutils-core x.y.z` from `release-notes/x.y.z.md`. The release is made only once both uploads succeeded, so a release of this repository never announces a version an index does not carry. A run repeated on a tag whose release exists already says so and changes nothing, and the npm job skips a version npm already has, so a re-run of a failed release is harmless.
+9. check the published artifacts rather than the workflow, both of them, from a directory which is not this checkout:
+
+    ```bash
+    uv venv --python 3.14 /tmp/release-check && uv pip install --python /tmp/release-check/bin/python --refresh --upgrade "pkpdutils-core==x.y.z"
+    /tmp/release-check/bin/python -c "import pkpdutils_core; print(pkpdutils_core.__version__, pkpdutils_core.__allocator__)"
+    cd /tmp && npm init -y && npm install pkpdutils-core@x.y.z
+    ```
+
+    Then analyse one curve through the installed package and compare it with the same curve through `pkpdutils` on the wheel: the two builds of one kernel have to answer the same digits, and that is a property of the artifacts a user gets and not of the tree they were built from. The example of `js/README.md` runs as it stands, so it is the shortest way to do the JavaScript half.
+
+The tag builds the five wheels and the sdist, uploads them to PyPI with trusted publishing and PEP 740 attestations, publishes the npm package of `js/` with trusted publishing and a provenance attestation, and creates the release `pkpdutils-core x.y.z` from `release-notes/x.y.z.md`. The release is made only once both uploads succeeded, so a release of this repository never announces a version an index does not carry. A run repeated on a tag whose release exists already says so and changes nothing, and the npm job skips a version npm already has, so a re-run of a failed release is harmless.
 
 ## The npm package, and its first publish
 

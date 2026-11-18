@@ -48,7 +48,7 @@ answer.column("thalf")[0];       // 0.9999999999999999, an hour
 answer.header.columns;            // every column with its unit, width and fill
 ```
 
-A request is the `analysis/1` contract of `pkpdutils-abi`: the `batch` carries the times and the values of every sample flat and row major, the dosing protocol and the units, and the `options` are the fields of `NCAOptions` of `pkpdutils`. A number which is not finite travels as a string (`"NaN"`, `"inf"`, `"-inf"`), because JSON has no other spelling for it. `crates/abi/src/` is the reference, and `scripts/wasm_fixtures.py` writes complete requests for seven cases into `js/test/fixtures/cases.json` - the shortest way to see a real one of every shape.
+A request is the `analysis/1` contract of `pkpdutils-abi`: the `batch` carries the times and the values of every sample flat and row major, the dosing protocol and the units, and the `options` are the fields of `NCAOptions` of `pkpdutils`. A number which is not finite travels as a string (`"NaN"`, `"inf"`, `"-inf"`), because JSON has no other spelling for it. `crates/abi/src/` is the reference, and `scripts/wasm_fixtures.py` writes complete requests for eight cases into `js/test/fixtures/cases.json` - the shortest way to see a real one of every shape.
 
 The answer is the header and one payload: `column(name)` is a view of the payload, `header.columns` names every column with its unit and its width (a point variable such as `interval_auc` carries several values per sample), and `header.coords` carries the sample labels through. The payload of an answer is a copy, so an answer stays valid after the next call.
 
