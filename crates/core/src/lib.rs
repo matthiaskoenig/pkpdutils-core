@@ -21,6 +21,7 @@ mod intervals;
 mod pack;
 mod parameters;
 mod percentile;
+mod random;
 mod shard;
 mod sparse;
 mod stats;
@@ -45,6 +46,7 @@ use pkpdutils_abi::{
 /// one dependency and cannot hold a version of them which disagrees with this build's.
 pub use pkpdutils_abi;
 
+pub use crate::random::Draws;
 pub use crate::shard::{SHARD_WORK_THRESHOLD, automatic_shards};
 
 use crate::assemble::{RowResult, resolved_uncertainty, result_of};

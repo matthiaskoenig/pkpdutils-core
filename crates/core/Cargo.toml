@@ -19,6 +19,10 @@ pkpdutils-units = { path = "../units", version = "0.5.1" }
 thiserror.workspace = true
 rayon = { workspace = true, optional = true }
 
+[dev-dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
 [features]
 # The row shards of the analysis, which need threads: a native host asks for them, a wasm
 # instance has none and runs one kernel instance per Web Worker instead (rayon compiles for both

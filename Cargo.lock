@@ -253,6 +253,8 @@ dependencies = [
  "pkpdutils-abi",
  "pkpdutils-units",
  "rayon",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 
