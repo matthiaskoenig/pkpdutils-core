@@ -33,10 +33,12 @@ pub struct UrineRequest {
     /// The route of the dose.
     pub route: Route,
     /// The amount of the dose, if there is one.
+    #[serde(with = "nonfinite::option")]
     pub dose_amount: Option<f64>,
     /// The unit of the dose, if there is one.
     pub dose_unit: Option<String>,
-    /// The plasma area the renal clearance divides by, if there is one.
+    /// The plasma area the renal clearance divides by, if there is one (`NaN` is legal).
+    #[serde(with = "nonfinite::option")]
     pub area: Option<f64>,
     /// The unit of the plasma area, present exactly when the area is.
     pub area_unit: Option<String>,
@@ -47,7 +49,7 @@ pub struct UrineRequest {
 impl UrineRequest {
     /// The request with its collections in the order of `start`, the way python sorts an
     /// `Excretion` (`np.argsort(start, kind="stable")`, one permutation for `start`, `end`,
-    /// `amount` and `volume`; a tie keeps the input order, a `NaN` start goes last).
+    /// `amount` and `volume`; a tie keeps the input order, `-0.0` ties with `0.0`, a `NaN` start goes last).
     ///
     /// The numerics consume the request through this method, since the collections of a request
     /// are not necessarily in order. An array whose length differs from `start` is left alone,
@@ -55,7 +57,12 @@ impl UrineRequest {
     pub fn sorted(&self) -> Self {
         let n = self.start.len();
         let mut order: Vec<usize> = (0..n).collect();
-        order.sort_by(|&i, &j| self.start[i].total_cmp(&self.start[j]));
+        order.sort_by(|&i, &j| {
+            // numpy: -0.0 equals 0.0 (the stable sort keeps the input order), NaN goes last
+            let (a, b) = (self.start[i], self.start[j]);
+            a.partial_cmp(&b)
+                .unwrap_or_else(|| a.is_nan().cmp(&b.is_nan()))
+        });
         let permute = |v: &Vec<f64>| -> Vec<f64> {
             if v.len() == n {
                 order.iter().map(|&i| v[i]).collect()
@@ -70,6 +77,12 @@ impl UrineRequest {
             volume: permute(&self.volume),
             ..self.clone()
         }
+    }
+
+    /// Validate the request and put its collections in order, the only way to a [`CheckedUrine`].
+    pub fn checked(&self) -> Result<CheckedUrine, String> {
+        self.validate()?;
+        Ok(CheckedUrine(self.sorted()))
     }
 
     /// Check the lengths, that every interval ends after it starts, that the intervals do not
@@ -111,6 +124,20 @@ impl UrineRequest {
             return Err("'area' and 'area_unit' come together".to_string());
         }
         Ok(())
+    }
+}
+
+/// A [`UrineRequest`] which was validated and put in the order of `start`.
+///
+/// Holding one is the proof of both: it is built only by [`UrineRequest::checked`], so the
+/// numerics cannot be handed an unsorted or malformed request.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CheckedUrine(UrineRequest);
+
+impl CheckedUrine {
+    /// The validated request, sorted by `start`.
+    pub fn request(&self) -> &UrineRequest {
+        &self.0
     }
 }
 
@@ -215,6 +242,41 @@ mod tests {
         let s = t.sorted();
         assert_eq!(s.amount, vec![20.0, 40.0, 10.0, 30.0]);
         assert_eq!(s.volume, vec![2.0, 4.0, 1.0, 3.0]);
+    }
+
+    #[test]
+    fn checked_validates_then_sorts() {
+        let mut r = request();
+        r.start = vec![6.0, 0.0, 2.0];
+        r.end = vec![12.0, 2.0, 6.0];
+        r.amount = vec![1.5, 1.0, 2.0];
+        let c = r.checked().unwrap();
+        assert_eq!(c.request().start, vec![0.0, 2.0, 6.0]);
+        assert_eq!(c.request().amount, vec![1.0, 2.0, 1.5]);
+        r.end[0] = 6.0;
+        assert!(r.checked().is_err());
+    }
+
+    #[test]
+    fn negative_zero_ties_with_zero_in_input_order() {
+        let mut r = request();
+        r.start = vec![0.0, -0.0];
+        r.end = vec![1.0; 2];
+        r.amount = vec![1.0, 2.0];
+        r.volume = vec![f64::NAN; 2];
+        assert_eq!(r.sorted().amount, vec![1.0, 2.0]);
+    }
+
+    #[test]
+    fn a_nan_area_and_a_nan_dose_amount_round_trip_and_validate() {
+        let mut r = request();
+        r.area = Some(f64::NAN);
+        r.area_unit = Some("h*mg/l".to_string());
+        r.dose_amount = Some(f64::NAN);
+        let back: UrineRequest = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert!(back.area.unwrap().is_nan());
+        assert!(back.dose_amount.unwrap().is_nan());
+        assert_eq!(back.validate(), Ok(()));
     }
 
     #[test]

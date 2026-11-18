@@ -24,7 +24,7 @@ pub use result::{
 pub use sparse::{SparseAnswer, SparseDesign, SparseRequest};
 pub use summary::{SummaryAnswer, SummaryRequest};
 pub use tss::{TssAnswer, TssMethod, TssRequest};
-pub use urine::UrineRequest;
+pub use urine::{CheckedUrine, UrineRequest};
 pub use window::WindowLabel;
 
 /// The contract of an analysis request and its result.
