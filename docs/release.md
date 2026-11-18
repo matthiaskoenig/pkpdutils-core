@@ -51,8 +51,10 @@ npm trusted publishing is configured **per package** and a package has to exist 
 cd js
 npm login
 node prepack.mjs
-npm publish --access public
+npm publish --access public --no-provenance
 ```
+
+`--no-provenance` is what makes that publish possible at all: `publishConfig` of `js/package.json` asks for provenance, which npm can only mint from the OIDC token of a continuous integration run, so a publish from a machine fails with "automatic provenance generation not supported". The first tarball therefore carries no attestation and every release after it does, which is the one difference between the manual publish and the job.
 
 A tag which was pushed before that publish is not lost: publish by hand as above and re-run the failed workflow run, after which the `npm` job skips and the release of the tag is created.
 
