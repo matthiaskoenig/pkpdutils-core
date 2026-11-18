@@ -1,10 +1,15 @@
 // The pool: the rows of a batch over several instances, and the answer of the whole batch back.
 
 import assert from "node:assert/strict";
+import { execFile as execFileCallback } from "node:child_process";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+
+const execFile = promisify(execFileCallback);
 
 import { createRuntime } from "../loader.mjs";
-import { createPool, mergeAnswers, shardRequest, shardable } from "../pool.mjs";
+import { WORKER_URL, createPool, mergeAnswers, shardRequest, shardable } from "../pool.mjs";
 import { batchRequest, bitsOf, mixedRouteRequest, options, request, wasmBytes } from "./helpers.mjs";
 
 const bytes = wasmBytes();
@@ -197,6 +202,75 @@ test("close ends every worker and a call after it throws", async () => {
     (async () => pool.analyze(request()))(),
     (bad) => /closed/.test(bad.message),
   );
+});
+
+test("a worker which fails leaves the rotation and the pool runs on what is left", async () => {
+  // a worker of this pool is a fake one, which is what `createWorker` is for: the first job it
+  // is given fails it, as a worker whose instance is gone would
+  let made = 0;
+  const pool = await createPool({
+    module: compiled,
+    workers: 2,
+    createWorker: async () => {
+      // the role is decided before the first await: both factory calls run at once, and a
+      // counter read after an await would make both of them the same worker
+      const seat = made;
+      made += 1;
+      if (seat === 0) {
+        const { Worker } = await import("node:worker_threads");
+        const worker = new Worker(WORKER_URL);
+        return {
+          post: (message, transfer) => worker.postMessage(message, transfer),
+          onMessage: (fn) => worker.on("message", fn),
+          onError: (fn) => worker.on("error", fn),
+          terminate: () => worker.terminate(),
+          ref: () => worker.ref(),
+          unref: () => worker.unref(),
+        };
+      }
+      const listeners = { message: [], error: [] };
+      return {
+        post: (message) => {
+          if (message.kind === "init") {
+            for (const fn of listeners.message) {
+              fn({ kind: "ready", about: { version: "fake", output_format: 1 } });
+            }
+            return;
+          }
+          for (const fn of listeners.error) {
+            fn(new Error("this worker lost its instance"));
+          }
+        },
+        onMessage: (fn) => listeners.message.push(fn),
+        onError: (fn) => listeners.error.push(fn),
+        terminate: () => {},
+        ref: () => {},
+        unref: () => {},
+      };
+    },
+  });
+  try {
+    assert.equal(pool.workers, 2);
+    // the eight rows are cut in two, and the shard which lands on the fake worker fails the call
+    await assert.rejects(pool.analyze(batchRequest(8)), (bad) => /lost its instance/.test(bad.message));
+    assert.equal(pool.workers, 1, "the failed worker is out of the rotation");
+    // and the pool answers on the one which is left, which now takes the whole batch
+    const answer = await pool.analyze(batchRequest(8));
+    assert.equal(answer.header.n_rows, 8);
+    assert.deepEqual(columnsOf(answer), columnsOf(runtime.analyze(batchRequest(8))));
+  } finally {
+    pool.close();
+  }
+});
+
+test("a script which forgets close gets its answer and exits", async () => {
+  // the workers of a node pool are unreferenced while it is idle, so a script which forgets
+  // `close()` still exits; they are referenced again while a job is in flight, so the answer of
+  // that job is never lost to an exit. Both halves are what this subprocess proves, and only a
+  // subprocess can: the test runner of node keeps its own event loop alive.
+  const script = fileURLToPath(new URL("./fixtures/exit.mjs", import.meta.url));
+  const { stdout } = await execFile(process.execPath, [script], { timeout: 60_000 });
+  assert.equal(stdout.trim(), "2");
 });
 
 test("the pool reports what the module is", async () => {

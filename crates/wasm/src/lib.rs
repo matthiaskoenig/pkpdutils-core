@@ -15,7 +15,7 @@
 //!   speaks, which a page reads once before it sends anything.
 //!
 //! Every entry point returns 0 for an answer and 1 for an error, writes its output as
-//! [`output`] describes and is a thin wrapper around a pure function of the same name without
+//! `crates/wasm/src/output.rs` describes and is a thin wrapper around a pure function of the same name without
 //! the prefix, which is what the tests of this crate call. Nothing of the analysis itself lives
 //! here: this crate is the layout, the error classes and the panic hook, and the kernel is
 //! `pkpdutils-core`.

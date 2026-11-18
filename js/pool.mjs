@@ -255,11 +255,12 @@ async function spawn(url) {
       onError: (fn) =>
         worker.addEventListener("error", (event) => fn(event.error ?? new Error(event.message))),
       terminate: () => worker.terminate(),
+      ref: () => {},
+      unref: () => {},
     };
   }
   const { Worker: NodeWorker } = await import("node:worker_threads");
   const worker = new NodeWorker(url);
-  worker.unref();
   return {
     post: (message, transfer) => worker.postMessage(message, transfer),
     onMessage: (fn) => worker.on("message", fn),
@@ -268,6 +269,10 @@ async function spawn(url) {
       worker.on("messageerror", fn);
     },
     terminate: () => worker.terminate(),
+    // an idle worker does not keep a node process alive, so a script which forgets `close()`
+    // still exits; a worker with a job in flight does, so an answer is never lost to an exit
+    ref: () => worker.ref(),
+    unref: () => worker.unref(),
   };
 }
 
@@ -292,6 +297,8 @@ export async function createPool({
   const queue = [];
   /** The job every worker is running, `null` when it is idle. */
   const running = new Map();
+  /** The workers which failed, which are out of the rotation. */
+  const dead = new Set();
   let closed = false;
   let about = null;
 
@@ -317,8 +324,12 @@ export async function createPool({
           pump();
         });
         worker.onError((bad) => {
+          // a worker which failed is out of the rotation: its instance is gone and a job posted
+          // to it would wait for an answer which cannot come. The pool runs on what is left,
+          // and a pool whose last worker failed says so on the next call rather than hanging.
           const job = running.get(worker);
           running.delete(worker);
+          dead.add(worker);
           reject(bad);
           job?.reject(new KernelError("internal", `the worker failed: ${bad.message ?? bad}`));
           pump();
@@ -358,16 +369,22 @@ export async function createPool({
   function pump() {
     for (const worker of seats) {
       if (queue.length === 0) {
-        return;
+        break;
       }
-      if (!running.has(worker)) {
+      if (!running.has(worker) && !dead.has(worker)) {
         const job = queue.shift();
         if (job.signal?.aborted) {
           job.reject(job.signal.reason ?? new Error("aborted"));
           continue;
         }
         running.set(worker, job);
+        worker.ref?.();
         worker.post({ kind: job.kind, id: job.id, request: job.request });
+      }
+    }
+    if (running.size === 0) {
+      for (const worker of seats) {
+        worker.unref?.();
       }
     }
   }
@@ -381,6 +398,9 @@ export async function createPool({
     }
     if (queue.length >= maxQueuedJobs) {
       throw new KernelError("internal", `${queue.length} jobs are already waiting`);
+    }
+    if (dead.size === seats.length) {
+      throw new KernelError("internal", `every one of the ${seats.length} workers of this pool failed`);
     }
     next += 1;
     const id = next;
@@ -401,7 +421,9 @@ export async function createPool({
     get about() {
       return about;
     },
-    workers: seats.length,
+    get workers() {
+      return seats.length - dead.size;
+    },
     /**
      * Analyse a batch over the workers of this pool.
      *
