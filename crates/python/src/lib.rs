@@ -140,14 +140,7 @@ fn analyze_batch<'py>(
             Some(shards) => kernel::analyze_batch_in_shards(&batch, &options, shards),
         })
     })?;
-    let result = analysed.map_err(|error| match error {
-        // the predicate answers for every refusal of the kernel, which
-        // `the_predicate_agrees_with_the_kernel` of `crate::options` holds it to, so this arm
-        // is reached only if the two have drifted apart. It is the type of the refusal which a
-        // host routes on, so a refusal which got past the predicate must still carry it
-        kernel::KernelError::Unsupported { .. } => unsupported(&error),
-        _ => PyValueError::new_err(error.to_string()),
-    })?;
+    let result = analysed.map_err(kernel_error)?;
     result_into_python(py, result)
 }
 
@@ -185,7 +178,7 @@ fn summarize<'py>(py: Python<'py>, request: &Bound<'py, PyDict>) -> PyResult<Bou
     let (n_vars, n_groups) = (request.n_vars, request.n_groups);
     let answer = py
         .detach(|| guarded(|| kernel::summarize(&request)))?
-        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        .map_err(kernel_error)?;
     let out = PyDict::new(py);
     for (name, column) in [
         ("mean", answer.mean),
@@ -264,7 +257,7 @@ fn time_to_steady_state<'py>(
     };
     let answer = py
         .detach(|| guarded(|| kernel::time_to_steady_state(&request)))?
-        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        .map_err(kernel_error)?;
     let out = PyDict::new(py);
     out.set_item("tss", PyArray1::from_vec(py, answer.tss))?;
     out.set_item("c_ss", PyArray1::from_vec(py, answer.c_ss))?;
@@ -317,7 +310,7 @@ fn nca_sparse<'py>(py: Python<'py>, request: &Bound<'py, PyDict>) -> PyResult<Bo
     };
     let answer = py
         .detach(|| guarded(|| kernel::nca_sparse(&request)))?
-        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        .map_err(kernel_error)?;
     let out = result_into_python(py, answer.result)?;
     out.set_item("n_batches", answer.n_batches)?;
     out.set_item("singletons", answer.singletons)?;
@@ -381,7 +374,7 @@ fn nca_urine<'py>(py: Python<'py>, request: &Bound<'py, PyDict>) -> PyResult<Bou
     let checked = request.checked().map_err(PyValueError::new_err)?;
     let answer = py
         .detach(|| guarded(|| kernel::nca_urine(&checked)))?
-        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        .map_err(kernel_error)?;
     result_into_python(py, answer)
 }
 
@@ -531,6 +524,19 @@ fn guarded<T>(f: impl FnOnce() -> T) -> PyResult<T> {
             env!("CARGO_PKG_REPOSITORY")
         ))
     })
+}
+
+/// The python exception of an error of the kernel, the one mapping of every entry point.
+///
+/// A refusal of the kernel to carry an analysis, a unit its registry cannot read included, is
+/// the [`UnsupportedError`] a host routes on, whichever entry point raised it; everything else
+/// is a malformed request and a plain `ValueError`. For `analyze_batch` the predicate answers
+/// for the refusals before a row runs, so the first arm is there reached only for a unit.
+fn kernel_error(error: kernel::KernelError) -> PyErr {
+    match error {
+        kernel::KernelError::Unsupported { .. } => unsupported(&error),
+        _ => PyValueError::new_err(error.to_string()),
+    }
 }
 
 /// The module `pkpdutils` imports: the two entry points, the refusal a host routes on and the
@@ -1482,7 +1488,8 @@ mod tests {
             let dim: String = rate.get_item("dim").unwrap().unwrap().extract().unwrap();
             let size: usize = rate.get_item("size").unwrap().unwrap().extract().unwrap();
             assert_eq!((dim.as_str(), size), ("collection", 3));
-            assert_eq!(urine_parameter(&answer, "vol_ur"), 300.0);
+            // 300 ml, reported in liter
+            assert!((urine_parameter(&answer, "vol_ur") - 0.3).abs() < 1e-12);
         });
     }
 
@@ -1545,6 +1552,29 @@ mod tests {
             let err = nca_urine(py, &request).unwrap_err();
             assert!(err.is_instance_of::<PyValueError>(py), "{err}");
             assert!(!err.is_instance_of::<UnsupportedError>(py));
+        });
+    }
+
+    #[test]
+    fn a_urine_request_in_a_unit_the_registry_cannot_read_is_unsupported() {
+        Python::attach(|py| {
+            let request = urine_request(py);
+            request.set_item("unit", "grain").unwrap();
+            let err = nca_urine(py, &request).unwrap_err();
+            assert!(err.is_instance_of::<UnsupportedError>(py), "{err}");
+        });
+    }
+
+    #[test]
+    fn a_sparse_request_in_a_unit_the_registry_cannot_read_is_unsupported() {
+        Python::attach(|py| {
+            let request = sparse_request(py, "batch");
+            request.set_item("unit", "grain").unwrap();
+            let err = nca_sparse(py, &request).unwrap_err();
+            assert!(err.is_instance_of::<UnsupportedError>(py), "{err}");
+            let bad = sparse_request(py, "bogus");
+            let err = nca_sparse(py, &bad).unwrap_err();
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
         });
     }
 }
