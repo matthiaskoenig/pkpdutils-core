@@ -1,8 +1,12 @@
 # pkpdutils-core
 
+[![npm](https://img.shields.io/npm/v/pkpdutils-core.svg?label=npm)](https://www.npmjs.com/package/pkpdutils-core)
+[![CI](https://github.com/matthiaskoenig/pkpdutils-core/actions/workflows/ci.yml/badge.svg)](https://github.com/matthiaskoenig/pkpdutils-core/actions/workflows/ci.yml)
+[![MIT License](https://img.shields.io/npm/l/pkpdutils-core.svg)](https://opensource.org/licenses/MIT)
+
 Non-compartmental analysis of pharmacokinetic timecourses in a browser and in Node: the JavaScript host of [`pkpdutils-core`](https://github.com/matthiaskoenig/pkpdutils-core), the rust kernel of [`pkpdutils`](https://github.com/matthiaskoenig/pkpdutils), compiled to WebAssembly.
 
-The module is the same code the python package runs: one kernel, two builds. `js/test/same_bits.test.mjs` compares every column of seven analyses against the numbers of the native build, four of them bit for bit.
+The module is the same code the python package runs: one kernel, two builds. `js/test/same_bits.test.mjs` compares every column of eight analyses against the numbers of the native build, five of them bit for bit.
 
 ```bash
 npm install pkpdutils-core

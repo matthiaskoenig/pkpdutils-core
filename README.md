@@ -3,6 +3,7 @@
 [![CI](https://github.com/matthiaskoenig/pkpdutils-core/actions/workflows/ci.yml/badge.svg)](https://github.com/matthiaskoenig/pkpdutils-core/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/pypi/v/pkpdutils-core.svg)](https://pypi.org/project/pkpdutils-core/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/pkpdutils-core.svg)](https://pypi.org/project/pkpdutils-core/)
+[![npm](https://img.shields.io/npm/v/pkpdutils-core.svg?label=npm)](https://www.npmjs.com/package/pkpdutils-core)
 [![pkpdutils-abi](https://img.shields.io/crates/v/pkpdutils-abi.svg?label=pkpdutils-abi)](https://crates.io/crates/pkpdutils-abi)
 [![MIT License](https://img.shields.io/pypi/l/pkpdutils-core.svg)](https://opensource.org/licenses/MIT)
 
