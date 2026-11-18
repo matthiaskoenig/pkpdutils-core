@@ -12,7 +12,7 @@ Write what a reader of the release needs: what changed, what it is worth where t
 
 1. branch off `develop`: `git switch -c release/x.y.z develop`
 2. write `release-notes/x.y.z.md`
-3. set `version` of `[workspace.package]` in `Cargo.toml` and refresh `Cargo.lock` (`cargo metadata > /dev/null`)
+3. set `version` of `[workspace.package]` in `Cargo.toml`, set the same version in the `version` of every path dependency on a crate of this workspace (`pkpdutils-abi` and `pkpdutils-units` in `crates/core/Cargo.toml`, `pkpdutils-abi` and `pkpdutils-core` in `crates/python/Cargo.toml`), and refresh `Cargo.lock` (`cargo metadata --format-version 1 > /dev/null`). Those pins are what a consumer of the published crates resolves against, so `cargo metadata` fails until they match the new version.
 4. make sure everything passes: see [Checks](../README.md#checks)
 5. push the branch, open the pull request against `develop` and merge it once the checks are green
 6. tag the merged commit on `develop` and push the tag:
