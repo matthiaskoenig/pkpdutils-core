@@ -689,24 +689,17 @@ where
                 first_index: (start as u64) * (n_boot as u64) * (n_time as u64),
             },
         );
-        let analysed = rows_of(rows * n_boot, n_time, shards, |index, scratch| {
-            let row = start + index / n_boot.max(1);
-            let values = &draws[index * n_time..(index + 1) * n_time];
-            crate::assemble::RowResult {
-                route: None,
-                dose_amount: f64::NAN,
-                parameters: analyse(row, values, scratch),
-                intervals: Vec::new(),
-            }
-        });
+        let analysed: Vec<RowParameters> =
+            rows_of(rows * n_boot, n_time, shards, |index, scratch| {
+                let row = start + index / n_boot.max(1);
+                let values = &draws[index * n_time..(index + 1) * n_time];
+                analyse(row, values, scratch)
+            });
         let replicates: Vec<Replicates> = columns
             .iter()
             .map(|(column, read)| Replicates {
                 name: column.name.clone(),
-                values: analysed
-                    .iter()
-                    .map(|replicate| read(&replicate.parameters))
-                    .collect(),
+                values: analysed.iter().map(read).collect(),
             })
             .collect();
         let block_point: Vec<ParameterColumn> = columns
@@ -728,6 +721,264 @@ where
         start = stop;
     }
     Ok(join_blocks(parts, n_rows))
+}
+
+/// The parameters whose derivative may be taken at any point, whatever the terminal window does.
+///
+/// `TERMINAL_INDEPENDENT_PARAMETERS` of `uncertainty.py`, which holds for an analysis that reads
+/// the dosing interval as it was measured. Above a `tau_tolerance` of 0 the exposure of a last
+/// interval which falls short of its end is completed with the terminal regression
+/// (`complete_last_interval`), so the five parameters of that interval depend on the window
+/// after all and leave the set ([`terminal_independent`]).
+const TERMINAL_INDEPENDENT_PARAMETERS: &[&str] = &[
+    "auc_all",
+    "auc_last",
+    "auc_tau",
+    "auec_baseline",
+    "auec_last",
+    "aumc_all",
+    "aumc_last",
+    "c0",
+    "cavg",
+    "clast",
+    "cmax",
+    "cmax_half",
+    "cmax_ss",
+    "cmin",
+    "cmin_ss",
+    "ctrough",
+    "e0",
+    "emax_baseline",
+    "emax_obs",
+    "time_above",
+];
+
+/// The parameters of a last interval which the terminal regression may complete.
+///
+/// `COMPLETABLE_PARAMETERS` of `uncertainty.py`.
+const COMPLETABLE_PARAMETERS: &[&str] = &["auc_tau", "cavg", "cmax_ss", "cmin_ss", "ctrough"];
+
+/// Whether the derivative of `name` may be taken at a point where the terminal window flipped.
+fn terminal_independent(name: &str, options: &NcaOptions) -> bool {
+    listed(TERMINAL_INDEPENDENT_PARAMETERS, name)
+        && !(options.tau_tolerance > 0.0 && listed(COMPLETABLE_PARAMETERS, name))
+}
+
+/// The two variables whose change says the perturbation selected another terminal window.
+///
+/// `_window_changed` of `uncertainty.py` reads exactly these: the number of points of the
+/// regression and where it starts. Two missing windows are equal, a missing and a present one
+/// are not.
+const WINDOW_VARIABLES: [&str; 2] = ["lambda_z_n_points", "lambda_z_t_first"];
+
+/// One window variable of a result: its field reader and the column of the original curves.
+type WindowVariable<'a> = (fn(&RowParameters) -> f64, &'a [f64]);
+
+/// What the delta method propagated for one row.
+struct DeltaRow {
+    /// The standard error of every reducible parameter, in the order of the columns.
+    standard_error: Vec<f64>,
+    /// Whether a perturbation of this row selected another terminal window.
+    window_changed: bool,
+    /// Whether any point of the row carried a usable standard error.
+    any_usable: bool,
+}
+
+/// The uncertainty of the parameters of a batch from the delta method, with the flags it raises.
+pub(crate) struct DeltaAnswer {
+    /// The uncertainty variables, the same family the bootstrap reports.
+    pub columns: Vec<ParameterColumn>,
+    /// The flag word of every row, to be combined with the flags of the analysis.
+    pub flags: Vec<u32>,
+}
+
+/// The step of the forward difference of one point.
+///
+/// `h = max(delta_step * se, nextafter(0, 1), sqrt(eps) * |c|)` of `uncertainty.py`: the
+/// relative step of the options, never zero, and never so small against the value that
+/// `c + h == c`. The smallest positive double is a subnormal, `f64::from_bits(1)`, and not
+/// `f64::MIN_POSITIVE`, which is the smallest *normal* one and would be a step `1e292` times
+/// larger than numpy's.
+fn delta_step(value: f64, se: f64, relative: f64) -> f64 {
+    let smallest_positive = f64::from_bits(1);
+    (relative * se)
+        .max(smallest_positive)
+        .max(f64::EPSILON.sqrt() * value.abs())
+}
+
+/// Propagate the standard errors of the points of a batch through the numerical Jacobian.
+///
+/// `var(x) = sum_i (dx/dC_i)^2 se_i^2` with `dx/dC_i` from a forward difference, which is the
+/// delta method of `uncertainty.py` [^efron]. The norm is accumulated with `hypot` and never by
+/// squaring first, since a finite standard error can have a variance outside the range of a
+/// double. The method always propagates `se`, the uncertainty of the mean curve, so
+/// `NcaOptions::bootstrap_spread` does not apply to it.
+///
+/// A perturbation which selects another terminal window makes the difference quotient a jump
+/// between two regressions instead of a derivative. Such a point is skipped for every parameter
+/// which depends on the window and the row is flagged [`NcaFlag::DELTA_WINDOW_CHANGE`], which
+/// says that the uncertainty of its terminal parameters is incomplete; the bootstrap, which
+/// follows the window, is the answer for those rows.
+///
+/// # Arguments
+///
+/// * `batch` - the batch, which carries `se` or `sd` and the subject count
+/// * `options` - `delta_step`, `ci_level`, `tau_tolerance`
+/// * `point` - the parameters of the original curves
+/// * `n_subjects` - the subjects of every row, for the between subject scale
+/// * `shards` - the shard plan of the rows
+/// * `analyse` - the analysis of one row with the values of a perturbed curve
+///
+/// # Errors
+///
+/// [`KernelError::Batch`] when the batch has no `se` and none can be derived from its `sd`.
+///
+/// [^efron]: Efron & Tibshirani 1993, ch. 5.
+pub(crate) fn delta<F>(
+    batch: &Batch,
+    options: &NcaOptions,
+    point: &[ParameterColumn],
+    n_subjects: Option<&[f64]>,
+    shards: usize,
+    analyse: F,
+) -> Result<DeltaAnswer, KernelError>
+where
+    F: Fn(usize, &[f64], &mut Scratch) -> RowParameters + Send + Sync,
+{
+    let n_rows = batch.n_samples();
+    let n_time = batch.n_time;
+    // the delta method propagates the uncertainty of the mean curve whatever the bootstrap would
+    // resample with, so the spread is `se` and not `options.bootstrap_spread`
+    let se = resolve_spread(batch, options, Some(BootstrapSpread::Se))?;
+    let columns = reducible(point);
+    let window: Vec<Option<WindowVariable<'_>>> = WINDOW_VARIABLES
+        .iter()
+        .map(|name| {
+            let read = PARAMETERS
+                .iter()
+                .find(|parameter| parameter.name == *name)
+                .map(|parameter| parameter.read)?;
+            let values = point
+                .iter()
+                .find(|column| column.name == *name)
+                .map(|column| column.values.as_slice())?;
+            Some((read, values))
+        })
+        .collect();
+    let keep: Vec<bool> = columns
+        .iter()
+        .map(|(column, _)| terminal_independent(&column.name, options))
+        .collect();
+
+    let rows: Vec<DeltaRow> = rows_of(n_rows, n_time, shards, |row, scratch| {
+        let values = &batch.values[row * n_time..(row + 1) * n_time];
+        let spread = &se[row * n_time..(row + 1) * n_time];
+        let mut standard_error = vec![0.0f64; columns.len()];
+        let mut window_changed = false;
+        let mut any_usable = false;
+        let mut perturbed = values.to_vec();
+        for time in 0..n_time {
+            let value = values[time];
+            let point_se = spread[time];
+            if !(point_se.is_finite() && point_se > 0.0 && value.is_finite()) {
+                continue;
+            }
+            any_usable = true;
+            let h = delta_step(value, point_se, options.delta_step);
+            let forward = value + h;
+            // at the upper finite limit only a backward difference exists
+            perturbed[time] = if forward.is_finite() {
+                forward
+            } else {
+                value - h
+            };
+            let actual_step = perturbed[time] - value;
+            let answer = analyse(row, &perturbed, scratch);
+            perturbed[time] = value;
+            let changed = window.iter().flatten().any(|(read, values)| {
+                let base = values[row];
+                let other = read(&answer);
+                !((base.is_nan() && other.is_nan()) || base == other)
+            });
+            window_changed |= changed;
+            for (index, ((column, read), independent)) in columns.iter().zip(&keep).enumerate() {
+                if changed && !independent {
+                    continue;
+                }
+                let derivative = (read(&answer) - column.values[row]) / actual_step;
+                standard_error[index] = standard_error[index].hypot(derivative * point_se);
+            }
+        }
+        DeltaRow {
+            standard_error,
+            window_changed,
+            any_usable,
+        }
+    });
+
+    let alpha = 1.0 - options.ci_level;
+    let z = normal_isf(alpha / 2.0);
+    let mut out = Vec::new();
+    for (index, (column, _)) in columns.iter().enumerate() {
+        let name = column.name.as_str();
+        let lognormal = is_lognormal(name);
+        let unit = column.unit.as_str();
+        let mut x_sd = vec![f64::NAN; n_rows];
+        let mut x_se = vec![f64::NAN; n_rows];
+        let mut low = vec![f64::NAN; n_rows];
+        let mut high = vec![f64::NAN; n_rows];
+        let mut geomean = vec![f64::NAN; n_rows];
+        let mut geocv = vec![f64::NAN; n_rows];
+        for (row, answer) in rows.iter().enumerate() {
+            let estimate = column.values[row];
+            let standard_error = answer.standard_error[index];
+            if !(estimate.is_finite() && standard_error.is_finite() && answer.any_usable) {
+                continue;
+            }
+            x_se[row] = standard_error;
+            x_sd[row] = n_subjects.map_or(f64::NAN, |counts| standard_error * counts[row].sqrt());
+            if lognormal {
+                let relative = standard_error / estimate;
+                low[row] = estimate * (-z * relative).exp();
+                high[row] = estimate * (z * relative).exp();
+                geomean[row] = estimate;
+                // the geometric CV is the spread over subjects, as in the bootstrap: with
+                // `mu = x` and `sd = x_sd` the log-normal moment relation gives
+                // `sigma_log^2 = ln(1 + (sd / mu)^2)`, so `geocv = sqrt(exp(sigma^2) - 1)` is
+                // `|sd / mu|`, the arithmetic coefficient of variation
+                geocv[row] = (x_sd[row] / estimate).abs();
+            } else {
+                low[row] = estimate - z * standard_error;
+                high[row] = estimate + z * standard_error;
+            }
+        }
+        out.push(crate::uncertainty::column(name, "_sd", unit, x_sd));
+        out.push(crate::uncertainty::column(name, "_se", unit, x_se));
+        out.push(crate::uncertainty::column(name, "_ci_low", unit, low));
+        out.push(crate::uncertainty::column(name, "_ci_high", unit, high));
+        if lognormal {
+            out.push(crate::uncertainty::column(name, "_geomean", unit, geomean));
+            out.push(crate::uncertainty::column(
+                name,
+                "_geocv",
+                DIMENSIONLESS,
+                geocv,
+            ));
+        }
+    }
+    Ok(DeltaAnswer {
+        columns: out,
+        flags: rows
+            .iter()
+            .map(|row| {
+                if row.window_changed {
+                    pkpdutils_abi::NcaFlag::DELTA_WINDOW_CHANGE.bits()
+                } else {
+                    0
+                }
+            })
+            .collect(),
+    })
 }
 
 /// The columns of the blocks as one column per variable, in the order the first block has them.
@@ -841,6 +1092,140 @@ mod tests {
             |row, values, scratch| rows.row_of(row, values, scratch, None).parameters,
         )
         .expect("the bootstrap")
+    }
+
+    /// The delta method of a batch through the analysis of the crate.
+    fn delta_at(batch: &Batch, options: &NcaOptions) -> DeltaAnswer {
+        let point = point_of(batch, options);
+        let n_subjects: Vec<f64> = (0..batch.n_samples()).map(|_| 9.0).collect();
+        let rows = crate::Rows {
+            batch,
+            options,
+            manual: None,
+            windows: None,
+            has_dose: batch.max_doses > 0,
+        };
+        delta(
+            batch,
+            options,
+            &point,
+            Some(&n_subjects),
+            1,
+            |row, values, scratch| rows.row_of(row, values, scratch, None).parameters,
+        )
+        .expect("the delta method")
+    }
+
+    /// The options of a delta method of `step`.
+    fn delta_options(step: f64) -> NcaOptions {
+        NcaOptions {
+            uncertainty: Some(pkpdutils_abi::UncertaintyMethod::Delta),
+            delta_step: step,
+            ci_level: 0.90,
+            ..crate::parameters::tests::linear()
+        }
+    }
+
+    #[test]
+    fn a_perturbation_which_moves_the_window_is_skipped_and_flagged() {
+        // a spread of 30 per cent and a step of a fifth of it move the terminal window, which a
+        // step of a thousandth never does
+        let mut batch = group_batch(1);
+        let n_time = batch.n_time;
+        let se: Vec<f64> = batch.values.iter().map(|value| 0.3 * value).collect();
+        batch.se = Some(se);
+        batch.n = Some(vec![9.0; n_time]);
+
+        let moved = delta_at(&batch, &delta_options(0.2));
+        assert_eq!(
+            moved.flags,
+            vec![pkpdutils_abi::NcaFlag::DELTA_WINDOW_CHANGE.bits()],
+            "a step which moves the window raises the flag"
+        );
+        let fine = delta_at(&batch, &delta_options(1e-3));
+        assert_eq!(fine.flags, vec![0], "a small step moves no window");
+
+        // The area of the measured points is linear in those points, so its difference quotient
+        // is the derivative itself at every step, and it depends on no window: the two steps
+        // agree on it to the last bits whatever the window did in between.
+        let auc_moved = named(&moved.columns, "auc_last_se")[0];
+        let auc_fine = named(&fine.columns, "auc_last_se")[0];
+        assert!(auc_moved > 0.0, "{auc_moved}");
+        assert!(
+            (auc_moved - auc_fine).abs() <= 1e-9 * auc_fine,
+            "a window independent parameter is untouched: {auc_moved} against {auc_fine}"
+        );
+
+        // A parameter which reads the terminal window loses the points at which the window moved,
+        // so its propagated error comes out *below* the one of a step which moved nothing: a
+        // dropped point contributes nothing to the norm. Were the point kept, the difference
+        // quotient would be the jump between two regressions, which is far larger than the
+        // derivative and would push the error above the one of the fine step instead.
+        for name in ["auc_inf_obs_se", "cl_f_se"] {
+            let with_jumps = named(&fine.columns, name)[0];
+            let skipped = named(&moved.columns, name)[0];
+            assert!(
+                skipped > 0.0 && skipped < 0.8 * with_jumps,
+                "{name}: {skipped} against {with_jumps} of the fine step"
+            );
+        }
+    }
+
+    #[test]
+    fn the_increment_is_the_representable_one() {
+        // a value whose standard error is far below its own floating point resolution: the step
+        // of the options would be lost in the addition, so the floor of `sqrt(eps) * |c|` is what
+        // makes the difference quotient a derivative instead of a division by zero
+        let value = 1e8;
+        let tiny = 1e-20;
+        assert_eq!(
+            value + 1e-3 * tiny,
+            value,
+            "the step of the options is lost in the value"
+        );
+        let step = delta_step(value, tiny, 1e-3);
+        assert!(step > 0.0, "the step is positive");
+        assert_ne!(value + step, value, "the step changes the value");
+        assert_eq!(
+            step,
+            f64::EPSILON.sqrt() * value,
+            "the floor of the value's own scale is the step"
+        );
+
+        // the smallest positive double is the other floor, which a zero of both other terms falls
+        // back to; it is the subnormal and not `f64::MIN_POSITIVE`
+        assert_eq!(delta_step(0.0, 0.0, 1e-3), f64::from_bits(1));
+
+        // and the relative step is the one the options ask for wherever it is representable
+        assert_eq!(delta_step(10.0, 2.0, 1e-3), 2e-3);
+    }
+
+    #[test]
+    fn the_delta_ignores_the_bootstrap_spread_option() {
+        // the delta method propagates the uncertainty of the mean curve, so it reads `se` whatever
+        // the bootstrap would resample with: the same batch gives the same answer under both
+        // spread options, and a batch which carries `sd` alone is an error of the batch
+        let batch = group_batch(2);
+        let with_se = delta_at(
+            &batch,
+            &NcaOptions {
+                bootstrap_spread: pkpdutils_abi::BootstrapSpread::Se,
+                ..delta_options(1e-3)
+            },
+        );
+        let with_sd = delta_at(
+            &batch,
+            &NcaOptions {
+                bootstrap_spread: pkpdutils_abi::BootstrapSpread::Sd,
+                ..delta_options(1e-3)
+            },
+        );
+        assert_eq!(
+            named(&with_se.columns, "auc_last_se"),
+            named(&with_sd.columns, "auc_last_se"),
+            "the spread option moves no number of the delta method"
+        );
+        assert!(named(&with_se.columns, "auc_last_se")[0].is_finite());
     }
 
     #[test]

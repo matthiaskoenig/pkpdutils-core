@@ -2276,10 +2276,11 @@ pub(crate) mod tests {
             ),
             (
                 NcaOptions {
-                    uncertainty: Some(pkpdutils_abi::UncertaintyMethod::Delta),
+                    uncertainty: Some(pkpdutils_abi::UncertaintyMethod::Bootstrap),
+                    seed: None,
                     ..linear()
                 },
-                "delta method",
+                "seed the options leave open",
             ),
             (
                 NcaOptions {

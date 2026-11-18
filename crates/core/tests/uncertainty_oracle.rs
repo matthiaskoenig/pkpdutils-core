@@ -1,20 +1,23 @@
-//! The bootstrap of `analyze_batch` against python's own answer.
+//! The uncertainty of `analyze_batch` against python's own answer.
 //!
-//! `crates/core/tests/data/bootstrap_oracle.json` is written by `scripts/bootstrap_oracle.py`
-//! from the `pkpdutils` checkout this crate mirrors: four batches of group curves, the batch and
-//! the options in the encoding of the wire, and every uncertainty variable the **python** engine
-//! reports for them (`engine._force_python`, so no part of the answer comes from the kernel).
+//! `crates/core/tests/data/uncertainty_oracle.json` is written by `scripts/uncertainty_oracle.py`
+//! from the `pkpdutils` checkout this crate mirrors: eight batches of group curves, the batch and
+//! the options in the encoding of the wire, and every uncertainty variable and flag word the
+//! **python** engine reports for them (`engine._force_python`, so no part of the answer comes
+//! from the kernel). Four cases are the bootstrap and four the delta method, among them one
+//! whose perturbations move the terminal window.
 //!
 //! The two engines draw their normals from the same generator, which is the whole point of the
 //! design: python asks `pkpdutils_core.bootstrap_normals` for its draws, so the replicates are
 //! the same curves on both paths and the comparison is of the analysis and the reduction alone.
 //! What separates them is the last bit of a transcendental function - `exp`, `ln`, `sqrt` of the
 //! shaping and of the geometric statistics, where numpy has its own implementations - so the
-//! tolerance is relative `1e-12` and not bit equality.
+//! tolerance is relative `1e-12` and not bit equality. The delta method draws nothing at all,
+//! so for its cases the tolerance covers those functions and nothing else.
 
 use std::collections::BTreeMap;
 
-use pkpdutils_abi::{Batch, NcaOptions};
+use pkpdutils_abi::{Batch, NcaOptions, UncertaintyMethod};
 use pkpdutils_core::analyze_batch;
 use serde::Deserialize;
 
@@ -31,6 +34,7 @@ struct Case {
     name: String,
     batch: Batch,
     options: NcaOptions,
+    flags: Values,
     expected: BTreeMap<String, Values>,
 }
 
@@ -41,15 +45,17 @@ struct Oracle {
 }
 
 fn oracle() -> Oracle {
-    serde_json::from_str(include_str!("data/bootstrap_oracle.json"))
-        .expect("the bootstrap oracle is readable")
+    serde_json::from_str(include_str!("data/uncertainty_oracle.json"))
+        .expect("the uncertainty oracle is readable")
 }
 
 #[test]
-fn the_bootstrap_matches_the_python_oracle() {
+fn the_uncertainty_matches_the_python_oracle() {
     let oracle = oracle();
-    assert_eq!(oracle.cases.len(), 4, "the fixture lost a case");
+    assert_eq!(oracle.cases.len(), 8, "the fixture lost a case");
     let mut compared = 0usize;
+    let mut worst = 0.0f64;
+    let mut where_worst = String::new();
     for case in &oracle.cases {
         let result = analyze_batch(&case.batch, &case.options)
             .unwrap_or_else(|error| panic!("{}: {error}", case.name));
@@ -63,6 +69,18 @@ fn the_bootstrap_matches_the_python_oracle() {
             "{}: the fixture carries no variable",
             case.name
         );
+        // The bootstrap compares two runs of the same analysis of the same replicate curves, so
+        // its tolerance is the agreement of the two analyses themselves. The delta method divides
+        // by a step of `delta_step` times the standard error of the point, and a difference
+        // quotient of two nearly equal numbers amplifies whatever separates the engines by one
+        // over that step: the tolerance of a delta case is therefore `TOLERANCE / delta_step`,
+        // which is derived and not fitted. The worst difference the fixture actually shows is
+        // printed at the end of the test and is two orders below the loosest of these bounds.
+        let tolerance = if case.options.uncertainty == Some(UncertaintyMethod::Delta) {
+            TOLERANCE / case.options.delta_step
+        } else {
+            TOLERANCE
+        };
         for (name, expected) in &case.expected {
             let values = columns
                 .get(name.as_str())
@@ -74,13 +92,23 @@ fn the_bootstrap_matches_the_python_oracle() {
                     assert!(value.is_nan(), "{at}: {value} is no NaN");
                     continue;
                 }
+                let relative = (value - want).abs() / want.abs().max(f64::MIN_POSITIVE);
+                if relative > worst {
+                    worst = relative;
+                    where_worst = at.clone();
+                }
                 assert!(
-                    (value - want).abs() <= TOLERANCE * want.abs(),
-                    "{at}: {value} against {want}"
+                    (value - want).abs() <= tolerance * want.abs(),
+                    "{at}: {value} against {want} (tolerance {tolerance:e})"
                 );
                 compared += 1;
             }
         }
+        // the flags of the row are python's, which for the delta method includes
+        // `DELTA_WINDOW_CHANGE` where a perturbation moved the terminal window
+        let flags: Vec<f64> = result.flags.iter().map(|bits| f64::from(*bits)).collect();
+        assert_eq!(flags, case.flags.0, "{}: the flags differ", case.name);
+
         // python reports nothing the kernel does not: a variable of the one and not of the other
         // is a difference of the two results and not a tolerance
         let theirs: Vec<&str> = case.expected.keys().map(String::as_str).collect();
@@ -99,4 +127,12 @@ fn the_bootstrap_matches_the_python_oracle() {
     }
     // the fixture is not a handful of NaN: most of what it carries is a number
     assert!(compared > 2000, "only {compared} finite values compared");
+    println!("worst relative difference {worst:e} at {where_worst}");
+    // and the window change of the delta method is really in it
+    let flagged = oracle
+        .cases
+        .iter()
+        .filter(|case| case.flags.0.iter().any(|bits| (*bits as u32) & 128 != 0))
+        .count();
+    assert_eq!(flagged, 1, "one case moves the terminal window");
 }

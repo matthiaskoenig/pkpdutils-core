@@ -56,7 +56,7 @@ use crate::parameters::{RowInput, Scratch, compute_row};
 use crate::shard::rows_of;
 use crate::steady_state::compute_steady_state;
 use crate::terminal::Candidate;
-use crate::uncertainty::bootstrap;
+use crate::uncertainty::{bootstrap, delta};
 
 /// Why a batch could not be analysed.
 ///
@@ -292,18 +292,42 @@ fn analyze_checked(
     // which is why it runs here and not in an entry point of its own: a host gets it in the
     // call it already makes, a browser without a second round trip, and the engine gate of the
     // python host compares the columns without a line of gate code of its own
-    if resolved_uncertainty(batch, options) == UncertaintyMethod::Bootstrap {
+    let method = resolved_uncertainty(batch, options);
+    if method != UncertaintyMethod::None {
         let n_subjects = subject_counts(&result);
-        let uncertainty = bootstrap(
-            batch,
-            options,
-            &result.parameters,
-            n_subjects.as_deref(),
-            automatic_shards(n_samples * options.n_boot as usize, batch.n_time),
-            None,
-            |row, values, scratch| rows_of_batch.row_of(row, values, scratch, None).parameters,
-        )?;
-        result.parameters.extend(uncertainty);
+        let analyse = |row: usize, values: &[f64], scratch: &mut Scratch| {
+            rows_of_batch.row_of(row, values, scratch, None).parameters
+        };
+        if method == UncertaintyMethod::Bootstrap {
+            let uncertainty = bootstrap(
+                batch,
+                options,
+                &result.parameters,
+                n_subjects.as_deref(),
+                automatic_shards(n_samples * options.n_boot as usize, batch.n_time),
+                None,
+                analyse,
+            )?;
+            result.parameters.extend(uncertainty);
+        } else {
+            // one perturbation per point of every row, so the work of a row is its point count
+            // and not the replicate count of the bootstrap
+            let answer = delta(
+                batch,
+                options,
+                &result.parameters,
+                n_subjects.as_deref(),
+                automatic_shards(n_samples * batch.n_time, batch.n_time),
+                analyse,
+            )?;
+            // the flags of the delta method join the flags of the analysis rather than replacing
+            // them: `DELTA_WINDOW_CHANGE` is a statement about the uncertainty of the row and
+            // says nothing about the flags its analysis raised
+            for (flags, raised) in result.flags.iter_mut().zip(&answer.flags) {
+                *flags |= raised;
+            }
+            result.parameters.extend(answer.columns);
+        }
     }
     // unreachable after `batch.validate`, which is what every length here comes from, and kept
     // because a result the host cannot read is worth a named error rather than a surprise. The
@@ -459,12 +483,6 @@ pub fn unsupported_reason(batch: &Batch, options: &NcaOptions) -> Option<String>
     }
     if !options.partial_aucs.is_empty() {
         return reason("the named partial areas (NcaOptions::partial_aucs)");
-    }
-    // a batch which carries a spread resolves to the bootstrap on its own, so the refusal is of
-    // what the options resolve to and not of what they say (`resolve_uncertainty` of `options.py`);
-    // the bootstrap itself is carried, the delta method is not yet
-    if resolved_uncertainty(batch, options) == UncertaintyMethod::Delta {
-        return reason("the delta method (UncertaintyMethod::Delta)");
     }
     // the kernel reads no entropy - it has none in a wasm instance, and a kernel which reached
     // for the operating system would not build there - so a seed is the host's to draw. A host
@@ -1214,13 +1232,6 @@ mod tests {
                 },
             ),
             (
-                "delta",
-                NcaOptions {
-                    uncertainty: Some(UncertaintyMethod::Delta),
-                    ..base.clone()
-                },
-            ),
-            (
                 "uncertainty off",
                 NcaOptions {
                     uncertainty: Some(UncertaintyMethod::None),
@@ -1287,7 +1298,7 @@ mod tests {
         // and each refusal is named by what it is, on a batch which trips nothing else: the
         // agreement above would hold just as well for a refusal both sides had dropped, so the
         // text is pinned here, including which of two refusals wins
-        let expected: [(&str, Option<&str>); 12] = [
+        let expected: [(&str, Option<&str>); 11] = [
             ("default", None),
             ("effect", Some("effect curve")),
             ("tau", None),
@@ -1295,7 +1306,6 @@ mod tests {
             ("partial", Some("partial areas")),
             ("units", Some("unit conversion")),
             ("bootstrap", Some("seed the options leave open")),
-            ("delta", Some("delta method")),
             ("uncertainty off", None),
             ("effect and units", Some("effect curve")),
             ("units and partial", Some("partial areas")),
@@ -1320,7 +1330,17 @@ mod tests {
             automatic.contains("seed the options leave open"),
             "{automatic}"
         );
-        assert_eq!(unsupported_reason(&spread, &variants[8].1), None);
+        let by_name = |wanted: &str| {
+            variants
+                .iter()
+                .find(|(name, _)| *name == wanted)
+                .map(|(_, options)| options.clone())
+                .unwrap_or_else(|| panic!("no variant {wanted}"))
+        };
+        assert_eq!(
+            unsupported_reason(&spread, &by_name("uncertainty off")),
+            None
+        );
         let seeded = NcaOptions {
             seed: Some(11),
             n_boot: 8,
@@ -1351,12 +1371,36 @@ mod tests {
             Err(KernelError::Batch(_))
         ));
 
+        // the delta method needs no seed, since it draws nothing
+        let delta_options = NcaOptions {
+            uncertainty: Some(UncertaintyMethod::Delta),
+            ..base.clone()
+        };
+        assert_eq!(unsupported_reason(&counted(&spread), &delta_options), None);
+        let propagated = analyze_batch(&counted(&spread), &delta_options).expect("the delta");
+        assert!(
+            propagated
+                .parameters
+                .iter()
+                .any(|column| column.name == "auc_inf_obs_se"),
+            "the delta joins the parameters"
+        );
+        // an explicit method on a batch which carries no spread at all is the same error of the
+        // batch for both methods, which is what python raises for it as well
+        for batch in [&single, &multiple, &hole] {
+            assert_eq!(unsupported_reason(batch, &delta_options), None);
+            assert!(matches!(
+                analyze_batch(batch, &delta_options),
+                Err(KernelError::Batch(_))
+            ));
+        }
+
         // the protocols which used to be refused are accepted, in every combination of options
         // which refuses nothing else
         for batch in [&multiple, &hole] {
             assert_eq!(unsupported_reason(batch, &base), None);
         }
-        assert_eq!(unsupported_reason(&single, &variants[2].1), None);
+        assert_eq!(unsupported_reason(&single, &by_name("tau")), None);
 
         // the predicate reads no shape: a batch which does not validate is answered, not
         // indexed, and it is the analysis which names the shape
