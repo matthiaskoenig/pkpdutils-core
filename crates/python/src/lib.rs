@@ -371,7 +371,9 @@ fn nca_urine<'py>(py: Python<'py>, request: &Bound<'py, PyDict>) -> PyResult<Bou
         area_unit: field(py, request, "area_unit", URINE_REQUEST)?,
         options: options_from_python(&options)?,
     };
-    let checked = request.checked().map_err(PyValueError::new_err)?;
+    let checked = request
+        .checked()
+        .map_err(|reason| kernel_error(kernel::KernelError::Urine(reason)))?;
     let answer = py
         .detach(|| guarded(|| kernel::nca_urine(&checked)))?
         .map_err(kernel_error)?;
@@ -1572,8 +1574,35 @@ mod tests {
             request.set_item("unit", "grain").unwrap();
             let err = nca_sparse(py, &request).unwrap_err();
             assert!(err.is_instance_of::<UnsupportedError>(py), "{err}");
-            let bad = sparse_request(py, "bogus");
-            let err = nca_sparse(py, &bad).unwrap_err();
+        });
+    }
+
+    #[test]
+    fn a_kernel_rejection_of_a_sparse_request_is_a_value_error_through_the_helper() {
+        Python::attach(|py| {
+            // serial design with one animal of two samples: it parses, then the kernel refuses
+            // with `KernelError::Sparse`
+            let request = sparse_request(py, "serial");
+            request.set_item("n_rows", 1).unwrap();
+            request
+                .set_item("values", PyArray1::from_slice(py, &[1.0, 0.5]))
+                .unwrap();
+            let err = nca_sparse(py, &request).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
+            assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
+        });
+    }
+
+    #[test]
+    fn a_kernel_rejection_of_a_urine_request_is_a_value_error_through_the_helper() {
+        Python::attach(|py| {
+            // parses and passes `checked()`; the core refuses a dose of another dimension than
+            // the amounts with `KernelError::Urine`
+            let request = urine_request(py);
+            request.set_item("dose_amount", 1.0).unwrap();
+            request.set_item("dose_unit", "h").unwrap();
+            let err = nca_urine(py, &request).unwrap_err();
+            assert!(err.is_instance_of::<PyValueError>(py), "{err}");
             assert!(!err.is_instance_of::<UnsupportedError>(py), "{err}");
         });
     }
